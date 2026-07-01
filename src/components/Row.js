@@ -86,6 +86,30 @@ export function VulnRow({ name, active, vuln, override }) {
   );
 }
 
+// An existing `overrides` entry that no longer appears to be needed.
+export function OverrideRow({ name, active, pin, reason, staged }) {
+  const why =
+    reason === 'dead' ? 'nothing depends on it anymore' : 'no longer prevents a known vulnerability';
+  return e(
+    Box,
+    { flexDirection: 'row' },
+    e(Box, { width: 2, flexShrink: 0 }, e(Text, { color: 'cyanBright', bold: true }, active ? '❯ ' : '  ')),
+    e(NameCell, { name }),
+    e(
+      Box,
+      { marginLeft: 1 },
+      staged
+        ? e(Text, { color: 'greenBright', bold: true }, `✔ removing override ${pin}`)
+        : e(
+            Text,
+            { color: 'gray' },
+            `ⓘ override ${pin} not needed (${why}) `,
+            e(Text, { dimColor: true }, '— press x to remove')
+          )
+    )
+  );
+}
+
 export function LoadingRow() {
   return e(
     Box,

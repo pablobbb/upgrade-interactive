@@ -64,8 +64,13 @@ and run `npm run upgrade-interactive`.
 5. Lets you press `o` on a vulnerable package to **pin it to a safe version via
    an npm `overrides` entry** — the main way to patch a *transitive* dependency
    you don't directly control.
-6. Writes your choices (and any overrides) back into `package.json` and runs
-   `npm install`.
+6. **Flags existing `overrides` that are no longer needed** — either because
+   nothing in the tree depends on that package anymore, or because your deps
+   would now resolve to a non-vulnerable version without the pin. Press `x` to
+   remove one. (It never removes an override that's still doing something, and
+   only ever removes one you explicitly select.)
+7. Writes your choices (overrides added and removed) back into `package.json`
+   and runs `npm install`.
 
 By default the list is grouped into **Dependencies**, **Dev dependencies**, and
 **Overrides** (transitive packages you've flagged for an override) sections. Pass
@@ -79,6 +84,7 @@ By default the list is grouped into **Dependencies**, **Dev dependencies**, and
 | `←` / `→`          | Move between Current / Range / Latest for that package |
 | `c` / `r` / `l`     | Select **c**urrent / **r**ange / **l**atest for *every* package at once |
 | `o`                | Override the focused vulnerable package to a safe version (audit mode) |
+| `x`                | Remove the focused override when it's no longer needed (audit mode) |
 | `Enter`            | Apply the selected upgrades and run `npm install`     |
 | `Ctrl+C` / `Esc`   | Abort — nothing is written                            |
 
@@ -128,7 +134,8 @@ Follows yarn closely:
 
 Deliberate additions / differences (this is *inspired by* yarn, not a clone):
 - **Vulnerability warnings + `overrides`** — flags vulnerable direct and
-  transitive packages and lets you pin a safe version via npm `overrides`.
+  transitive packages, lets you pin a safe version via npm `overrides`, and
+  flags existing overrides that are no longer needed so you can remove them.
   Yarn's command has no equivalent.
 - **Sectioned layout** — the list is grouped into Dependencies / Dev
   dependencies / Overrides by default (yarn shows one flat list; use

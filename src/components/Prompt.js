@@ -53,6 +53,9 @@ export function Prompt({ audit = false } = {}) {
       e(Box, { marginLeft: 1 }, e(Text, null, 'Press ', e(Key, null, '<ctrl+c>'), ' to abort.')),
       audit
         ? e(Box, { marginLeft: 1 }, e(Text, null, 'Press ', e(Key, null, 'o'), ' to override a vulnerable package.'))
+        : null,
+      audit
+        ? e(Box, { marginLeft: 1 }, e(Text, null, 'Press ', e(Key, null, 'x'), ' to remove an unneeded override.'))
         : null
     )
   );

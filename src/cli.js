@@ -42,6 +42,7 @@ Controls (inside the interactive UI)
   <left>/<right>  select which version to apply (Current / Range / Latest)
   c / r / l       select all packages' Current / Range / Latest column at once
   o               override a vulnerable package to a safe version (audit mode)
+  x               remove an existing override that's no longer needed (audit mode)
   <enter>         apply the selected upgrades (and run npm install)
   <ctrl+c> / esc  abort without changing anything
 `;
@@ -105,7 +106,8 @@ async function main() {
         audit,
         section,
         cwd,
-        onSubmit: (selections, overrides) => resolve({ type: 'submit', selections, overrides }),
+        overrides: manifest.json.overrides || {},
+        onSubmit: (selections, overrides, removals) => resolve({ type: 'submit', selections, overrides, removals }),
         onAbort: () => resolve({ type: 'abort' }),
       }),
       { exitOnCtrlC: false }
@@ -120,12 +122,22 @@ async function main() {
   }
 
   const overrideSelections = result.overrides || {};
-  if (result.selections.size === 0 && Object.keys(overrideSelections).length === 0) {
+  const overrideRemovals = result.removals || [];
+  if (
+    result.selections.size === 0 &&
+    Object.keys(overrideSelections).length === 0 &&
+    overrideRemovals.length === 0
+  ) {
     process.stdout.write('\nNo changes selected.\n');
     return;
   }
 
-  const { applied, overrides } = await applyUpgrades(manifest, result.selections, overrideSelections);
+  const { applied, overrides, removed } = await applyUpgrades(
+    manifest,
+    result.selections,
+    overrideSelections,
+    overrideRemovals
+  );
 
   process.stdout.write('\n');
   const byField = { dependencies: [], devDependencies: [] };
@@ -139,14 +151,17 @@ async function main() {
     }
   }
 
-  if (overrides.length > 0) {
+  if (overrides.length > 0 || removed.length > 0) {
     process.stdout.write('overrides\n');
     for (const change of overrides) {
       process.stdout.write(`  ${change.name}  \u2192 ${change.to}\n`);
     }
+    for (const change of removed) {
+      process.stdout.write(`  ${change.name}  removed\n`);
+    }
   }
 
-  if (applied.length === 0 && overrides.length === 0) {
+  if (applied.length === 0 && overrides.length === 0 && removed.length === 0) {
     process.stdout.write('No effective changes.\n');
     return;
   }

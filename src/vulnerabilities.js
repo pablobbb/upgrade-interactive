@@ -52,6 +52,23 @@ function advisoryCve(advisory) {
   return 'advisory';
 }
 
+// Every semver range that some package in the installed tree declares for
+// `name` — i.e. what would have to resolve if a manual override were removed.
+const RANGE_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
+function requiredRangesFor(packages, name) {
+  const ranges = new Set();
+  for (const info of Object.values(packages || {})) {
+    if (!info || typeof info !== 'object') continue;
+    for (const field of RANGE_FIELDS) {
+      const section = info[field];
+      if (section && typeof section === 'object' && section[name] != null) {
+        ranges.add(section[name]);
+      }
+    }
+  }
+  return [...ranges];
+}
+
 function advisoryUrl(advisory) {
   if (advisory && advisory.url) return advisory.url;
   if (advisory && advisory.github_advisory_id) {
@@ -64,11 +81,12 @@ function advisoryUrl(advisory) {
  * Given the direct descriptors and the installed tree (from the lockfile),
  * check every relevant version against npm's advisory database.
  *
- * @returns {Promise<{ offline: boolean, vulns: Map<string, object> }>}
+ * @returns {Promise<{ offline, vulns, removableOverrides }>}
  *   Each vuln entry: { advisories, severity, isDirect, cve, url, affectedRange,
- *   firstPatched, safeVersions }.
+ *   firstPatched, safeVersions }. `removableOverrides` maps an existing
+ *   `overrides` package name -> { pin, reason: 'dead' | 'redundant' }.
  */
-export async function computeVulnerabilities({ descriptors = [], installed = null } = {}) {
+export async function computeVulnerabilities({ descriptors = [], installed = null, overrides = {} } = {}) {
   const versionsByName = {};
   const add = (name, version) => {
     if (!version) return;
@@ -93,8 +111,41 @@ export async function computeVulnerabilities({ descriptors = [], installed = nul
     if (best) add(d.name, best);
   });
 
+  // For each existing top-level override, work out what version(s) would be
+  // installed *without* it, so we can tell whether it's still doing anything.
+  const overrideEntries = Object.entries(overrides || {}).filter(
+    ([, pin]) => typeof pin === 'string' && !pin.startsWith('$')
+  );
+  const overrideInfo = new Map();
+  await mapWithConcurrency(overrideEntries, CONCURRENCY, async ([name, pin]) => {
+    const ranges = installed && installed.packages ? requiredRangesFor(installed.packages, name) : [];
+    if (ranges.length === 0) {
+      // Nothing in the tree depends on it anymore — the override is dead weight.
+      overrideInfo.set(name, { pin, reason: 'dead', candidates: [], resolvable: true });
+      return;
+    }
+    const meta = await fetchPackageMeta(name);
+    if (!meta) {
+      overrideInfo.set(name, { pin, ranges, candidates: [], resolvable: false });
+      return;
+    }
+    const candidates = [];
+    let resolvable = true;
+    for (const r of ranges) {
+      if (!semver.validRange(r)) {
+        resolvable = false;
+        continue;
+      }
+      const best = semver.maxSatisfying(meta.versions, r, { includePrerelease: false });
+      if (best) candidates.push(best);
+      else resolvable = false;
+    }
+    for (const c of candidates) add(name, c);
+    overrideInfo.set(name, { pin, ranges, candidates, resolvable });
+  });
+
   if (Object.keys(versionsByName).length === 0) {
-    return { offline: false, vulns: new Map() };
+    return { offline: false, vulns: new Map(), removableOverrides: new Map() };
   }
 
   const { ok, advisories } = await fetchBulkAdvisories(versionsByName);
@@ -164,5 +215,22 @@ export async function computeVulnerabilities({ descriptors = [], installed = nul
     });
   });
 
-  return { offline: !ok, vulns };
+  // An override is removable when nothing depends on the package anymore
+  // ('dead'), or when — given we could reach the advisory data — every version
+  // its dependents would resolve to without the override is non-vulnerable
+  // ('redundant'). We never flag when we couldn't check or resolve, to avoid
+  // suggesting the removal of an override that's still protecting the tree.
+  const removableOverrides = new Map();
+  for (const [name, info] of overrideInfo) {
+    if (info.reason === 'dead') {
+      removableOverrides.set(name, { pin: info.pin, reason: 'dead' });
+      continue;
+    }
+    if (!ok || !info.resolvable || info.candidates.length === 0) continue;
+    const adv = advisories.get(name) || [];
+    const stillVulnerable = info.candidates.some((v) => matchesAny(v, adv));
+    if (!stillVulnerable) removableOverrides.set(name, { pin: info.pin, reason: 'redundant' });
+  }
+
+  return { offline: !ok, vulns, removableOverrides };
 }

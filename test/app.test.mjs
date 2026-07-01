@@ -227,6 +227,41 @@ async function testOverrideFlow() {
   assert(overrides && overrides.chalk === '5.0.0', 'selecting a version stages an overrides entry that is passed to onSubmit');
 }
 
+async function testRemovableOverride() {
+  const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
+  const removableOverrides = new Map([['left-pad', { pin: '1.3.0', reason: 'dead' }]]);
+  let submitted = null;
+  let removals = null;
+  const { stdin, lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      audit: true,
+      section: true,
+      runAudit: async () => ({ offline: false, vulns: new Map(), removableOverrides }),
+      onSubmit: (sel, ovr, rem) => {
+        submitted = sel;
+        removals = rem;
+      },
+      onAbort: () => {},
+    })
+  );
+
+  await wait(3500);
+  const frame = lastFrame();
+  assert(frame.includes('left-pad') && frame.includes('not needed'), 'a no-longer-needed override is listed under Overrides');
+
+  stdin.write('[B'); // down from chalk -> left-pad override row
+  await wait(50);
+  stdin.write('x'); // stage removal
+  await wait(50);
+  assert(lastFrame().includes('removing override'), "'x' stages the override for removal");
+  stdin.write('\r'); // submit
+  await wait(100);
+  unmount();
+
+  assert(removals && removals.includes('left-pad'), 'the removal is passed to onSubmit');
+}
+
 async function main() {
   await testBasicFlow();
   await testAbort();
@@ -235,6 +270,7 @@ async function main() {
   await testAuditDisabled();
   await testOfflineNotice();
   await testOverrideFlow();
+  await testRemovableOverride();
 
   if (failures > 0) {
     console.error(`\n${failures} test(s) failed.`);
