@@ -1,0 +1,37 @@
+{
+  "name": "npm-upgrade-interactive",
+  "version": "1.0.0",
+  "description": "A faithful clone of `yarn upgrade-interactive` (Yarn Berry / Yarn 4) for npm projects.",
+  "type": "module",
+  "bin": {
+    "npm-upgrade-interactive": "./src/cli.js",
+    "nui": "./src/cli.js"
+  },
+  "main": "./src/cli.js",
+  "scripts": {
+    "test": "node test/app.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "src"
+  ],
+  "keywords": [
+    "npm",
+    "yarn",
+    "upgrade-interactive",
+    "dependencies",
+    "cli",
+    "interactive"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "ink": "^5.2.1",
+    "react": "^18.3.1",
+    "semver": "^7.8.5"
+  },
+  "devDependencies": {
+    "ink-testing-library": "^4.0.0"
+  }
+}
