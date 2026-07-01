@@ -1,7 +1,7 @@
 {
   "name": "upgrade-interactive",
-  "version": "1.0.0",
-  "description": "A faithful clone of `yarn upgrade-interactive` (Yarn Berry / Yarn 4) for npm projects.",
+  "version": "1.1.0",
+  "description": "An interactive dependency upgrader for npm projects, inspired by `yarn upgrade-interactive` (Yarn Berry / Yarn 4), with built-in vulnerability warnings.",
   "type": "module",
   "bin": {
     "upgrade-interactive": "./src/cli.js",
