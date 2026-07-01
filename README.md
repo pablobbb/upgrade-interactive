@@ -1,9 +1,12 @@
 # upgrade-interactive
 
-A clone of `yarn upgrade-interactive` (the Yarn Berry / Yarn 4 version, built into
-Yarn since v4) for npm projects. It was built by reading Yarn's actual source
-(`@yarnpkg/plugin-interactive-tools`) rather than guessing at the UI, so the
-keybindings, columns, and version-suggestion logic mirror it closely.
+An interactive dependency upgrader for npm projects, **inspired by** `yarn
+upgrade-interactive` (the Yarn Berry / Yarn 4 version, built into Yarn since v4).
+The three-column layout, keybindings, and version-suggestion logic follow yarn's
+closely — they were built by reading Yarn's actual source
+(`@yarnpkg/plugin-interactive-tools`) — but this tool also adds things yarn
+doesn't have, notably built-in **vulnerability warnings** and one-key npm
+**`overrides`**, so it deliberately diverges where that improves the experience.
 
 ## Install / run
 
@@ -16,11 +19,20 @@ nui
 
 Requires Node 18+ and an interactive terminal.
 
-### Using it inside a project (`npm run`)
+### Using it inside a project
 
-npm has no plugin system for adding real subcommands the way yarn does, so
-`npm upgrade-interactive` (no `run`) isn't possible. The closest equivalent,
-and the standard way to wire up any custom npm command, is a script entry:
+Because this package ships a `bin`, you don't need `npm run` — or any
+`package.json` change — to use it in a project. Install it and call it with npx:
+
+```sh
+npm install -D upgrade-interactive
+npx upgrade-interactive     # runs the locally-installed copy (npx prefers node_modules/.bin)
+npx nui                      # same thing, short name
+```
+
+npm has no plugin/subcommand system the way Yarn Berry does, so the literal
+`npm upgrade-interactive` isn't possible — but `npx upgrade-interactive` is the
+native, no-`run` equivalent. If you'd still rather have a named script, add:
 
 ```json
 "scripts": {
@@ -28,7 +40,7 @@ and the standard way to wire up any custom npm command, is a script entry:
 }
 ```
 
-Then `npm run upgrade-interactive` works from that project, every time.
+and run `npm run upgrade-interactive`.
 
 ## What it does
 
@@ -43,7 +55,21 @@ Then `npm run upgrade-interactive` works from that project, every time.
    entirely — same as yarn.
 3. Lets you pick, per package, whether to stay on **Current**, take the
    **Range** upgrade, or take the **Latest** upgrade.
-4. Writes your choices back into `package.json` and runs `npm install`.
+4. **Checks for known vulnerabilities** (on by default) against npm's advisory
+   database, covering both your **direct and transitive** dependencies. A
+   flagged row shows a ⚠ icon, the severity (`low` / `moderate` / `high` /
+   `critical`), and the CVE id as a clickable link to the advisory — with the
+   plain URL printed alongside it when your terminal can't render clickable
+   links. The affected range and first fixed version are shown inline.
+5. Lets you press `o` on a vulnerable package to **pin it to a safe version via
+   an npm `overrides` entry** — the main way to patch a *transitive* dependency
+   you don't directly control.
+6. Writes your choices (and any overrides) back into `package.json` and runs
+   `npm install`.
+
+By default the list is grouped into **Dependencies**, **Dev dependencies**, and
+**Overrides** (transitive packages you've flagged for an override) sections. Pass
+`--no-section` for a single flat list.
 
 ## Controls
 
@@ -52,6 +78,7 @@ Then `npm run upgrade-interactive` works from that project, every time.
 | `↑` / `↓`          | Move between packages                                |
 | `←` / `→`          | Move between Current / Range / Latest for that package |
 | `c` / `r` / `l`     | Select **c**urrent / **r**ange / **l**atest for *every* package at once |
+| `o`                | Override the focused vulnerable package to a safe version (audit mode) |
 | `Enter`            | Apply the selected upgrades and run `npm install`     |
 | `Ctrl+C` / `Esc`   | Abort — nothing is written                            |
 
@@ -62,11 +89,34 @@ changed highlighted — same idea as yarn's diff highlighting.
 ## Flags
 
 - `--no-install` — update `package.json` only, skip the `npm install` step
+- `--audit` / `--no-audit` — enable/disable the vulnerability check (default: on)
+- `--section` / `--no-section` — grouped sections vs a flat list (default: on)
 - `-h, --help`, `-v, --version`
+
+### Persisting audit / section preferences
+
+Audit and sectioning are both on by default. To change the default permanently,
+set an environment variable or a `package.json` config block:
+
+```json
+"upgrade-interactive": { "audit": false, "section": true }
+```
+
+```sh
+NUI_AUDIT=0 npx upgrade-interactive     # disable auditing for this run
+```
+
+Precedence, highest first: command-line flag → `NUI_AUDIT` / `NUI_SECTION`
+environment variable → `package.json` config → default (on).
+
+> Vulnerability data comes from npm's advisory endpoint, so auditing needs
+> network access. When it can't reach the network the tool says so
+> (`no network — couldn't check for vulnerable packages`) rather than pretending
+> everything is clean, and the upgrade flow works as normal.
 
 ## How closely does this match yarn?
 
-Matched exactly:
+Follows yarn closely:
 - The three-column Current/Range/Latest layout and the help text wording
 - The up/down/left/right navigation model (selection = which column is
   highlighted per row, not a separate checkbox)
@@ -76,7 +126,13 @@ Matched exactly:
 - The version-diff coloring algorithm (segment-by-segment: modifier → major
   → minor → patch)
 
-Intentional differences:
+Deliberate additions / differences (this is *inspired by* yarn, not a clone):
+- **Vulnerability warnings + `overrides`** — flags vulnerable direct and
+  transitive packages and lets you pin a safe version via npm `overrides`.
+  Yarn's command has no equivalent.
+- **Sectioned layout** — the list is grouped into Dependencies / Dev
+  dependencies / Overrides by default (yarn shows one flat list; use
+  `--no-section` to match that).
 - Only plain semver ranges are resolved (git/file/link/workspace ranges,
   and compound ranges like `>=1.0.0 <2.0.0`, are skipped — yarn handles
   these through its pluggable resolvers, which is out of scope here).
@@ -92,12 +148,16 @@ Intentional differences:
 
 ```
 src/
-  cli.js                 entry point, arg parsing, apply + npm install
-  registry.js             npm registry client
+  cli.js                 entry point, arg/flag parsing, apply + npm install
+  registry.js             npm registry client + bulk advisory lookup
   semver-suggest.js       Current/Range/Latest suggestion + diff coloring
-  package-file.js          package.json read/write
+  package-file.js          package.json read/write (+ overrides)
+  lockfile.js             installed versions from package-lock.json
+  vulnerabilities.js      advisory orchestration + severity/safe-version logic
+  links.js                OSC 8 terminal hyperlinks (with fallback)
   components/
     App.js                 state machine + keybindings
+    OverridePicker.js      safe-version chooser overlay
     Header.js, Prompt.js, Row.js   presentation
 test/
   app.test.mjs            simulated-keypress smoke tests (ink-testing-library)

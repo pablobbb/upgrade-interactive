@@ -45,6 +45,55 @@ export async function fetchPackageMeta(name) {
 }
 
 /**
+ * Look up known vulnerabilities for a set of installed versions via npm's bulk
+ * advisories endpoint (the same one `npm audit` uses; no auth required).
+ *
+ * @param {Record<string, Iterable<string>>} versionsByName
+ * @returns {Promise<{ ok: boolean, advisories: Map<string, object[]> }>}
+ *   `advisories` maps package name -> advisory objects that affect at least one
+ *   submitted version. `ok` is false when a network/HTTP error occurred, so
+ *   callers can distinguish "no vulnerabilities" from "couldn't check".
+ */
+export async function fetchBulkAdvisories(versionsByName) {
+  const names = Object.keys(versionsByName);
+  const advisories = new Map();
+  if (names.length === 0) return { ok: true, advisories };
+
+  const CHUNK = 200;
+  let ok = true;
+
+  for (let i = 0; i < names.length; i += CHUNK) {
+    const slice = names.slice(i, i + CHUNK);
+    const body = {};
+    for (const name of slice) body[name] = Array.from(versionsByName[name]);
+
+    try {
+      const res = await fetch(`${REGISTRY}/-/npm/v1/security/advisories/bulk`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'User-Agent': 'upgrade-interactive',
+        },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        ok = false;
+        continue;
+      }
+      const json = await res.json();
+      for (const [name, list] of Object.entries(json || {})) {
+        if (Array.isArray(list) && list.length > 0) advisories.set(name, list);
+      }
+    } catch {
+      ok = false;
+    }
+  }
+
+  return { ok, advisories };
+}
+
+/**
  * Run `worker` over `items` with at most `limit` in flight at once.
  * Calls `onEach(result, item, index)` as each one resolves (out of order).
  */

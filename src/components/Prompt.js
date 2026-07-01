@@ -7,7 +7,7 @@ function Key({ children }) {
   return e(Text, { bold: true, color: 'cyanBright' }, children);
 }
 
-export function Prompt() {
+export function Prompt({ audit = false } = {}) {
   return e(
     Box,
     { flexDirection: 'row' },
@@ -50,7 +50,10 @@ export function Prompt() {
       Box,
       { flexDirection: 'column' },
       e(Box, { marginLeft: 1 }, e(Text, null, 'Press ', e(Key, null, '<enter>'), ' to install.')),
-      e(Box, { marginLeft: 1 }, e(Text, null, 'Press ', e(Key, null, '<ctrl+c>'), ' to abort.'))
+      e(Box, { marginLeft: 1 }, e(Text, null, 'Press ', e(Key, null, '<ctrl+c>'), ' to abort.')),
+      audit
+        ? e(Box, { marginLeft: 1 }, e(Text, null, 'Press ', e(Key, null, 'o'), ' to override a vulnerable package.'))
+        : null
     )
   );
 }

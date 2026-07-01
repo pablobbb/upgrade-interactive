@@ -2,9 +2,12 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
-import { Row, LoadingRow } from './Row.js';
+import { Row, VulnRow, LoadingRow, SectionHeader } from './Row.js';
+import { OverridePicker } from './OverridePicker.js';
 import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
+import { loadInstalledVersions } from '../lockfile.js';
+import { computeVulnerabilities } from '../vulnerabilities.js';
 
 const e = React.createElement;
 const CONCURRENCY = 8;
@@ -13,29 +16,32 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
-function findNavigable(entries, from, direction) {
-  let i = from;
-  for (let step = 0; step < entries.length; step++) {
-    i += direction;
-    if (i < 0 || i >= entries.length) return from;
-    if (entries[i] && typeof entries[i] === 'object') return i;
-  }
-  return from;
+function isNavigable(row) {
+  return row.kind === 'dep' || row.kind === 'vuln';
 }
 
-function firstNavigable(entries) {
-  for (let i = 0; i < entries.length; i++) {
-    if (entries[i] && typeof entries[i] === 'object') return i;
-  }
-  return -1;
+async function defaultRunAudit({ cwd, descriptors }) {
+  const installed = await loadInstalledVersions(cwd);
+  return computeVulnerabilities({ descriptors, installed });
 }
 
-export function App({ descriptors, onSubmit, onAbort }) {
+export function App({
+  descriptors,
+  onSubmit,
+  onAbort,
+  audit = false,
+  section = false,
+  cwd = process.cwd(),
+  runAudit = defaultRunAudit,
+}) {
   const { exit } = useApp();
   const [entries, setEntries] = useState(() => descriptors.map(() => null));
   const [allLoaded, setAllLoaded] = useState(descriptors.length === 0);
-  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [focusedKey, setFocusedKey] = useState(null);
   const [selectedColumns, setSelectedColumns] = useState({});
+  const [stagedOverrides, setStagedOverrides] = useState({});
+  const [auditState, setAuditState] = useState(null); // { offline, vulns } | null
+  const [override, setOverride] = useState(null); // { name, versions } | null
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -44,6 +50,7 @@ export function App({ descriptors, onSubmit, onAbort }) {
     };
   }, []);
 
+  // Load upgrade suggestions for each descriptor.
   useEffect(() => {
     if (descriptors.length === 0) return;
     let cancelled = false;
@@ -73,29 +80,103 @@ export function App({ descriptors, onSubmit, onAbort }) {
     };
   }, [descriptors]);
 
-  // Keep focus pinned to a navigable (loaded, upgradeable) row as things load in.
+  // Check installed + range-resolved versions against npm's advisory database.
   useEffect(() => {
-    if (focusedIndex !== -1 && entries[focusedIndex] && typeof entries[focusedIndex] === 'object') return;
-    const next = firstNavigable(entries);
-    if (next !== focusedIndex) setFocusedIndex(next);
-  }, [entries, focusedIndex]);
+    if (!audit) return;
+    let cancelled = false;
+
+    Promise.resolve(runAudit({ cwd, descriptors }))
+      .then((res) => {
+        if (cancelled || !mountedRef.current) return;
+        setAuditState(res || { offline: false, vulns: new Map() });
+      })
+      .catch(() => {
+        if (cancelled || !mountedRef.current) return;
+        setAuditState({ offline: true, vulns: new Map() });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [audit, cwd, descriptors, runAudit]);
+
+  // ---- Build the ordered display list (headers + rows) ----------------------
+  const vulns = auditState ? auditState.vulns : null;
+
+  const depItems = descriptors.map((descriptor, i) => ({ descriptor, entry: entries[i], i }));
+  const visibleDeps = allLoaded ? depItems.filter((x) => x.entry !== null) : depItems;
+
+  const depRow = (x) =>
+    x.entry === null
+      ? { kind: 'loading', key: `loading:${x.i}` }
+      : {
+          kind: 'dep',
+          key: `dep:${x.descriptor.name}`,
+          descriptor: x.descriptor,
+          entry: x.entry,
+          vuln: vulns ? vulns.get(x.descriptor.name) || null : null,
+        };
+
+  // A vuln shows inline on its dep row when that package has an upgrade row;
+  // everything else (transitive deps, or direct deps with no upgrade available)
+  // falls through to the Overrides section so it's never silently dropped.
+  const shownDepNames = new Set(visibleDeps.filter((x) => x.entry !== null).map((x) => x.descriptor.name));
+  const overrideVulns = vulns
+    ? [...vulns.entries()].filter(([name]) => !shownDepNames.has(name))
+    : [];
+
+  const rows = [];
+  const pushOverrides = () => {
+    if (overrideVulns.length === 0) return;
+    rows.push({ kind: 'header', key: 'h:overrides', title: 'Overrides' });
+    for (const [name, vuln] of overrideVulns) {
+      rows.push({ kind: 'vuln', key: `vuln:${name}`, name, vuln });
+    }
+  };
+
+  if (section) {
+    const deps = visibleDeps.filter((x) => x.descriptor.field === 'dependencies');
+    const dev = visibleDeps.filter((x) => x.descriptor.field === 'devDependencies');
+    if (deps.length > 0) {
+      rows.push({ kind: 'header', key: 'h:deps', title: 'Dependencies' });
+      for (const x of deps) rows.push(depRow(x));
+    }
+    if (dev.length > 0) {
+      rows.push({ kind: 'header', key: 'h:dev', title: 'Dev dependencies' });
+      for (const x of dev) rows.push(depRow(x));
+    }
+    pushOverrides();
+  } else {
+    for (const x of visibleDeps) rows.push(depRow(x));
+    pushOverrides();
+  }
+
+  const navKeys = rows.filter(isNavigable).map((r) => r.key);
+  const navKeyStr = navKeys.join('|');
+  const focusedRow = rows.find((r) => r.key === focusedKey) || null;
+
+  // Keep focus on a navigable row as things load in / vulns arrive.
+  useEffect(() => {
+    if (focusedKey && navKeys.includes(focusedKey)) return;
+    setFocusedKey(navKeys[0] ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navKeyStr, focusedKey]);
 
   const cycleColumn = useCallback(
     (direction) => {
-      if (focusedIndex === -1) return;
-      const entry = entries[focusedIndex];
-      if (!entry) return;
-      const name = entry.descriptor.name;
+      if (!focusedRow || focusedRow.kind !== 'dep') return;
+      const { suggestions } = focusedRow.entry;
+      const name = focusedRow.descriptor.name;
       const current = selectedColumns[name] ?? 0;
       let next = current;
-      for (let step = 0; step < entry.suggestions.length; step++) {
-        next = clamp(next + direction, 0, entry.suggestions.length - 1);
-        if (entry.suggestions[next].spans.length > 0 || next === 0) break;
+      for (let step = 0; step < suggestions.length; step++) {
+        next = clamp(next + direction, 0, suggestions.length - 1);
+        if (suggestions[next].spans.length > 0 || next === 0) break;
         if (next === current) break;
       }
       setSelectedColumns((prev) => ({ ...prev, [name]: next }));
     },
-    [focusedIndex, entries, selectedColumns]
+    [focusedRow, selectedColumns]
   );
 
   const bulkSelect = useCallback(
@@ -105,13 +186,9 @@ export function App({ descriptors, onSubmit, onAbort }) {
         for (const entry of entries) {
           if (!entry) continue;
           const { name } = entry.descriptor;
-          if (which === 'c') {
-            next[name] = 0;
-          } else if (which === 'r') {
-            next[name] = 1;
-          } else if (which === 'l') {
-            next[name] = entry.suggestions[2].value != null ? 2 : 1;
-          }
+          if (which === 'c') next[name] = 0;
+          else if (which === 'r') next[name] = 1;
+          else if (which === 'l') next[name] = entry.suggestions[2].value != null ? 2 : 1;
         }
         return next;
       });
@@ -119,55 +196,58 @@ export function App({ descriptors, onSubmit, onAbort }) {
     [entries]
   );
 
-  useInput((input, key) => {
-    if (key.ctrl && input === 'c') {
-      onAbort();
-      exit();
-      return;
-    }
-    if (key.escape) {
-      onAbort();
-      exit();
-      return;
-    }
-    if (key.upArrow) {
-      setFocusedIndex((idx) => findNavigable(entries, idx, -1));
-      return;
-    }
-    if (key.downArrow) {
-      setFocusedIndex((idx) => findNavigable(entries, idx, 1));
-      return;
-    }
-    if (key.leftArrow) {
-      cycleColumn(-1);
-      return;
-    }
-    if (key.rightArrow) {
-      cycleColumn(1);
-      return;
-    }
-    if (input === 'c' || input === 'r' || input === 'l') {
-      bulkSelect(input);
-      return;
-    }
-    if (key.return) {
-      const selections = new Map();
-      for (const entry of entries) {
-        if (!entry) continue;
-        const col = selectedColumns[entry.descriptor.name] ?? 0;
-        const value = entry.suggestions[col]?.value ?? null;
-        if (value) selections.set(entry.descriptor.name, value);
+  const openOverride = useCallback(() => {
+    if (!audit || !focusedRow) return;
+    const vuln = focusedRow.kind === 'dep' ? focusedRow.vuln : focusedRow.vuln;
+    if (!vuln || !vuln.safeVersions || vuln.safeVersions.length === 0) return;
+    const name = focusedRow.kind === 'dep' ? focusedRow.descriptor.name : focusedRow.name;
+    setOverride({ name, versions: vuln.safeVersions });
+  }, [audit, focusedRow]);
+
+  const moveFocus = useCallback(
+    (direction) => {
+      setFocusedKey((cur) => {
+        const idx = navKeys.indexOf(cur);
+        if (idx === -1) return navKeys[0] ?? null;
+        const nextIdx = idx + direction;
+        if (nextIdx < 0 || nextIdx >= navKeys.length) return cur;
+        return navKeys[nextIdx];
+      });
+    },
+    [navKeyStr] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  useInput(
+    (input, key) => {
+      if ((key.ctrl && input === 'c') || key.escape) {
+        onAbort();
+        exit();
+        return;
       }
-      onSubmit(selections);
-      exit();
-    }
-  });
+      if (key.upArrow) return moveFocus(-1);
+      if (key.downArrow) return moveFocus(1);
+      if (key.leftArrow) return cycleColumn(-1);
+      if (key.rightArrow) return cycleColumn(1);
+      if (input === 'o') return openOverride();
+      if (input === 'c' || input === 'r' || input === 'l') return bulkSelect(input);
+      if (key.return) {
+        const selections = new Map();
+        for (const entry of entries) {
+          if (!entry) continue;
+          const col = selectedColumns[entry.descriptor.name] ?? 0;
+          const value = entry.suggestions[col]?.value ?? null;
+          if (value) selections.set(entry.descriptor.name, value);
+        }
+        onSubmit(selections, { ...stagedOverrides });
+        exit();
+      }
+    },
+    { isActive: override == null }
+  );
 
-  const displayIndices = allLoaded
-    ? entries.map((_, i) => i).filter((i) => entries[i] !== null)
-    : entries.map((_, i) => i);
+  const auditDone = !audit || auditState !== null;
 
-  if (allLoaded && displayIndices.length === 0) {
+  if (allLoaded && auditDone && rows.length === 0) {
     return e(
       Box,
       { flexDirection: 'column' },
@@ -178,30 +258,55 @@ export function App({ descriptors, onSubmit, onAbort }) {
   }
 
   const termRows = (process.stdout && process.stdout.rows) || 24;
-  const maxRows = Math.max(5, termRows - 11);
-  const posInDisplay = Math.max(0, displayIndices.indexOf(focusedIndex));
-  let windowStart = clamp(posInDisplay - Math.floor(maxRows / 2), 0, Math.max(0, displayIndices.length - maxRows));
-  const windowEnd = Math.min(displayIndices.length, windowStart + maxRows);
-  const visible = displayIndices.slice(windowStart, windowEnd);
+  const maxRows = Math.max(5, termRows - 12);
+  const focusedIndex = Math.max(0, rows.findIndex((r) => r.key === focusedKey));
+  let windowStart = clamp(focusedIndex - Math.floor(maxRows / 2), 0, Math.max(0, rows.length - maxRows));
+  const windowEnd = Math.min(rows.length, windowStart + maxRows);
+  const visible = rows.slice(windowStart, windowEnd);
 
   return e(
     Box,
     { flexDirection: 'column' },
-    e(Prompt, null),
+    e(Prompt, { audit }),
     e(Header, null),
-    windowStart > 0 ? e(Text, { dimColor: true }, `  \u2191 ${windowStart} more above`) : null,
-    ...visible.map((i) => {
-      const entry = entries[i];
-      if (!entry) return e(LoadingRow, { key: i });
-      const col = selectedColumns[entry.descriptor.name] ?? 0;
+    audit && auditState && auditState.offline
+      ? e(Text, { color: 'yellow' }, "  ℹ no network — couldn't check for vulnerable packages")
+      : null,
+    windowStart > 0 ? e(Text, { dimColor: true }, `  ↑ ${windowStart} more above`) : null,
+    ...visible.map((row) => {
+      if (row.kind === 'header') return e(SectionHeader, { key: row.key, title: row.title });
+      if (row.kind === 'loading') return e(LoadingRow, { key: row.key });
+      if (row.kind === 'vuln') {
+        return e(VulnRow, {
+          key: row.key,
+          name: row.name,
+          active: row.key === focusedKey,
+          vuln: row.vuln,
+          override: stagedOverrides[row.name],
+        });
+      }
+      const col = selectedColumns[row.descriptor.name] ?? 0;
       return e(Row, {
-        key: i,
-        name: entry.descriptor.name,
-        active: i === focusedIndex,
-        suggestions: entry.suggestions,
+        key: row.key,
+        name: row.descriptor.name,
+        active: row.key === focusedKey,
+        suggestions: row.entry.suggestions,
         selectedColumn: col,
+        vuln: row.vuln,
+        override: stagedOverrides[row.descriptor.name],
       });
     }),
-    windowEnd < displayIndices.length ? e(Text, { dimColor: true }, `  \u2193 ${displayIndices.length - windowEnd} more below`) : null
+    windowEnd < rows.length ? e(Text, { dimColor: true }, `  ↓ ${rows.length - windowEnd} more below`) : null,
+    override
+      ? e(OverridePicker, {
+          name: override.name,
+          versions: override.versions,
+          onSelect: (version) => {
+            setStagedOverrides((prev) => ({ ...prev, [override.name]: version }));
+            setOverride(null);
+          },
+          onCancel: () => setOverride(null),
+        })
+      : null
   );
 }

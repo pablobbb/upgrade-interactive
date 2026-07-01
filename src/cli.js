@@ -15,23 +15,48 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HELP = `
 upgrade-interactive (nui)
 
-A faithful clone of "yarn upgrade-interactive" (Yarn Berry / Yarn 4) for npm projects.
+An interactive dependency upgrader for npm projects, inspired by yarn's
+"upgrade-interactive" (Yarn Berry / Yarn 4).
 
 Usage
   $ npx upgrade-interactive [options]
 
 Options
-  --no-install   Update package.json only, skip running "npm install" afterwards
-  -h, --help     Show this help message
-  -v, --version  Show the version number
+  --no-install    Update package.json only, skip running "npm install" afterwards
+  --audit         Flag vulnerable packages (default: on)
+  --no-audit      Skip the vulnerability check (no advisory network calls)
+  --section       Group the list into Dependencies / Dev dependencies / Overrides (default: on)
+  --no-section    Show one flat list instead
+  -h, --help      Show this help message
+  -v, --version   Show the version number
+
+Audit and sectioning are on by default. Persist a preference either way with the
+NUI_AUDIT / NUI_SECTION environment variables, or a package.json config block:
+
+  "upgrade-interactive": { "audit": false, "section": true }
+
+Precedence: command-line flag > environment variable > package.json config > default (on).
 
 Controls (inside the interactive UI)
   <up>/<down>     select a package
   <left>/<right>  select which version to apply (Current / Range / Latest)
   c / r / l       select all packages' Current / Range / Latest column at once
+  o               override a vulnerable package to a safe version (audit mode)
   <enter>         apply the selected upgrades (and run npm install)
   <ctrl+c> / esc  abort without changing anything
 `;
+
+// Resolve a boolean toggle from flags > env var > package.json config > default(true).
+function resolveToggle({ args, env, config, onFlag, offFlag, envVar, configKey }) {
+  if (args.includes(offFlag)) return false;
+  if (args.includes(onFlag)) return true;
+  const envVal = env[envVar];
+  if (envVal != null && envVal !== '') {
+    return !/^(0|false|no|off)$/i.test(envVal.trim());
+  }
+  if (config && typeof config[configKey] === 'boolean') return config[configKey];
+  return true;
+}
 
 async function main() {
   const args = process.argv.slice(2);
@@ -65,11 +90,22 @@ async function main() {
     return;
   }
 
+  const config = manifest.json['upgrade-interactive'];
+  const audit = resolveToggle({
+    args, env: process.env, config, onFlag: '--audit', offFlag: '--no-audit', envVar: 'NUI_AUDIT', configKey: 'audit',
+  });
+  const section = resolveToggle({
+    args, env: process.env, config, onFlag: '--section', offFlag: '--no-section', envVar: 'NUI_SECTION', configKey: 'section',
+  });
+
   const result = await new Promise((resolve) => {
     const { waitUntilExit } = render(
       e(App, {
         descriptors: manifest.descriptors,
-        onSubmit: (selections) => resolve({ type: 'submit', selections }),
+        audit,
+        section,
+        cwd,
+        onSubmit: (selections, overrides) => resolve({ type: 'submit', selections, overrides }),
         onAbort: () => resolve({ type: 'abort' }),
       }),
       { exitOnCtrlC: false }
@@ -83,12 +119,13 @@ async function main() {
     return;
   }
 
-  if (result.selections.size === 0) {
+  const overrideSelections = result.overrides || {};
+  if (result.selections.size === 0 && Object.keys(overrideSelections).length === 0) {
     process.stdout.write('\nNo changes selected.\n');
     return;
   }
 
-  const applied = await applyUpgrades(manifest, result.selections);
+  const { applied, overrides } = await applyUpgrades(manifest, result.selections, overrideSelections);
 
   process.stdout.write('\n');
   const byField = { dependencies: [], devDependencies: [] };
@@ -100,6 +137,18 @@ async function main() {
     for (const change of byField[field]) {
       process.stdout.write(`  ${change.name}  ${change.from} \u2192 ${change.to}\n`);
     }
+  }
+
+  if (overrides.length > 0) {
+    process.stdout.write('overrides\n');
+    for (const change of overrides) {
+      process.stdout.write(`  ${change.name}  \u2192 ${change.to}\n`);
+    }
+  }
+
+  if (applied.length === 0 && overrides.length === 0) {
+    process.stdout.write('No effective changes.\n');
+    return;
   }
 
   if (skipInstall) {
