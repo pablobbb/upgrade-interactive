@@ -11,6 +11,10 @@ import { computeVulnerabilities } from '../vulnerabilities.js';
 
 const e = React.createElement;
 const CONCURRENCY = 8;
+// Stable reference so `overrides` defaulting doesn't allocate a fresh object
+// each render — otherwise the audit effect's deps change every commit and it
+// re-runs in an unbounded loop.
+const EMPTY_OVERRIDES = Object.freeze({});
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
@@ -32,7 +36,7 @@ export function App({
   audit = false,
   section = false,
   cwd = process.cwd(),
-  overrides = {},
+  overrides = EMPTY_OVERRIDES,
   runAudit = defaultRunAudit,
 }) {
   const { exit } = useApp();
