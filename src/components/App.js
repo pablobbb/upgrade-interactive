@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
-import { Row, VulnRow, LoadingRow, SectionHeader } from './Row.js';
+import { Row, VulnRow, OverrideRow, LoadingRow, SectionHeader } from './Row.js';
 import { OverridePicker } from './OverridePicker.js';
 import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
@@ -17,12 +17,12 @@ function clamp(n, min, max) {
 }
 
 function isNavigable(row) {
-  return row.kind === 'dep' || row.kind === 'vuln';
+  return row.kind === 'dep' || row.kind === 'vuln' || row.kind === 'override';
 }
 
-async function defaultRunAudit({ cwd, descriptors }) {
+async function defaultRunAudit({ cwd, descriptors, overrides }) {
   const installed = await loadInstalledVersions(cwd);
-  return computeVulnerabilities({ descriptors, installed });
+  return computeVulnerabilities({ descriptors, installed, overrides });
 }
 
 export function App({
@@ -32,6 +32,7 @@ export function App({
   audit = false,
   section = false,
   cwd = process.cwd(),
+  overrides = {},
   runAudit = defaultRunAudit,
 }) {
   const { exit } = useApp();
@@ -40,7 +41,8 @@ export function App({
   const [focusedKey, setFocusedKey] = useState(null);
   const [selectedColumns, setSelectedColumns] = useState({});
   const [stagedOverrides, setStagedOverrides] = useState({});
-  const [auditState, setAuditState] = useState(null); // { offline, vulns } | null
+  const [stagedRemovals, setStagedRemovals] = useState({}); // { name: true }
+  const [auditState, setAuditState] = useState(null); // { offline, vulns, removableOverrides } | null
   const [override, setOverride] = useState(null); // { name, versions } | null
   const mountedRef = useRef(true);
 
@@ -85,7 +87,7 @@ export function App({
     if (!audit) return;
     let cancelled = false;
 
-    Promise.resolve(runAudit({ cwd, descriptors }))
+    Promise.resolve(runAudit({ cwd, descriptors, overrides }))
       .then((res) => {
         if (cancelled || !mountedRef.current) return;
         setAuditState(res || { offline: false, vulns: new Map() });
@@ -98,7 +100,7 @@ export function App({
     return () => {
       cancelled = true;
     };
-  }, [audit, cwd, descriptors, runAudit]);
+  }, [audit, cwd, descriptors, overrides, runAudit]);
 
   // ---- Build the ordered display list (headers + rows) ----------------------
   const vulns = auditState ? auditState.vulns : null;
@@ -124,13 +126,18 @@ export function App({
   const overrideVulns = vulns
     ? [...vulns.entries()].filter(([name]) => !shownDepNames.has(name))
     : [];
+  const removable = auditState && auditState.removableOverrides ? auditState.removableOverrides : null;
+  const removableList = removable ? [...removable.entries()] : [];
 
   const rows = [];
   const pushOverrides = () => {
-    if (overrideVulns.length === 0) return;
+    if (overrideVulns.length === 0 && removableList.length === 0) return;
     rows.push({ kind: 'header', key: 'h:overrides', title: 'Overrides' });
     for (const [name, vuln] of overrideVulns) {
       rows.push({ kind: 'vuln', key: `vuln:${name}`, name, vuln });
+    }
+    for (const [name, info] of removableList) {
+      rows.push({ kind: 'override', key: `ovr:${name}`, name, pin: info.pin, reason: info.reason });
     }
   };
 
@@ -198,10 +205,22 @@ export function App({
 
   const openOverride = useCallback(() => {
     if (!audit || !focusedRow) return;
-    const vuln = focusedRow.kind === 'dep' ? focusedRow.vuln : focusedRow.vuln;
+    if (focusedRow.kind !== 'dep' && focusedRow.kind !== 'vuln') return;
+    const vuln = focusedRow.vuln;
     if (!vuln || !vuln.safeVersions || vuln.safeVersions.length === 0) return;
     const name = focusedRow.kind === 'dep' ? focusedRow.descriptor.name : focusedRow.name;
     setOverride({ name, versions: vuln.safeVersions });
+  }, [audit, focusedRow]);
+
+  const toggleRemoval = useCallback(() => {
+    if (!audit || !focusedRow || focusedRow.kind !== 'override') return;
+    const { name } = focusedRow;
+    setStagedRemovals((prev) => {
+      const next = { ...prev };
+      if (next[name]) delete next[name];
+      else next[name] = true;
+      return next;
+    });
   }, [audit, focusedRow]);
 
   const moveFocus = useCallback(
@@ -229,6 +248,7 @@ export function App({
       if (key.leftArrow) return cycleColumn(-1);
       if (key.rightArrow) return cycleColumn(1);
       if (input === 'o') return openOverride();
+      if (input === 'x') return toggleRemoval();
       if (input === 'c' || input === 'r' || input === 'l') return bulkSelect(input);
       if (key.return) {
         const selections = new Map();
@@ -238,7 +258,8 @@ export function App({
           const value = entry.suggestions[col]?.value ?? null;
           if (value) selections.set(entry.descriptor.name, value);
         }
-        onSubmit(selections, { ...stagedOverrides });
+        const removals = Object.keys(stagedRemovals).filter((name) => stagedRemovals[name]);
+        onSubmit(selections, { ...stagedOverrides }, removals);
         exit();
       }
     },
@@ -283,6 +304,16 @@ export function App({
           active: row.key === focusedKey,
           vuln: row.vuln,
           override: stagedOverrides[row.name],
+        });
+      }
+      if (row.kind === 'override') {
+        return e(OverrideRow, {
+          key: row.key,
+          name: row.name,
+          active: row.key === focusedKey,
+          pin: row.pin,
+          reason: row.reason,
+          staged: !!stagedRemovals[row.name],
         });
       }
       const col = selectedColumns[row.descriptor.name] ?? 0;
