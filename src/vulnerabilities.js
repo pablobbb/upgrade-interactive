@@ -86,7 +86,15 @@ function advisoryUrl(advisory) {
  *   firstPatched, safeVersions }. `removableOverrides` maps an existing
  *   `overrides` package name -> { pin, reason: 'dead' | 'redundant' }.
  */
-export async function computeVulnerabilities({ descriptors = [], installed = null, overrides = {} } = {}) {
+export async function computeVulnerabilities(
+  { descriptors = [], installed = null, overrides = {} } = {},
+  deps = {}
+) {
+  // Registry collaborators are injectable so this decision logic can be unit
+  // tested against fixed advisory/metadata fixtures instead of the live npm API.
+  const getMeta = deps.fetchPackageMeta || fetchPackageMeta;
+  const getAdvisories = deps.fetchBulkAdvisories || fetchBulkAdvisories;
+
   const versionsByName = {};
   const add = (name, version) => {
     if (!version) return;
@@ -105,7 +113,7 @@ export async function computeVulnerabilities({ descriptors = [], installed = nul
   // range points at a vulnerable version that isn't installed yet.
   await mapWithConcurrency(descriptors, CONCURRENCY, async (d) => {
     if (!d.range || !semver.validRange(d.range)) return;
-    const meta = await fetchPackageMeta(d.name);
+    const meta = await getMeta(d.name);
     if (!meta) return;
     const best = semver.maxSatisfying(meta.versions, d.range, { includePrerelease: false });
     if (best) add(d.name, best);
@@ -124,7 +132,7 @@ export async function computeVulnerabilities({ descriptors = [], installed = nul
       overrideInfo.set(name, { pin, reason: 'dead', candidates: [], resolvable: true });
       return;
     }
-    const meta = await fetchPackageMeta(name);
+    const meta = await getMeta(name);
     if (!meta) {
       overrideInfo.set(name, { pin, ranges, candidates: [], resolvable: false });
       return;
@@ -148,7 +156,7 @@ export async function computeVulnerabilities({ descriptors = [], installed = nul
     return { offline: false, vulns: new Map(), removableOverrides: new Map() };
   }
 
-  const { ok, advisories } = await fetchBulkAdvisories(versionsByName);
+  const { ok, advisories } = await getAdvisories(versionsByName);
 
   const directSet = new Set(descriptors.map((d) => d.name));
   if (installed && installed.direct) for (const n of installed.direct) directSet.add(n);
@@ -184,7 +192,7 @@ export async function computeVulnerabilities({ descriptors = [], installed = nul
     // advisories, at or above the newest version we currently have.
     const reference = maxVersion(flagged);
     let safeVersions = [];
-    const meta = await fetchPackageMeta(name);
+    const meta = await getMeta(name);
     if (meta) {
       safeVersions = meta.versions
         .filter((v) => semver.valid(v) && !semver.prerelease(v))
