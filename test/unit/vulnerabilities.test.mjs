@@ -240,4 +240,40 @@ describe('computeVulnerabilities — removable overrides', () => {
 
     assert.equal(removableOverrides.has('foo'), false);
   });
+
+  // Regression: a dead override must survive the "nothing to vuln-check" early
+  // return. Here the lockfile shows an empty tree (nothing installed), so there
+  // are no versions to check, yet the override is genuinely dead weight.
+  it('surfaces a dead override even when there is nothing else to vuln-check', async () => {
+    const installed = { versions: new Map(), direct: new Set(), packages: { '': {} } };
+    const registry = stubRegistry();
+
+    const { removableOverrides } = await computeVulnerabilities(
+      { overrides: { leftpad: '1.3.0' }, installed },
+      registry
+    );
+
+    assert.deepEqual(removableOverrides.get('leftpad'), { pin: '1.3.0', reason: 'dead' });
+  });
+
+  // Regression: without a lockfile we cannot see the tree, so we must NOT guess
+  // that an override is dead — that would be a false positive. A resolvable
+  // descriptor is present so this reaches the full analysis (not the early
+  // return), which is where the old code wrongly flagged it as dead.
+  it('does not classify an override as dead when there is no lockfile to inspect', async () => {
+    const registry = stubRegistry({
+      meta: { somepkg: { versions: ['1.0.0'], distTags: {} } },
+    });
+
+    const { removableOverrides } = await computeVulnerabilities(
+      {
+        descriptors: [{ name: 'somepkg', range: '^1.0.0', field: 'dependencies' }],
+        overrides: { leftpad: '1.3.0' },
+        installed: null,
+      },
+      registry
+    );
+
+    assert.equal(removableOverrides.has('leftpad'), false);
+  });
 });

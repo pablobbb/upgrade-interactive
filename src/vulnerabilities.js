@@ -77,6 +77,27 @@ function advisoryUrl(advisory) {
   return null;
 }
 
+// Decide which existing overrides are safe to drop from the resolved override
+// info. A 'dead' override (nothing in the tree depends on it) needs no advisory
+// data; a 'redundant' one is only flagged when we could reach the advisories
+// (`ok`) and resolve every version its dependents would fall back to. We never
+// flag when we couldn't check or resolve, to avoid suggesting the removal of an
+// override that's still protecting the tree.
+function collectRemovableOverrides(overrideInfo, ok, advisories) {
+  const removable = new Map();
+  for (const [name, info] of overrideInfo) {
+    if (info.reason === 'dead') {
+      removable.set(name, { pin: info.pin, reason: 'dead' });
+      continue;
+    }
+    if (!ok || !info.resolvable || info.candidates.length === 0) continue;
+    const adv = advisories.get(name) || [];
+    const stillVulnerable = info.candidates.some((v) => matchesAny(v, adv));
+    if (!stillVulnerable) removable.set(name, { pin: info.pin, reason: 'redundant' });
+  }
+  return removable;
+}
+
 /**
  * Given the direct descriptors and the installed tree (from the lockfile),
  * check every relevant version against npm's advisory database.
@@ -126,7 +147,13 @@ export async function computeVulnerabilities(
   );
   const overrideInfo = new Map();
   await mapWithConcurrency(overrideEntries, CONCURRENCY, async ([name, pin]) => {
-    const ranges = installed && installed.packages ? requiredRangesFor(installed.packages, name) : [];
+    // Without a lockfile we can't see the tree, so we can't conclude the
+    // override is unneeded — leave it unresolvable rather than guess 'dead'.
+    if (!installed || !installed.packages) {
+      overrideInfo.set(name, { pin, candidates: [], resolvable: false });
+      return;
+    }
+    const ranges = requiredRangesFor(installed.packages, name);
     if (ranges.length === 0) {
       // Nothing in the tree depends on it anymore — the override is dead weight.
       overrideInfo.set(name, { pin, reason: 'dead', candidates: [], resolvable: true });
@@ -153,7 +180,13 @@ export async function computeVulnerabilities(
   });
 
   if (Object.keys(versionsByName).length === 0) {
-    return { offline: false, vulns: new Map(), removableOverrides: new Map() };
+    // Nothing to check for vulnerabilities, but a 'dead' override needs no
+    // advisory data — still surface it instead of silently dropping it.
+    return {
+      offline: false,
+      vulns: new Map(),
+      removableOverrides: collectRemovableOverrides(overrideInfo, false, new Map()),
+    };
   }
 
   const { ok, advisories } = await getAdvisories(versionsByName);
@@ -223,22 +256,5 @@ export async function computeVulnerabilities(
     });
   });
 
-  // An override is removable when nothing depends on the package anymore
-  // ('dead'), or when — given we could reach the advisory data — every version
-  // its dependents would resolve to without the override is non-vulnerable
-  // ('redundant'). We never flag when we couldn't check or resolve, to avoid
-  // suggesting the removal of an override that's still protecting the tree.
-  const removableOverrides = new Map();
-  for (const [name, info] of overrideInfo) {
-    if (info.reason === 'dead') {
-      removableOverrides.set(name, { pin: info.pin, reason: 'dead' });
-      continue;
-    }
-    if (!ok || !info.resolvable || info.candidates.length === 0) continue;
-    const adv = advisories.get(name) || [];
-    const stillVulnerable = info.candidates.some((v) => matchesAny(v, adv));
-    if (!stillVulnerable) removableOverrides.set(name, { pin: info.pin, reason: 'redundant' });
-  }
-
-  return { offline: !ok, vulns, removableOverrides };
+  return { offline: !ok, vulns, removableOverrides: collectRemovableOverrides(overrideInfo, ok, advisories) };
 }
