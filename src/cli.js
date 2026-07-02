@@ -154,7 +154,8 @@ async function main() {
   if (overrides.length > 0 || removed.length > 0) {
     process.stdout.write('overrides\n');
     for (const change of overrides) {
-      process.stdout.write(`  ${change.name}  \u2192 ${change.to}\n`);
+      const target = change.parent ? `${change.parent} \u203a ${change.name}` : change.name;
+      process.stdout.write(`  ${target}  \u2192 ${change.to}\n`);
     }
     for (const change of removed) {
       process.stdout.write(`  ${change.name}  removed\n`);

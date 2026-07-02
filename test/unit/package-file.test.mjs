@@ -112,6 +112,66 @@ describe('applyUpgrades', () => {
     assert.deepEqual((await readJson(dir)).overrides, { minimist: '1.2.6' });
   });
 
+  it('writes scoped pins as nested per-parent overrides', async () => {
+    const dir = await project({ 'package.json': pkg({ dependencies: { a: '1.0.0' } }) });
+    const m = await loadManifest(dir);
+
+    const res = await applyUpgrades(m, new Map(), {
+      'dependency-a': {
+        scoped: [
+          { parentName: 'pkg-a', version: '1.3.0' },
+          { parentName: 'pkg-b', version: '0.4.2' },
+        ],
+      },
+    });
+
+    assert.deepEqual(res.overrides, [
+      { name: 'dependency-a', to: '1.3.0', parent: 'pkg-a' },
+      { name: 'dependency-a', to: '0.4.2', parent: 'pkg-b' },
+    ]);
+    assert.deepEqual((await readJson(dir)).overrides, {
+      'pkg-a': { 'dependency-a': '1.3.0' },
+      'pkg-b': { 'dependency-a': '0.4.2' },
+    });
+  });
+
+  it('merges a scoped pin into a parent that already has overrides', async () => {
+    const dir = await project({ 'package.json': pkg({ overrides: { 'pkg-a': { other: '2.0.0' } } }) });
+    const m = await loadManifest(dir);
+
+    await applyUpgrades(m, new Map(), {
+      'dependency-a': { scoped: [{ parentName: 'pkg-a', version: '1.3.0' }] },
+    });
+
+    assert.deepEqual((await readJson(dir)).overrides, {
+      'pkg-a': { other: '2.0.0', 'dependency-a': '1.3.0' },
+    });
+  });
+
+  it('preserves an existing parent-self pin under "." when nesting a child pin', async () => {
+    const dir = await project({ 'package.json': pkg({ overrides: { 'pkg-a': '1.5.0' } }) });
+    const m = await loadManifest(dir);
+
+    await applyUpgrades(m, new Map(), {
+      'dependency-a': { scoped: [{ parentName: 'pkg-a', version: '1.3.0' }] },
+    });
+
+    assert.deepEqual((await readJson(dir)).overrides, {
+      'pkg-a': { '.': '1.5.0', 'dependency-a': '1.3.0' },
+    });
+  });
+
+  it('writes a scoped pin with a null parent as a top-level override', async () => {
+    const dir = await project({ 'package.json': pkg({ dependencies: { a: '1.0.0' } }) });
+    const m = await loadManifest(dir);
+
+    await applyUpgrades(m, new Map(), {
+      'dependency-a': { scoped: [{ parentName: null, version: '1.3.0' }] },
+    });
+
+    assert.deepEqual((await readJson(dir)).overrides, { 'dependency-a': '1.3.0' });
+  });
+
   it('does not re-add an override that is already at the requested version', async () => {
     const original = pkg({ overrides: { minimist: '1.2.6' } });
     const dir = await project({ 'package.json': original });

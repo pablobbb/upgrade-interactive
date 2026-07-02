@@ -352,6 +352,18 @@ describe('computeVulnerabilities — removable overrides', () => {
     assert.equal(removableOverrides.has('ghost'), false);
   });
 
+  it('ignores a nested (object-valued) override entry', async () => {
+    const installed = treeWith();
+    const registry = stubRegistry();
+
+    const { removableOverrides } = await computeVulnerabilities(
+      { overrides: { 'pkg-a': { 'dependency-a': '1.3.0' } }, installed },
+      registry
+    );
+
+    assert.equal(removableOverrides.has('pkg-a'), false);
+  });
+
   it('ignores overrides that reference another dependency ($-syntax)', async () => {
     const installed = treeWith();
     const registry = stubRegistry();

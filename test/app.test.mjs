@@ -268,6 +268,82 @@ async function testRemovableOverride() {
   assert(removals && removals.includes('left-pad'), 'the removal is passed to onSubmit');
 }
 
+async function testScopedOverrideFlow() {
+  const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
+  const vulns = new Map();
+  vulns.set('dependency-a', {
+    advisories: [],
+    severity: 'high',
+    isDirect: false,
+    cve: 'CVE-2021-9999',
+    url: 'https://github.com/advisories/GHSA-scoped',
+    affectedRange: '>=1.0.0 <1.3.0',
+    current: '1.2.0',
+    firstPatched: '1.3.0',
+    safeVersions: ['1.3.0'],
+    pinStrategy: 'scoped',
+    instances: [
+      {
+        parentName: 'pkg-a',
+        parentPath: 'node_modules/pkg-a',
+        parentVersion: '1.0.0',
+        declaredRange: '^1.2.0',
+        installedVersion: '1.2.0',
+        vulnerable: true,
+        safeCandidates: ['1.3.0'],
+        bestSafeInRange: '1.3.0',
+      },
+      {
+        parentName: 'pkg-b',
+        parentPath: 'node_modules/pkg-b/node_modules/dependency-a',
+        parentVersion: '1.0.0',
+        declaredRange: '^0.4.0',
+        installedVersion: '0.4.0',
+        vulnerable: false,
+        safeCandidates: [],
+        bestSafeInRange: null,
+      },
+    ],
+  });
+
+  let overrides = null;
+  const { stdin, lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      audit: true,
+      section: true,
+      runAudit: async () => ({ offline: false, vulns }),
+      onSubmit: (sel, ovr) => {
+        overrides = ovr;
+      },
+      onAbort: () => {},
+    })
+  );
+
+  await wait(3500);
+  stdin.write('[B'); // down from chalk -> the dependency-a override row
+  await wait(50);
+  stdin.write('o'); // open the scoped picker
+  await wait(80);
+  const frame = lastFrame();
+  assert(frame.includes('per dependent') && frame.includes('pkg-a'), "'o' opens the scoped picker listing dependents");
+  assert(frame.includes('already safe'), 'the already-safe instance is shown as left alone');
+
+  stdin.write('\r'); // apply the default pins
+  await wait(50);
+  stdin.write('\r'); // submit
+  await wait(100);
+  unmount();
+
+  const spec = overrides && overrides['dependency-a'];
+  assert(spec && Array.isArray(spec.scoped), 'a scoped override spec is staged and passed to onSubmit');
+  assert(spec && spec.scoped.length === 1, 'only the vulnerable instance is pinned (the safe one is left out)');
+  assert(
+    spec && spec.scoped[0].parentName === 'pkg-a' && spec.scoped[0].version === '1.3.0',
+    'the pin targets the vulnerable dependent at its in-range fix'
+  );
+}
+
 async function main() {
   await testBasicFlow();
   await testAbort();
@@ -276,6 +352,7 @@ async function main() {
   await testAuditDisabled();
   await testOfflineNotice();
   await testOverrideFlow();
+  await testScopedOverrideFlow();
   await testRemovableOverride();
 
   if (failures > 0) {

@@ -37,14 +37,50 @@ export async function loadManifest(cwd) {
   return { filePath, json, raw, indent, trailingNewline, descriptors };
 }
 
+// Write one override spec for `name` into the resolved `root` overrides object,
+// pushing an {name,to,parent?} record for each entry actually changed. A spec is
+// either a version string (top-level pin, forcing every instance) or
+// { scoped: [{ parentName, version }] } where each pin is nested under its
+// parent package (parentName === null falls back to a top-level pin, for a
+// direct dependency). A parent whose value is already a string override of the
+// parent itself is preserved under the "." key when we add a child pin.
+function writeOverrideSpec(root, name, spec, out) {
+  if (typeof spec === 'string') {
+    if (!spec || root[name] === spec) return;
+    root[name] = spec;
+    out.push({ name, to: spec });
+    return;
+  }
+  if (!spec || !Array.isArray(spec.scoped)) return;
+  for (const pin of spec.scoped) {
+    if (!pin || !pin.version) continue;
+    if (pin.parentName == null) {
+      if (root[name] === pin.version) continue;
+      root[name] = pin.version;
+      out.push({ name, to: pin.version });
+      continue;
+    }
+    let bucket = root[pin.parentName];
+    if (typeof bucket === 'string') bucket = root[pin.parentName] = { '.': bucket };
+    else if (!bucket || typeof bucket !== 'object') bucket = root[pin.parentName] = {};
+    if (bucket[name] === pin.version) continue;
+    bucket[name] = pin.version;
+    out.push({ name, to: pin.version, parent: pin.parentName });
+  }
+}
+
 /**
- * Apply a Map<name, newRange> of accepted upgrades, an optional
- * { name: version } map of npm `overrides` to add, and an optional list of
- * override names to remove, then write the manifest back to disk.
+ * Apply a Map<name, newRange> of accepted upgrades, an optional map of npm
+ * `overrides` to add, and an optional list of override names to remove, then
+ * write the manifest back to disk.
  *
- * Returns { applied: {name,field,from,to}[], overrides: {name,to}[],
- * removed: {name}[] }. Note: a top-level `overrides` entry forces *every*
- * instance of that package (direct and transitive) to the pinned version.
+ * Each `overrides` value is either a version string (a top-level pin that forces
+ * *every* instance of that package) or { scoped: [{ parentName, version }] },
+ * which nests each pin under its parent so different dependents can keep
+ * different versions.
+ *
+ * Returns { applied: {name,field,from,to}[], overrides: {name,to,parent?}[],
+ * removed: {name}[] }.
  */
 export async function applyUpgrades(manifest, selections, overrides = {}, removals = []) {
   const applied = [];
@@ -63,10 +99,8 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
     if (!manifest.json.overrides || typeof manifest.json.overrides !== 'object') {
       manifest.json.overrides = {};
     }
-    for (const [name, version] of overrideEntries) {
-      if (!version || manifest.json.overrides[name] === version) continue;
-      manifest.json.overrides[name] = version;
-      appliedOverrides.push({ name, to: version });
+    for (const [name, spec] of overrideEntries) {
+      writeOverrideSpec(manifest.json.overrides, name, spec, appliedOverrides);
     }
   }
 
