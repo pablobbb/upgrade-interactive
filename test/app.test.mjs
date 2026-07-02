@@ -107,6 +107,7 @@ function fakeAudit() {
     cve: 'CVE-2021-0001',
     url: 'https://github.com/advisories/GHSA-chalk',
     affectedRange: '<4.1.0',
+    current: '4.0.0',
     firstPatched: '4.1.2',
     safeVersions: ['4.1.2', '5.0.0'],
   });
@@ -117,6 +118,7 @@ function fakeAudit() {
     cve: 'CVE-2021-44906',
     url: 'https://github.com/advisories/GHSA-xvch',
     affectedRange: '<1.2.6',
+    current: '1.2.0',
     firstPatched: '1.2.6',
     safeVersions: ['1.2.6', '1.2.8'],
   });
@@ -150,8 +152,12 @@ async function testAuditWarnings() {
   assert(frame.includes('critical'), 'severity label is rendered for a transitive vuln');
   assert(frame.includes('CVE-2021-0001'), 'the CVE id is shown');
   assert(flat.includes('fixed in 4.1.2'), 'the first fixed version is shown');
-  assert(frame.includes('Dependencies') && frame.includes('Overrides'), 'section headers render');
-  assert(frame.includes('minimist'), 'a transitive vulnerable package appears under Overrides');
+  assert(
+    frame.includes('Dependencies') && frame.includes('Override to a safe version'),
+    'section headers render'
+  );
+  assert(flat.includes('1.2.0 → 1.2.6'), 'a transitive vuln shows its current → fixed column pair');
+  assert(frame.includes('minimist'), 'a transitive vulnerable package appears in the override section');
 }
 
 async function testAuditDisabled() {
@@ -171,7 +177,7 @@ async function testAuditDisabled() {
   unmount();
 
   assert(!frame.includes('⚠'), 'no warnings shown when audit is disabled');
-  assert(!frame.includes('Overrides'), 'no Overrides section when audit is disabled');
+  assert(!frame.includes('Override to a safe version'), 'no override section when audit is disabled');
 }
 
 async function testOfflineNotice() {
