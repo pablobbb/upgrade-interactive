@@ -251,6 +251,9 @@ export async function computeVulnerabilities(
       cve: advisoryCve(primary),
       url: advisoryUrl(primary),
       affectedRange: (primary && primary.vulnerable_versions) || '',
+      // Newest version we currently have that's still vulnerable — the "current"
+      // side of the current → fixed pair the override rows render.
+      current: reference,
       firstPatched,
       safeVersions,
     });

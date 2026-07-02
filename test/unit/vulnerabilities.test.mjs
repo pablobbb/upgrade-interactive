@@ -66,6 +66,7 @@ describe('computeVulnerabilities — detection', () => {
     assert.ok(v, 'lodash should be flagged');
     assert.equal(v.severity, 'high');
     assert.equal(v.isDirect, true);
+    assert.equal(v.current, '4.17.11', 'the newest still-vulnerable installed version');
     assert.equal(v.firstPatched, '4.17.21');
   });
 

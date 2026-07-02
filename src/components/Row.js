@@ -25,16 +25,31 @@ function Column({ suggestion, selected }) {
   );
 }
 
-// The ⚠ + severity + CVE link + affected/fixed-in summary shown on a flagged row.
-function VulnInfo({ vuln, override }) {
+// The ⚠ + severity + CVE link + affected/fixed-in summary shown on a flagged
+// row. `hideFixed` drops the "fixed in" suffix when the row already shows the
+// fixed version as a column (the override rows), to avoid saying it twice.
+function VulnInfo({ vuln, override, hideFixed }) {
   const sev = SEVERITY[vuln.severity] || SEVERITY.low;
   let text = `⚠ ${sev.label} ${hyperlink(vuln.cve, vuln.url)} — affects ${vuln.affectedRange}`;
-  if (vuln.firstPatched) text += ` · fixed in ${vuln.firstPatched}`;
+  if (!hideFixed && vuln.firstPatched) text += ` · fixed in ${vuln.firstPatched}`;
   return e(
     Box,
     { marginLeft: 1 },
     e(Text, { color: sev.color }, text),
     override ? e(Text, { color: 'greenBright', bold: true }, `  → override ${override}`) : null
+  );
+}
+
+// The current → fixed version pair for a row that has no upgrade columns of its
+// own (the override section). Echoes the deps table's columnar layout so the
+// two sections scan the same way; a missing side renders as a dim "?".
+function FixColumn({ current, fixed }) {
+  return e(
+    Box,
+    { width: 20, flexShrink: 0 },
+    current ? e(Text, { color: 'red' }, current) : e(Text, { dimColor: true }, '?'),
+    e(Text, { dimColor: true }, ' → '),
+    fixed ? e(Text, { color: 'green' }, fixed) : e(Text, { dimColor: true }, '?')
   );
 }
 
@@ -73,16 +88,27 @@ export function Row({ name, active, suggestions, selectedColumn, vuln, override 
   );
 }
 
-// A transitive (indirect) vulnerable package: no upgrade columns, just the
-// warning and an override affordance.
+// A vulnerable package fixed by an override (transitive, or direct with no
+// upgrade available): a current → fixed column pair on top, with the advisory
+// detail on its own indented line below — the same two-line shape as Row.
 export function VulnRow({ name, active, vuln, override }) {
-  return e(
+  const main = e(
     Box,
     { flexDirection: 'row' },
     e(Box, { width: 2, flexShrink: 0 }, e(Text, { color: 'cyanBright', bold: true }, active ? '❯ ' : '  ')),
     e(NameCell, { name }),
-    e(VulnInfo, { vuln, override }),
-    override ? null : e(Text, { dimColor: true }, '  press o to override')
+    e(FixColumn, { current: vuln.current, fixed: vuln.firstPatched })
+  );
+  return e(
+    Box,
+    { flexDirection: 'column' },
+    main,
+    e(
+      Box,
+      { marginLeft: 4 },
+      e(VulnInfo, { vuln, override, hideFixed: true }),
+      override ? null : e(Text, { dimColor: true }, '  press o to override')
+    )
   );
 }
 

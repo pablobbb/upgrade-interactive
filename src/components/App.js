@@ -134,14 +134,22 @@ export function App({
   const removableList = removable ? [...removable.entries()] : [];
 
   const rows = [];
+  // The old single "Overrides" section conflated two different actions, so it's
+  // split into a group of vulnerable packages you'd *add* an override for and a
+  // group of existing overrides you can *drop*. Each header is independent so an
+  // empty group doesn't leave a dangling title.
   const pushOverrides = () => {
-    if (overrideVulns.length === 0 && removableList.length === 0) return;
-    rows.push({ kind: 'header', key: 'h:overrides', title: 'Overrides' });
-    for (const [name, vuln] of overrideVulns) {
-      rows.push({ kind: 'vuln', key: `vuln:${name}`, name, vuln });
+    if (overrideVulns.length > 0) {
+      rows.push({ kind: 'header', key: 'h:pin', title: 'Override to a safe version' });
+      for (const [name, vuln] of overrideVulns) {
+        rows.push({ kind: 'vuln', key: `vuln:${name}`, name, vuln });
+      }
     }
-    for (const [name, info] of removableList) {
-      rows.push({ kind: 'override', key: `ovr:${name}`, name, pin: info.pin, reason: info.reason });
+    if (removableList.length > 0) {
+      rows.push({ kind: 'header', key: 'h:unused', title: 'Unused overrides' });
+      for (const [name, info] of removableList) {
+        rows.push({ kind: 'override', key: `ovr:${name}`, name, pin: info.pin, reason: info.reason });
+      }
     }
   };
 
