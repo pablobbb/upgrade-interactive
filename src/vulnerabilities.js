@@ -69,6 +69,96 @@ function requiredRangesFor(packages, name) {
   return [...ranges];
 }
 
+/** Package name from a lockfile path ("node_modules/@scope/x" -> "@scope/x"). */
+function nameFromLockPath(pkgPath) {
+  const marker = 'node_modules/';
+  const idx = pkgPath.lastIndexOf(marker);
+  return idx === -1 ? null : pkgPath.slice(idx + marker.length) || null;
+}
+
+/** The range some parent declares for `name`, or null if it doesn't need it. */
+function declaredRangeFor(info, name) {
+  for (const field of RANGE_FIELDS) {
+    const section = info[field];
+    if (section && typeof section === 'object' && section[name] != null) return section[name];
+  }
+  return null;
+}
+
+// Resolve which installed node a `name` dependency of the package at
+// `parentPath` points to, following node's "nearest node_modules, then walk up
+// to the root" resolution. Returns the winning lockfile path, or null.
+function resolveInstalledPath(packages, parentPath, name) {
+  let prefix = parentPath;
+  // Guard against a malformed tree causing an unbounded walk.
+  for (let i = 0; i < 64; i++) {
+    const candidate = prefix ? `${prefix}/node_modules/${name}` : `node_modules/${name}`;
+    if (packages[candidate] && packages[candidate].version) return candidate;
+    const idx = prefix.lastIndexOf('/node_modules/');
+    if (idx !== -1) prefix = prefix.slice(0, idx);
+    else if (prefix !== '') prefix = ''; // a top-level package -> try the root
+    else return null;
+  }
+  return null;
+}
+
+// Build the per-parent picture of where a vulnerable package is installed:
+// every dependent, the version its edge resolves to, whether that version is
+// vulnerable, and the safe versions its declared range could accept without a
+// downgrade. `publishedSafe` is every published non-vulnerable version (NOT
+// gated to the global reference — each parent gets targets relative to its own
+// installed version). A parent of `null` means the root project (a direct
+// dependency), whose pin is top-level rather than nested.
+function collectPinInstances(packages, name, advisoryList, publishedSafe) {
+  const instances = [];
+  for (const [parentPath, info] of Object.entries(packages || {})) {
+    if (!info || typeof info !== 'object') continue;
+    const declaredRange = declaredRangeFor(info, name);
+    if (declaredRange == null) continue;
+    const resolvedPath = resolveInstalledPath(packages, parentPath, name);
+    const installedVersion = resolvedPath ? packages[resolvedPath].version : null;
+    if (!installedVersion) continue;
+    // Safe versions this parent could take: in its declared range and not a
+    // downgrade from what it already has, newest last.
+    const safeCandidates = semver.validRange(declaredRange)
+      ? publishedSafe.filter((v) => semver.satisfies(v, declaredRange) && semver.gte(v, installedVersion))
+      : [];
+    instances.push({
+      parentName: parentPath === '' ? null : nameFromLockPath(parentPath),
+      parentPath,
+      parentVersion: info.version || null,
+      declaredRange,
+      installedVersion,
+      vulnerable: matchesAny(installedVersion, advisoryList),
+      safeCandidates,
+      bestSafeInRange: safeCandidates.length ? safeCandidates[safeCandidates.length - 1] : null,
+    });
+  }
+  return instances;
+}
+
+// Decide whether one global override suffices or per-parent scoped pins are
+// needed. A global pin forces *every* instance to one version, so it's only
+// safe when there's a single installed version, or when every instance is
+// vulnerable and one safe version satisfies all their declared ranges without
+// downgrading any of them. If any instance is already safe (a global pin would
+// disturb it) or the vulnerable instances need different safe versions, we go
+// scoped.
+function decidePinStrategy(instances, publishedSafe) {
+  if (instances.length === 0) return 'global';
+  if (new Set(instances.map((i) => i.installedVersion)).size <= 1) return 'global';
+  if (instances.some((i) => !i.vulnerable)) return 'scoped';
+  const universal = publishedSafe.find((v) =>
+    instances.every(
+      (i) =>
+        semver.validRange(i.declaredRange) &&
+        semver.satisfies(v, i.declaredRange) &&
+        semver.gte(v, i.installedVersion)
+    )
+  );
+  return universal ? 'global' : 'scoped';
+}
+
 function advisoryUrl(advisory) {
   if (advisory && advisory.url) return advisory.url;
   if (advisory && advisory.github_advisory_id) {
@@ -221,18 +311,21 @@ export async function computeVulnerabilities(
     }
     if (!SEVERITY[severity]) severity = 'low';
 
-    // Safe versions = published versions affected by none of the matching
-    // advisories, at or above the newest version we currently have.
+    // Every published version affected by none of the matching advisories,
+    // ungated — the per-parent instance analysis needs targets relative to each
+    // parent's own installed version, not the whole tree's newest.
     const reference = maxVersion(flagged);
-    let safeVersions = [];
+    let publishedSafe = [];
     const meta = await getMeta(name);
     if (meta) {
-      safeVersions = meta.versions
+      publishedSafe = meta.versions
         .filter((v) => semver.valid(v) && !semver.prerelease(v))
         .filter((v) => !matchesAny(v, matching))
-        .filter((v) => !reference || semver.gte(v, reference))
         .sort(semver.compare);
     }
+    // The global picker still only offers versions at or above the newest one we
+    // currently have anywhere in the tree.
+    const safeVersions = reference ? publishedSafe.filter((v) => semver.gte(v, reference)) : publishedSafe;
 
     let firstPatched = safeVersions.length > 0 ? safeVersions[0] : null;
     if (!firstPatched && primary && primary.patched_versions && primary.patched_versions !== '<0.0.0') {
@@ -243,6 +336,13 @@ export async function computeVulnerabilities(
         // no derivable fix
       }
     }
+
+    // Map out where this package is installed across the tree so the UI can
+    // choose between one global pin and per-parent scoped pins. Without a
+    // lockfile there's no tree to inspect, so fall back to the global path.
+    const instances =
+      installed && installed.packages ? collectPinInstances(installed.packages, name, list, publishedSafe) : [];
+    const pinStrategy = decidePinStrategy(instances, publishedSafe);
 
     vulns.set(name, {
       advisories: matching,
@@ -256,6 +356,8 @@ export async function computeVulnerabilities(
       current: reference,
       firstPatched,
       safeVersions,
+      instances,
+      pinStrategy,
     });
   });
 
