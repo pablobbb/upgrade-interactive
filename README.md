@@ -13,7 +13,7 @@ doesn't have, notably built-in **vulnerability warnings** and one-key npm
 **`overrides`**, so it deliberately diverges where that improves the experience.
 
 <p align="center">
-  <img src="assets/screenshot.svg" alt="upgrade-interactive showing the three-column Current/Range/Latest picker, with version-diff coloring, a vulnerability warning, and override sections" width="100%">
+  <img src="https://raw.githubusercontent.com/pablobbb/upgrade-interactive/main/assets/screenshot.png" alt="upgrade-interactive showing the three-column Current/Range/Latest picker, with version-diff coloring, a vulnerability warning, and override sections" width="100%">
 </p>
 
 ## Install / run
