@@ -1,6 +1,6 @@
 {
   "name": "upgrade-interactive",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "An interactive dependency upgrader for npm projects, inspired by `yarn upgrade-interactive` (Yarn Berry / Yarn 4), with built-in vulnerability warnings.",
   "type": "module",
   "bin": {
@@ -8,6 +8,14 @@
     "nui": "src/cli.js"
   },
   "main": "./src/cli.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pablobbb/upgrade-interactive.git"
+  },
+  "homepage": "https://github.com/pablobbb/upgrade-interactive#readme",
+  "bugs": {
+    "url": "https://github.com/pablobbb/upgrade-interactive/issues"
+  },
   "scripts": {
     "test": "node --test \"test/unit/**/*.test.mjs\"",
     "test:integration": "node test/app.test.mjs",
