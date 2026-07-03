@@ -89,7 +89,18 @@ export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
     }
   });
 
-  const parentLabel = (i) => (i.parentName ? i.parentName : '(direct)');
+  // Show "pkg@version" when the same parent name appears more than once (its
+  // copies are being pinned separately), so rows aren't ambiguous.
+  const parentCounts = new Map();
+  for (const i of instances) {
+    if (i.parentName == null) continue;
+    parentCounts.set(i.parentName, (parentCounts.get(i.parentName) || 0) + 1);
+  }
+  const parentLabel = (i) => {
+    if (i.parentName == null) return '(direct)';
+    if ((parentCounts.get(i.parentName) || 0) > 1 && i.parentVersion) return `${i.parentName}@${i.parentVersion}`;
+    return i.parentName;
+  };
 
   return e(
     Box,

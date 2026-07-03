@@ -344,6 +344,85 @@ async function testScopedOverrideFlow() {
   );
 }
 
+async function testScopedOverrideDisambiguation() {
+  const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
+  const vulns = new Map();
+  vulns.set('dependency-a', {
+    advisories: [],
+    severity: 'high',
+    isDirect: false,
+    cve: 'CVE-2021-8888',
+    url: 'https://github.com/advisories/GHSA-dup',
+    affectedRange: '<2.5.0',
+    current: '2.4.0',
+    firstPatched: '1.3.0',
+    safeVersions: ['2.5.0'],
+    pinStrategy: 'scoped',
+    // The same parent (pkg-a) is installed at two versions, each needing a
+    // different in-range fix.
+    instances: [
+      {
+        parentName: 'pkg-a',
+        parentPath: 'node_modules/pkg-a',
+        parentVersion: '1.0.0',
+        declaredRange: '^1.2.0',
+        installedVersion: '1.2.0',
+        vulnerable: true,
+        safeCandidates: ['1.3.0'],
+        bestSafeInRange: '1.3.0',
+      },
+      {
+        parentName: 'pkg-a',
+        parentPath: 'node_modules/other/node_modules/pkg-a',
+        parentVersion: '2.0.0',
+        declaredRange: '^2.0.0',
+        installedVersion: '2.4.0',
+        vulnerable: true,
+        safeCandidates: ['2.5.0'],
+        bestSafeInRange: '2.5.0',
+      },
+    ],
+  });
+
+  let overrides = null;
+  const { stdin, lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      audit: true,
+      section: true,
+      runAudit: async () => ({ offline: false, vulns }),
+      onSubmit: (sel, ovr) => {
+        overrides = ovr;
+      },
+      onAbort: () => {},
+    })
+  );
+
+  await wait(3500);
+  stdin.write('[B'); // down to the dependency-a override row
+  await wait(50);
+  stdin.write('o'); // open the scoped picker
+  await wait(80);
+  const frame = lastFrame();
+  assert(
+    frame.includes('pkg-a@1.0.0') && frame.includes('pkg-a@2.0.0'),
+    'the picker version-qualifies a parent installed at multiple versions'
+  );
+
+  stdin.write('\r'); // apply
+  await wait(50);
+  stdin.write('\r'); // submit
+  await wait(100);
+  unmount();
+
+  const spec = overrides && overrides['dependency-a'];
+  assert(spec && spec.scoped.length === 2, 'both vulnerable copies of the duplicated parent are pinned');
+  assert(
+    spec && spec.scoped.every((p) => p.parentName === 'pkg-a' && p.parentVersion),
+    'each staged pin carries its parent version for disambiguation'
+  );
+}
+
 async function main() {
   await testBasicFlow();
   await testAbort();
@@ -353,6 +432,7 @@ async function main() {
   await testOfflineNotice();
   await testOverrideFlow();
   await testScopedOverrideFlow();
+  await testScopedOverrideDisambiguation();
   await testRemovableOverride();
 
   if (failures > 0) {
