@@ -63,7 +63,13 @@ and run `npm run upgrade-interactive`.
    links. The affected range and first fixed version are shown inline.
 5. Lets you press `o` on a vulnerable package to **pin it to a safe version via
    an npm `overrides` entry** — the main way to patch a *transitive* dependency
-   you don't directly control.
+   you don't directly control. When the package resolves to a single version
+   this is one global pin. When it's installed at **several versions** across the
+   tree — where a global pin would drag an unrelated, already-safe copy along too
+   — the picker instead offers **per-dependent scoped pins**: it pins each
+   vulnerable copy under its parent (`parent › package`) and leaves already-safe
+   copies alone. If one parent is itself present at multiple versions needing
+   different fixes, those pins are keyed by `parent@version`.
 6. **Flags existing `overrides` that are no longer needed** — either because
    nothing in the tree depends on that package anymore, or because your deps
    would now resolve to a non-vulnerable version without the pin. Press `x` to
@@ -73,8 +79,10 @@ and run `npm run upgrade-interactive`.
    and runs `npm install`.
 
 By default the list is grouped into **Dependencies**, **Dev dependencies**, and
-**Overrides** (transitive packages you've flagged for an override) sections. Pass
-`--no-section` for a single flat list.
+two override sections: **Override to a safe version** (vulnerable packages with
+no ordinary upgrade path, each shown as a `current → fixed` pair) and **Unused
+overrides** (existing pins you can drop). Pass `--no-section` for a single flat
+list.
 
 ## Controls
 
@@ -134,11 +142,12 @@ Follows yarn closely:
 
 Deliberate additions / differences (this is *inspired by* yarn, not a clone):
 - **Vulnerability warnings + `overrides`** — flags vulnerable direct and
-  transitive packages, lets you pin a safe version via npm `overrides`, and
-  flags existing overrides that are no longer needed so you can remove them.
-  Yarn's command has no equivalent.
+  transitive packages, lets you pin a safe version via npm `overrides` (a single
+  global pin, or per-dependent **scoped** pins when a global pin would disturb an
+  already-safe copy), and flags existing overrides that are no longer needed so
+  you can remove them. Yarn's command has no equivalent.
 - **Sectioned layout** — the list is grouped into Dependencies / Dev
-  dependencies / Overrides by default (yarn shows one flat list; use
+  dependencies / override sections by default (yarn shows one flat list; use
   `--no-section` to match that).
 - Only plain semver ranges are resolved (git/file/link/workspace ranges,
   and compound ranges like `>=1.0.0 <2.0.0`, are skipped — yarn handles
@@ -164,8 +173,10 @@ src/
   links.js                OSC 8 terminal hyperlinks (with fallback)
   components/
     App.js                 state machine + keybindings
-    OverridePicker.js      safe-version chooser overlay
+    OverridePicker.js      safe-version chooser (global + scoped-pin overlays)
     Header.js, Prompt.js, Row.js   presentation
 test/
+  unit/                   isolated, offline unit suites
+                          (vulnerabilities, package-file, lockfile)
   app.test.mjs            simulated-keypress smoke tests (ink-testing-library)
 ```
