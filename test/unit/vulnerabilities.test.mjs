@@ -241,6 +241,41 @@ describe('computeVulnerabilities — pin instances', () => {
     assert.equal(vulns.get('lodash').pinStrategy, 'global');
   });
 
+  it('collapses copies of the same parent@version into a single scoped decision', async () => {
+    // pkg-a@1.0.0 is installed twice (different tree locations), each resolving
+    // dependency-a to a different vulnerable version. npm can't pin those two
+    // copies separately, so they must become one row. pkg-b keeps an unrelated
+    // safe copy, which forces the overall strategy to scoped.
+    const installed = {
+      versions: new Map([['dependency-a', new Set(['1.2.0', '1.4.0', '0.4.0'])]]),
+      direct: new Set(['pkg-a', 'pkg-b']),
+      packages: {
+        '': { dependencies: { x: '^1.0.0', y: '^1.0.0', 'pkg-b': '^1.0.0' } },
+        'node_modules/x/node_modules/pkg-a': { version: '1.0.0', dependencies: { 'dependency-a': '^1.0.0' } },
+        'node_modules/y/node_modules/pkg-a': { version: '1.0.0', dependencies: { 'dependency-a': '^1.0.0' } },
+        'node_modules/x/node_modules/pkg-a/node_modules/dependency-a': { version: '1.2.0' },
+        'node_modules/y/node_modules/pkg-a/node_modules/dependency-a': { version: '1.4.0' },
+        'node_modules/pkg-b': { version: '1.0.0', dependencies: { 'dependency-a': '^0.4.0' } },
+        'node_modules/pkg-b/node_modules/dependency-a': { version: '0.4.0' },
+      },
+    };
+    const registry = stubRegistry({
+      meta: { 'dependency-a': { versions: ['0.4.0', '1.2.0', '1.4.0', '1.5.0'], distTags: {} } },
+      advisories: { 'dependency-a': [advisory({ vulnerable_versions: '>=1.0.0 <1.5.0', severity: 'high' })] },
+    });
+
+    const { vulns } = await computeVulnerabilities({ installed }, registry);
+    const v = vulns.get('dependency-a');
+
+    assert.equal(v.pinStrategy, 'scoped');
+    const pkgA = v.instances.filter((i) => i.parentName === 'pkg-a');
+    assert.equal(pkgA.length, 1, 'the two pkg-a@1.0.0 copies collapse into one instance');
+    assert.equal(pkgA[0].installedVersion, '1.4.0', 'the merged floor is the highest installed copy (no downgrade)');
+    assert.equal(pkgA[0].vulnerable, true);
+    assert.equal(pkgA[0].bestSafeInRange, '1.5.0', 'one version fixes both copies');
+    assert.equal(v.instances.length, 2, 'pkg-a (merged) + pkg-b');
+  });
+
   it('falls back to global when there is no lockfile tree to inspect', async () => {
     const installed = {
       versions: new Map([['lodash', new Set(['4.17.11'])]]),

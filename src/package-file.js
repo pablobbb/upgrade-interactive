@@ -50,6 +50,12 @@ export async function loadManifest(cwd) {
 // keyed by the more specific "pkg@version" selector instead. A parent that maps
 // to a single target keeps the simpler bare key (which covers every version of
 // it). Bare and qualified keys coexist; npm applies the most specific.
+//
+// Two pins that resolve to the same key AND the same parent version are not
+// separately expressible in npm's format; the audit layer collapses those into
+// one decision before we get here (see mergeInstancesByOverrideKey), so this
+// writer never faces that conflict in the real flow. If a caller passes such a
+// pair anyway, the later pin wins.
 function writeOverrideSpec(root, name, spec, out) {
   if (typeof spec === 'string') {
     if (!spec || root[name] === spec) return;
