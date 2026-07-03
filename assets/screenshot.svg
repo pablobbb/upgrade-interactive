@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="935" height="572" viewBox="0 0 935 572" font-family="ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
+<rect x="0" y="0" width="935" height="572" rx="10" fill="#1a1b26"/>
+<rect x="0" y="0" width="935" height="34" rx="10" fill="#16161e"/>
+<rect x="0" y="24" width="935" height="10" fill="#16161e"/>
+<circle cx="20" cy="17" r="6" fill="#f7768e"/><circle cx="40" cy="17" r="6" fill="#e0af68"/><circle cx="60" cy="17" r="6" fill="#9ece6a"/>
+<text x="467.5" y="22" fill="#7f8ab0" font-size="12.5" text-anchor="middle">npx upgrade-interactive</text>
+<text x="22.0" y="52" fill="#c0caf5" font-size="15" textLength="63.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Press </text>
+<text x="85.0" y="52" fill="#7dcfff" font-weight="700" font-size="15" textLength="36.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">&lt;up&gt;</text>
+<text x="121.0" y="52" fill="#c0caf5" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">/</text>
+<text x="130.0" y="52" fill="#7dcfff" font-weight="700" font-size="15" textLength="54.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">&lt;down&gt;</text>
+<text x="184.0" y="52" fill="#c0caf5" font-size="15" textLength="342.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> to select packages.            Press </text>
+<text x="526.0" y="52" fill="#7dcfff" font-weight="700" font-size="15" textLength="63.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">&lt;enter&gt;</text>
+<text x="589.0" y="52" fill="#c0caf5" font-size="15" textLength="108.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> to install.</text>
+<text x="22.0" y="72" fill="#c0caf5" font-size="15" textLength="63.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Press </text>
+<text x="85.0" y="72" fill="#7dcfff" font-weight="700" font-size="15" textLength="54.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">&lt;left&gt;</text>
+<text x="139.0" y="72" fill="#c0caf5" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">/</text>
+<text x="148.0" y="72" fill="#7dcfff" font-weight="700" font-size="15" textLength="63.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">&lt;right&gt;</text>
+<text x="211.0" y="72" fill="#c0caf5" font-size="15" textLength="315.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> to select versions.         Press </text>
+<text x="526.0" y="72" fill="#7dcfff" font-weight="700" font-size="15" textLength="72.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">&lt;ctrl+c&gt;</text>
+<text x="598.0" y="72" fill="#c0caf5" font-size="15" textLength="90.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> to abort.</text>
+<text x="22.0" y="92" fill="#c0caf5" font-size="15" textLength="63.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Press </text>
+<text x="85.0" y="92" fill="#7dcfff" font-weight="700" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">c</text>
+<text x="94.0" y="92" fill="#c0caf5" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">/</text>
+<text x="103.0" y="92" fill="#7dcfff" font-weight="700" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">r</text>
+<text x="112.0" y="92" fill="#c0caf5" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">/</text>
+<text x="121.0" y="92" fill="#7dcfff" font-weight="700" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">l</text>
+<text x="130.0" y="92" fill="#c0caf5" font-size="15" textLength="135.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> to select all </text>
+<text x="265.0" y="92" fill="#7dcfff" font-weight="700" font-size="15" textLength="63.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">current</text>
+<text x="328.0" y="92" fill="#c0caf5" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">/</text>
+<text x="337.0" y="92" fill="#7dcfff" font-weight="700" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">range</text>
+<text x="382.0" y="92" fill="#c0caf5" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">/</text>
+<text x="391.0" y="92" fill="#7dcfff" font-weight="700" font-size="15" textLength="54.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">latest</text>
+<text x="445.0" y="92" fill="#c0caf5" font-size="15" textLength="81.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">.  Press </text>
+<text x="526.0" y="92" fill="#7dcfff" font-weight="700" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">o</text>
+<text x="535.0" y="92" fill="#c0caf5" font-size="15" textLength="306.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> to override a vulnerable package.</text>
+<text x="22.0" y="112" fill="#c0caf5" font-size="15" textLength="504.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                                  Press </text>
+<text x="526.0" y="112" fill="#7dcfff" font-weight="700" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">x</text>
+<text x="535.0" y="112" fill="#c0caf5" font-size="15" textLength="288.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> to remove an unneeded override.</text>
+<text x="22.0" y="152" fill="#9ece6a" font-weight="700" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">?</text>
+<text x="31.0" y="152" fill="#c0caf5" font-weight="700" font-size="15" textLength="351.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Pick the packages you want to upgrade.</text>
+<text x="382.0" y="152" fill="#c0caf5" font-size="15" textLength="90.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">          </text>
+<text x="472.0" y="152" fill="#7f8ab0" font-weight="700" text-decoration="underline" font-size="15" textLength="63.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Current</text>
+<text x="535.0" y="152" fill="#c0caf5" font-size="15" textLength="81.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">         </text>
+<text x="616.0" y="152" fill="#7f8ab0" font-weight="700" text-decoration="underline" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Range</text>
+<text x="661.0" y="152" fill="#c0caf5" font-size="15" textLength="108.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">            </text>
+<text x="769.0" y="152" fill="#7f8ab0" font-weight="700" text-decoration="underline" font-size="15" textLength="54.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Latest</text>
+<text x="22.0" y="212" fill="#7f8ab0" font-weight="700" text-decoration="underline" font-size="15" textLength="108.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Dependencies</text>
+<text x="22.0" y="232" fill="#7dcfff" font-weight="700" font-size="15" textLength="18.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  </text>
+<text x="40.0" y="232" fill="#c0caf5" font-weight="700" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">chalk</text>
+<text x="85.0" y="232" fill="#c0caf5" font-size="15" textLength="378.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                        ● </text>
+<rect x="463.0" y="217.0" width="54.0" height="20" fill="#c0caf5" opacity="1"/>
+<text x="463.0" y="232" fill="#1a1b26" font-size="15" textLength="54.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">^4.1.0</text>
+<text x="517.0" y="232" fill="#c0caf5" font-size="15" textLength="135.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">         ○ ^4.1</text>
+<text x="652.0" y="232" fill="#9ece6a" font-size="15" textLength="18.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">.2</text>
+<text x="670.0" y="232" fill="#c0caf5" font-size="15" textLength="108.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">         ○ ^</text>
+<text x="778.0" y="232" fill="#f7768e" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">5.3.0</text>
+<text x="22.0" y="252" fill="#7dcfff" font-weight="700" font-size="15" textLength="18.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">❯ </text>
+<text x="40.0" y="252" fill="#c0caf5" font-weight="700" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">react</text>
+<text x="85.0" y="252" fill="#c0caf5" font-size="15" textLength="531.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                        ○ ^18.2.0        ● </text>
+<rect x="616.0" y="237.0" width="27.0" height="20" fill="#c0caf5" opacity="1"/>
+<text x="616.0" y="252" fill="#1a1b26" font-size="15" textLength="27.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">^18</text>
+<rect x="643.0" y="237.0" width="36.0" height="20" fill="#e0af68" opacity="1"/>
+<text x="643.0" y="252" fill="#1a1b26" font-size="15" textLength="36.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">.3.1</text>
+<text x="22.0" y="272" fill="#7dcfff" font-weight="700" font-size="15" textLength="18.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  </text>
+<text x="40.0" y="272" fill="#c0caf5" font-weight="700" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">axios</text>
+<text x="85.0" y="272" fill="#c0caf5" font-size="15" textLength="576.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                        ○ ^0.21.1        ○ ^0.21</text>
+<text x="661.0" y="272" fill="#9ece6a" font-size="15" textLength="18.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">.4</text>
+<text x="679.0" y="272" fill="#c0caf5" font-size="15" textLength="90.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">        ● </text>
+<rect x="769.0" y="257.0" width="9.0" height="20" fill="#c0caf5" opacity="1"/>
+<text x="769.0" y="272" fill="#1a1b26" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">^</text>
+<rect x="778.0" y="257.0" width="45.0" height="20" fill="#f7768e" opacity="1"/>
+<text x="778.0" y="272" fill="#1a1b26" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1.7.2</text>
+<text x="22.0" y="292" fill="#c0caf5" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">     </text>
+<text x="67.0" y="292" fill="#f7768e" font-size="15" textLength="558.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">⚠ high GHSA-wf5p-g6vw-rhxx — affects &lt;0.28.0 · fixed in 0.28.0</text>
+<text x="22.0" y="332" fill="#7f8ab0" font-weight="700" text-decoration="underline" font-size="15" textLength="144.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Dev dependencies</text>
+<text x="22.0" y="352" fill="#7dcfff" font-weight="700" font-size="15" textLength="18.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  </text>
+<text x="40.0" y="352" fill="#c0caf5" font-weight="700" font-size="15" textLength="54.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">eslint</text>
+<text x="94.0" y="352" fill="#c0caf5" font-size="15" textLength="369.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                       ● </text>
+<rect x="463.0" y="337.0" width="63.0" height="20" fill="#c0caf5" opacity="1"/>
+<text x="463.0" y="352" fill="#1a1b26" font-size="15" textLength="63.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">^8.57.0</text>
+<text x="526.0" y="352" fill="#c0caf5" font-size="15" textLength="252.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                         ○ ^</text>
+<text x="778.0" y="352" fill="#f7768e" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">9.9.0</text>
+<text x="22.0" y="372" fill="#7dcfff" font-weight="700" font-size="15" textLength="18.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  </text>
+<text x="40.0" y="372" fill="#c0caf5" font-weight="700" font-size="15" textLength="54.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">vitest</text>
+<text x="94.0" y="372" fill="#c0caf5" font-size="15" textLength="369.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                       ● </text>
+<rect x="463.0" y="357.0" width="54.0" height="20" fill="#c0caf5" opacity="1"/>
+<text x="463.0" y="372" fill="#1a1b26" font-size="15" textLength="54.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">~1.6.0</text>
+<text x="517.0" y="372" fill="#c0caf5" font-size="15" textLength="135.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">         ○ ~1.6</text>
+<text x="652.0" y="372" fill="#9ece6a" font-size="15" textLength="18.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">.1</text>
+<text x="670.0" y="372" fill="#c0caf5" font-size="15" textLength="108.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">         ○ ~</text>
+<text x="778.0" y="372" fill="#f7768e" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">2.0.5</text>
+<text x="22.0" y="412" fill="#7f8ab0" font-weight="700" text-decoration="underline" font-size="15" textLength="234.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Override to a safe version</text>
+<text x="22.0" y="432" fill="#7dcfff" font-weight="700" font-size="15" textLength="18.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  </text>
+<text x="40.0" y="432" fill="#c0caf5" font-weight="700" font-size="15" textLength="72.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">minimist</text>
+<text x="112.0" y="432" fill="#c0caf5" font-size="15" textLength="333.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                     </text>
+<text x="445.0" y="432" fill="#f7768e" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1.2.5</text>
+<text x="490.0" y="432" fill="#c0caf5" opacity="0.55" font-size="15" textLength="27.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> → </text>
+<text x="517.0" y="432" fill="#9ece6a" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1.2.6</text>
+<text x="22.0" y="452" fill="#c0caf5" font-size="15" textLength="45.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">     </text>
+<text x="67.0" y="452" fill="#f7768e" font-size="15" textLength="423.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">⚠ critical GHSA-xvch-5gv4-984h — affects &lt;1.2.6</text>
+<text x="490.0" y="452" fill="#c0caf5" font-size="15" textLength="9.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> </text>
+<text x="499.0" y="452" fill="#c0caf5" opacity="0.55" font-size="15" textLength="189.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  press o to override</text>
+<text x="22.0" y="492" fill="#7f8ab0" font-weight="700" text-decoration="underline" font-size="15" textLength="144.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Unused overrides</text>
+<text x="22.0" y="512" fill="#7dcfff" font-weight="700" font-size="15" textLength="18.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  </text>
+<text x="40.0" y="512" fill="#c0caf5" font-weight="700" font-size="15" textLength="99.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">glob-parent</text>
+<text x="139.0" y="512" fill="#c0caf5" font-size="15" textLength="315.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                   </text>
+<text x="454.0" y="512" fill="#7f8ab0" font-size="15" textLength="459.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">ⓘ override 5.1.2 not needed (nothing depends on it </text>
+<text x="22.0" y="532" fill="#c0caf5" font-size="15" textLength="432.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">                                                </text>
+<text x="454.0" y="532" fill="#7f8ab0" font-size="15" textLength="81.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">anymore) </text>
+<text x="535.0" y="532" fill="#7f8ab0" opacity="0.55" font-size="15" textLength="171.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">— press x to remove</text>
+</svg>

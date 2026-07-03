@@ -1,18 +1,26 @@
 # upgrade-interactive
 
+[![npm version](https://img.shields.io/npm/v/upgrade-interactive.svg)](https://www.npmjs.com/package/upgrade-interactive)
+[![npm downloads](https://img.shields.io/npm/dm/upgrade-interactive.svg)](https://www.npmjs.com/package/upgrade-interactive)
+[![node](https://img.shields.io/node/v/upgrade-interactive.svg)](https://www.npmjs.com/package/upgrade-interactive)
+[![license](https://img.shields.io/npm/l/upgrade-interactive.svg)](./LICENSE)
+
 An interactive dependency upgrader for npm projects, **inspired by** `yarn
 upgrade-interactive` (the Yarn Berry / Yarn 4 version, built into Yarn since v4).
 The three-column layout, keybindings, and version-suggestion logic follow yarn's
-closely — they were built by reading Yarn's actual source
-(`@yarnpkg/plugin-interactive-tools`) — but this tool also adds things yarn
+closely, but this tool also adds things yarn
 doesn't have, notably built-in **vulnerability warnings** and one-key npm
 **`overrides`**, so it deliberately diverges where that improves the experience.
+
+<p align="center">
+  <img src="assets/screenshot.svg" alt="upgrade-interactive showing the three-column Current/Range/Latest picker, with version-diff coloring, a vulnerability warning, and override sections" width="100%">
+</p>
 
 ## Install / run
 
 ```sh
 npx upgrade-interactive
-# or, once published/linked:
+# or install globally:
 npm install -g upgrade-interactive
 nui
 ```
@@ -159,24 +167,3 @@ Deliberate additions / differences (this is *inspired by* yarn, not a clone):
   finishes, which can make rows jump around while loading — this clone
   avoids that instead of reproducing it.
 - No monorepo/workspace support (single `package.json` only).
-
-## Project layout
-
-```
-src/
-  cli.js                 entry point, arg/flag parsing, apply + npm install
-  registry.js             npm registry client + bulk advisory lookup
-  semver-suggest.js       Current/Range/Latest suggestion + diff coloring
-  package-file.js          package.json read/write (+ overrides)
-  lockfile.js             installed versions from package-lock.json
-  vulnerabilities.js      advisory orchestration + severity/safe-version logic
-  links.js                OSC 8 terminal hyperlinks (with fallback)
-  components/
-    App.js                 state machine + keybindings
-    OverridePicker.js      safe-version chooser (global + scoped-pin overlays)
-    Header.js, Prompt.js, Row.js   presentation
-test/
-  unit/                   isolated, offline unit suites
-                          (vulnerabilities, package-file, lockfile)
-  app.test.mjs            simulated-keypress smoke tests (ink-testing-library)
-```
