@@ -37,14 +37,69 @@ export async function loadManifest(cwd) {
   return { filePath, json, raw, indent, trailingNewline, descriptors };
 }
 
+// Write one override spec for `name` into the resolved `root` overrides object,
+// pushing an {name,to,parent?} record for each entry actually changed. A spec is
+// either a version string (top-level pin, forcing every instance) or
+// { scoped: [{ parentName, parentVersion, version }] } where each pin is nested
+// under its parent package (parentName === null falls back to a top-level pin,
+// for a direct dependency). A parent whose value is already a string override of
+// the parent itself is preserved under the "." key when we add a child pin.
+//
+// When one parent name needs *different* child versions for different installed
+// copies of itself, a bare "pkg" key can't express both — so those pins are
+// keyed by the more specific "pkg@version" selector instead. A parent that maps
+// to a single target keeps the simpler bare key (which covers every version of
+// it). Bare and qualified keys coexist; npm applies the most specific.
+function writeOverrideSpec(root, name, spec, out) {
+  if (typeof spec === 'string') {
+    if (!spec || root[name] === spec) return;
+    root[name] = spec;
+    out.push({ name, to: spec });
+    return;
+  }
+  if (!spec || !Array.isArray(spec.scoped)) return;
+
+  // A parent needs a version-qualified key only when it's being pinned to more
+  // than one distinct target across its installed copies.
+  const targetsByParent = new Map();
+  for (const pin of spec.scoped) {
+    if (!pin || !pin.version || pin.parentName == null) continue;
+    if (!targetsByParent.has(pin.parentName)) targetsByParent.set(pin.parentName, new Set());
+    targetsByParent.get(pin.parentName).add(pin.version);
+  }
+
+  for (const pin of spec.scoped) {
+    if (!pin || !pin.version) continue;
+    if (pin.parentName == null) {
+      if (root[name] === pin.version) continue;
+      root[name] = pin.version;
+      out.push({ name, to: pin.version });
+      continue;
+    }
+    // Fall back to the bare name if we can't qualify (no version recorded).
+    const qualify = (targetsByParent.get(pin.parentName)?.size || 0) > 1 && pin.parentVersion;
+    const key = qualify ? `${pin.parentName}@${pin.parentVersion}` : pin.parentName;
+    let bucket = root[key];
+    if (typeof bucket === 'string') bucket = root[key] = { '.': bucket };
+    else if (!bucket || typeof bucket !== 'object') bucket = root[key] = {};
+    if (bucket[name] === pin.version) continue;
+    bucket[name] = pin.version;
+    out.push({ name, to: pin.version, parent: key });
+  }
+}
+
 /**
- * Apply a Map<name, newRange> of accepted upgrades, an optional
- * { name: version } map of npm `overrides` to add, and an optional list of
- * override names to remove, then write the manifest back to disk.
+ * Apply a Map<name, newRange> of accepted upgrades, an optional map of npm
+ * `overrides` to add, and an optional list of override names to remove, then
+ * write the manifest back to disk.
  *
- * Returns { applied: {name,field,from,to}[], overrides: {name,to}[],
- * removed: {name}[] }. Note: a top-level `overrides` entry forces *every*
- * instance of that package (direct and transitive) to the pinned version.
+ * Each `overrides` value is either a version string (a top-level pin that forces
+ * *every* instance of that package) or { scoped: [{ parentName, version }] },
+ * which nests each pin under its parent so different dependents can keep
+ * different versions.
+ *
+ * Returns { applied: {name,field,from,to}[], overrides: {name,to,parent?}[],
+ * removed: {name}[] }.
  */
 export async function applyUpgrades(manifest, selections, overrides = {}, removals = []) {
   const applied = [];
@@ -63,10 +118,8 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
     if (!manifest.json.overrides || typeof manifest.json.overrides !== 'object') {
       manifest.json.overrides = {};
     }
-    for (const [name, version] of overrideEntries) {
-      if (!version || manifest.json.overrides[name] === version) continue;
-      manifest.json.overrides[name] = version;
-      appliedOverrides.push({ name, to: version });
+    for (const [name, spec] of overrideEntries) {
+      writeOverrideSpec(manifest.json.overrides, name, spec, appliedOverrides);
     }
   }
 

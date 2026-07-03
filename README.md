@@ -1,18 +1,26 @@
 # upgrade-interactive
 
+[![npm version](https://img.shields.io/npm/v/upgrade-interactive.svg)](https://www.npmjs.com/package/upgrade-interactive)
+[![npm downloads](https://img.shields.io/npm/dm/upgrade-interactive.svg)](https://www.npmjs.com/package/upgrade-interactive)
+[![node](https://img.shields.io/node/v/upgrade-interactive.svg)](https://www.npmjs.com/package/upgrade-interactive)
+[![license](https://img.shields.io/npm/l/upgrade-interactive.svg)](./LICENSE)
+
 An interactive dependency upgrader for npm projects, **inspired by** `yarn
 upgrade-interactive` (the Yarn Berry / Yarn 4 version, built into Yarn since v4).
 The three-column layout, keybindings, and version-suggestion logic follow yarn's
-closely — they were built by reading Yarn's actual source
-(`@yarnpkg/plugin-interactive-tools`) — but this tool also adds things yarn
+closely, but this tool also adds things yarn
 doesn't have, notably built-in **vulnerability warnings** and one-key npm
 **`overrides`**, so it deliberately diverges where that improves the experience.
+
+<p align="center">
+  <img src="assets/screenshot.svg" alt="upgrade-interactive showing the three-column Current/Range/Latest picker, with version-diff coloring, a vulnerability warning, and override sections" width="100%">
+</p>
 
 ## Install / run
 
 ```sh
 npx upgrade-interactive
-# or, once published/linked:
+# or install globally:
 npm install -g upgrade-interactive
 nui
 ```
@@ -63,7 +71,13 @@ and run `npm run upgrade-interactive`.
    links. The affected range and first fixed version are shown inline.
 5. Lets you press `o` on a vulnerable package to **pin it to a safe version via
    an npm `overrides` entry** — the main way to patch a *transitive* dependency
-   you don't directly control.
+   you don't directly control. When the package resolves to a single version
+   this is one global pin. When it's installed at **several versions** across the
+   tree — where a global pin would drag an unrelated, already-safe copy along too
+   — the picker instead offers **per-dependent scoped pins**: it pins each
+   vulnerable copy under its parent (`parent › package`) and leaves already-safe
+   copies alone. If one parent is itself present at multiple versions needing
+   different fixes, those pins are keyed by `parent@version`.
 6. **Flags existing `overrides` that are no longer needed** — either because
    nothing in the tree depends on that package anymore, or because your deps
    would now resolve to a non-vulnerable version without the pin. Press `x` to
@@ -73,8 +87,10 @@ and run `npm run upgrade-interactive`.
    and runs `npm install`.
 
 By default the list is grouped into **Dependencies**, **Dev dependencies**, and
-**Overrides** (transitive packages you've flagged for an override) sections. Pass
-`--no-section` for a single flat list.
+two override sections: **Override to a safe version** (vulnerable packages with
+no ordinary upgrade path, each shown as a `current → fixed` pair) and **Unused
+overrides** (existing pins you can drop). Pass `--no-section` for a single flat
+list.
 
 ## Controls
 
@@ -134,11 +150,12 @@ Follows yarn closely:
 
 Deliberate additions / differences (this is *inspired by* yarn, not a clone):
 - **Vulnerability warnings + `overrides`** — flags vulnerable direct and
-  transitive packages, lets you pin a safe version via npm `overrides`, and
-  flags existing overrides that are no longer needed so you can remove them.
-  Yarn's command has no equivalent.
+  transitive packages, lets you pin a safe version via npm `overrides` (a single
+  global pin, or per-dependent **scoped** pins when a global pin would disturb an
+  already-safe copy), and flags existing overrides that are no longer needed so
+  you can remove them. Yarn's command has no equivalent.
 - **Sectioned layout** — the list is grouped into Dependencies / Dev
-  dependencies / Overrides by default (yarn shows one flat list; use
+  dependencies / override sections by default (yarn shows one flat list; use
   `--no-section` to match that).
 - Only plain semver ranges are resolved (git/file/link/workspace ranges,
   and compound ranges like `>=1.0.0 <2.0.0`, are skipped — yarn handles
@@ -150,22 +167,3 @@ Deliberate additions / differences (this is *inspired by* yarn, not a clone):
   finishes, which can make rows jump around while loading — this clone
   avoids that instead of reproducing it.
 - No monorepo/workspace support (single `package.json` only).
-
-## Project layout
-
-```
-src/
-  cli.js                 entry point, arg/flag parsing, apply + npm install
-  registry.js             npm registry client + bulk advisory lookup
-  semver-suggest.js       Current/Range/Latest suggestion + diff coloring
-  package-file.js          package.json read/write (+ overrides)
-  lockfile.js             installed versions from package-lock.json
-  vulnerabilities.js      advisory orchestration + severity/safe-version logic
-  links.js                OSC 8 terminal hyperlinks (with fallback)
-  components/
-    App.js                 state machine + keybindings
-    OverridePicker.js      safe-version chooser overlay
-    Header.js, Prompt.js, Row.js   presentation
-test/
-  app.test.mjs            simulated-keypress smoke tests (ink-testing-library)
-```

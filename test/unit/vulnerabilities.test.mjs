@@ -137,6 +137,128 @@ describe('computeVulnerabilities — detection', () => {
   });
 });
 
+// --- Pin-strategy / instance analysis (scoped overrides) ---------------------
+
+describe('computeVulnerabilities — pin instances', () => {
+  // dependency-a is vulnerable at 1.2 under pkg-a but installed safe at 0.4
+  // under pkg-b (a version a global 1.3 pin would break). This is the case
+  // scoped pins exist for.
+  it('goes scoped when a safe instance would be disturbed by a global pin', async () => {
+    const installed = {
+      versions: new Map([['dependency-a', new Set(['1.2.0', '0.4.0'])]]),
+      direct: new Set(['pkg-a', 'pkg-b']),
+      packages: {
+        '': { dependencies: { 'pkg-a': '^1.0.0', 'pkg-b': '^1.0.0' } },
+        'node_modules/pkg-a': { version: '1.0.0', dependencies: { 'dependency-a': '^1.2.0' } },
+        'node_modules/pkg-b': { version: '1.0.0', dependencies: { 'dependency-a': '^0.4.0' } },
+        'node_modules/dependency-a': { version: '1.2.0' }, // hoisted for pkg-a
+        'node_modules/pkg-b/node_modules/dependency-a': { version: '0.4.0' }, // nested for pkg-b
+      },
+    };
+    const registry = stubRegistry({
+      meta: { 'dependency-a': { versions: ['0.4.0', '1.2.0', '1.3.0'], distTags: {} } },
+      advisories: { 'dependency-a': [advisory({ vulnerable_versions: '>=1.0.0 <1.3.0', severity: 'high' })] },
+    });
+
+    const { vulns } = await computeVulnerabilities({ installed }, registry);
+    const v = vulns.get('dependency-a');
+
+    assert.equal(v.pinStrategy, 'scoped');
+    const byParent = Object.fromEntries(v.instances.map((i) => [i.parentName, i]));
+    assert.equal(byParent['pkg-a'].vulnerable, true);
+    assert.equal(byParent['pkg-a'].bestSafeInRange, '1.3.0', 'the vulnerable instance can move to 1.3.0');
+    assert.equal(byParent['pkg-b'].vulnerable, false, 'the 0.4.0 instance is already safe');
+    assert.equal(byParent['pkg-b'].installedVersion, '0.4.0', 'nested resolution finds the right node');
+  });
+
+  it('stays global when every instance is vulnerable and one safe version fits all', async () => {
+    const installed = {
+      versions: new Map([['dependency-a', new Set(['1.2.0', '1.1.0'])]]),
+      direct: new Set(['pkg-a', 'pkg-b']),
+      packages: {
+        '': { dependencies: { 'pkg-a': '^1.0.0', 'pkg-b': '^1.0.0' } },
+        'node_modules/pkg-a': { version: '1.0.0', dependencies: { 'dependency-a': '^1.2.0' } },
+        'node_modules/pkg-b': { version: '1.0.0', dependencies: { 'dependency-a': '^1.1.0' } },
+        'node_modules/dependency-a': { version: '1.2.0' },
+        'node_modules/pkg-b/node_modules/dependency-a': { version: '1.1.0' },
+      },
+    };
+    const registry = stubRegistry({
+      meta: { 'dependency-a': { versions: ['1.1.0', '1.2.0', '1.3.0'], distTags: {} } },
+      advisories: { 'dependency-a': [advisory({ vulnerable_versions: '>=1.0.0 <1.3.0', severity: 'high' })] },
+    });
+
+    const { vulns } = await computeVulnerabilities({ installed }, registry);
+
+    assert.equal(vulns.get('dependency-a').pinStrategy, 'global');
+  });
+
+  it('goes scoped when vulnerable instances need different safe versions per major', async () => {
+    const installed = {
+      versions: new Map([['dependency-a', new Set(['2.5.0', '1.2.0'])]]),
+      direct: new Set(['pkg-a', 'pkg-b']),
+      packages: {
+        '': { dependencies: { 'pkg-a': '^1.0.0', 'pkg-b': '^1.0.0' } },
+        'node_modules/pkg-a': { version: '1.0.0', dependencies: { 'dependency-a': '^2.0.0' } },
+        'node_modules/pkg-b': { version: '1.0.0', dependencies: { 'dependency-a': '^1.0.0' } },
+        'node_modules/dependency-a': { version: '2.5.0' },
+        'node_modules/pkg-b/node_modules/dependency-a': { version: '1.2.0' },
+      },
+    };
+    const registry = stubRegistry({
+      // 1.2.0 and 2.5.0 are the only bad versions; each major has an in-range fix.
+      meta: { 'dependency-a': { versions: ['1.2.0', '1.4.0', '2.5.0', '2.7.0'], distTags: {} } },
+      advisories: { 'dependency-a': [advisory({ vulnerable_versions: '1.2.0 || 2.5.0', severity: 'high' })] },
+    });
+
+    const { vulns } = await computeVulnerabilities({ installed }, registry);
+    const v = vulns.get('dependency-a');
+    const byParent = Object.fromEntries(v.instances.map((i) => [i.parentName, i]));
+
+    assert.equal(v.pinStrategy, 'scoped');
+    assert.equal(byParent['pkg-a'].bestSafeInRange, '2.7.0');
+    assert.equal(byParent['pkg-b'].bestSafeInRange, '1.4.0', 'the 1.x consumer gets an in-range 1.x fix, not a forced major bump');
+  });
+
+  it('stays global for a single installed version even across several dependents', async () => {
+    const installed = {
+      versions: new Map([['lodash', new Set(['4.17.11'])]]),
+      direct: new Set(['pkg-a']),
+      packages: {
+        '': { dependencies: { 'pkg-a': '^1.0.0' } },
+        'node_modules/pkg-a': { version: '1.0.0', dependencies: { lodash: '^4.0.0' } },
+        'node_modules/pkg-b': { version: '1.0.0', dependencies: { lodash: '^4.17.0' } },
+        'node_modules/lodash': { version: '4.17.11' },
+      },
+    };
+    const registry = stubRegistry({
+      meta: { lodash: { versions: ['4.17.11', '4.17.21'], distTags: {} } },
+      advisories: { lodash: [advisory({ vulnerable_versions: '<4.17.19', severity: 'high' })] },
+    });
+
+    const { vulns } = await computeVulnerabilities({ installed }, registry);
+
+    assert.equal(vulns.get('lodash').pinStrategy, 'global');
+  });
+
+  it('falls back to global when there is no lockfile tree to inspect', async () => {
+    const installed = {
+      versions: new Map([['lodash', new Set(['4.17.11'])]]),
+      direct: new Set(['lodash']),
+      packages: {},
+    };
+    const registry = stubRegistry({
+      meta: { lodash: { versions: ['4.17.11', '4.17.21'], distTags: {} } },
+      advisories: { lodash: [advisory({ vulnerable_versions: '<4.17.19' })] },
+    });
+
+    const { vulns } = await computeVulnerabilities({ installed }, registry);
+
+    assert.equal(vulns.get('lodash').pinStrategy, 'global');
+    assert.deepEqual(vulns.get('lodash').instances, []);
+  });
+});
+
 // --- Removable-override analysis ---------------------------------------------
 
 describe('computeVulnerabilities — removable overrides', () => {
@@ -228,6 +350,18 @@ describe('computeVulnerabilities — removable overrides', () => {
     );
 
     assert.equal(removableOverrides.has('ghost'), false);
+  });
+
+  it('ignores a nested (object-valued) override entry', async () => {
+    const installed = treeWith();
+    const registry = stubRegistry();
+
+    const { removableOverrides } = await computeVulnerabilities(
+      { overrides: { 'pkg-a': { 'dependency-a': '1.3.0' } }, installed },
+      registry
+    );
+
+    assert.equal(removableOverrides.has('pkg-a'), false);
   });
 
   it('ignores overrides that reference another dependency ($-syntax)', async () => {

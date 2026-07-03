@@ -25,6 +25,21 @@ function Column({ suggestion, selected }) {
   );
 }
 
+// Human-readable summary of a staged override for a row: a plain version for a
+// global pin, or a per-parent / count summary for scoped pins.
+export function overrideLabel(spec) {
+  if (!spec) return null;
+  if (typeof spec === 'string') return `→ override ${spec}`;
+  if (Array.isArray(spec.scoped) && spec.scoped.length > 0) {
+    if (spec.scoped.length === 1) {
+      const p = spec.scoped[0];
+      return p.parentName ? `→ pin ${p.parentName} › ${p.version}` : `→ override ${p.version}`;
+    }
+    return `→ ${spec.scoped.length} scoped pins`;
+  }
+  return null;
+}
+
 // The ⚠ + severity + CVE link + affected/fixed-in summary shown on a flagged
 // row. `hideFixed` drops the "fixed in" suffix when the row already shows the
 // fixed version as a column (the override rows), to avoid saying it twice.
@@ -32,11 +47,12 @@ function VulnInfo({ vuln, override, hideFixed }) {
   const sev = SEVERITY[vuln.severity] || SEVERITY.low;
   let text = `⚠ ${sev.label} ${hyperlink(vuln.cve, vuln.url)} — affects ${vuln.affectedRange}`;
   if (!hideFixed && vuln.firstPatched) text += ` · fixed in ${vuln.firstPatched}`;
+  const label = overrideLabel(override);
   return e(
     Box,
     { marginLeft: 1 },
     e(Text, { color: sev.color }, text),
-    override ? e(Text, { color: 'greenBright', bold: true }, `  → override ${override}`) : null
+    label ? e(Text, { color: 'greenBright', bold: true }, `  ${label}`) : null
   );
 }
 

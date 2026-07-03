@@ -3,7 +3,7 @@ import { Box, Text, useInput, useApp } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
 import { Row, VulnRow, OverrideRow, LoadingRow, SectionHeader } from './Row.js';
-import { OverridePicker } from './OverridePicker.js';
+import { OverridePicker, ScopedOverridePicker } from './OverridePicker.js';
 import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
 import { loadInstalledVersions } from '../lockfile.js';
@@ -219,9 +219,17 @@ export function App({
     if (!audit || !focusedRow) return;
     if (focusedRow.kind !== 'dep' && focusedRow.kind !== 'vuln') return;
     const vuln = focusedRow.vuln;
-    if (!vuln || !vuln.safeVersions || vuln.safeVersions.length === 0) return;
+    if (!vuln) return;
     const name = focusedRow.kind === 'dep' ? focusedRow.descriptor.name : focusedRow.name;
-    setOverride({ name, versions: vuln.safeVersions });
+    // When the package is installed at several versions across the tree, a
+    // single global pin would be wrong — offer per-parent scoped pins instead,
+    // as long as at least one vulnerable instance has an in-range fix.
+    if (vuln.pinStrategy === 'scoped' && (vuln.instances || []).some((i) => i.vulnerable && i.safeCandidates?.length)) {
+      setOverride({ name, mode: 'scoped', instances: vuln.instances });
+      return;
+    }
+    if (!vuln.safeVersions || vuln.safeVersions.length === 0) return;
+    setOverride({ name, mode: 'global', versions: vuln.safeVersions });
   }, [audit, focusedRow]);
 
   const toggleRemoval = useCallback(() => {
@@ -340,16 +348,26 @@ export function App({
       });
     }),
     windowEnd < rows.length ? e(Text, { dimColor: true }, `  ↓ ${rows.length - windowEnd} more below`) : null,
-    override
-      ? e(OverridePicker, {
+    override && override.mode === 'scoped'
+      ? e(ScopedOverridePicker, {
           name: override.name,
-          versions: override.versions,
-          onSelect: (version) => {
-            setStagedOverrides((prev) => ({ ...prev, [override.name]: version }));
+          instances: override.instances,
+          onSelect: (spec) => {
+            setStagedOverrides((prev) => ({ ...prev, [override.name]: spec }));
             setOverride(null);
           },
           onCancel: () => setOverride(null),
         })
-      : null
+      : override
+        ? e(OverridePicker, {
+            name: override.name,
+            versions: override.versions,
+            onSelect: (version) => {
+              setStagedOverrides((prev) => ({ ...prev, [override.name]: version }));
+              setOverride(null);
+            },
+            onCancel: () => setOverride(null),
+          })
+        : null
   );
 }
