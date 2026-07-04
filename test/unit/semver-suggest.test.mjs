@@ -1,8 +1,10 @@
-// Unit tests for the pure version-diff colorizer. No I/O, no async.
+// Unit tests for the pure version-diff colorizer and the Current/Range/Latest
+// suggestion logic. The colorizer is pure; the suggestion tests inject the
+// registry metadata lookup so they run fully offline.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { colorizeVersionDiff } from '../../src/semver-suggest.js';
+import { colorizeVersionDiff, fetchSuggestions } from '../../src/semver-suggest.js';
 
 // The colored text is what the eye is drawn to; collapse the spans down to it.
 const colored = (spans) => spans.filter((s) => s.color).map((s) => s.text).join('');
@@ -28,5 +30,74 @@ describe('colorizeVersionDiff', () => {
     assert.deepEqual(colorizeVersionDiff('1.0.0', 'git://example.com/repo'), [
       { text: 'git://example.com/repo', color: null },
     ]);
+  });
+});
+
+// A registry double: fetchPackageMeta returns the given { versions, distTags }
+// regardless of package name.
+function stubMeta(meta) {
+  return { fetchPackageMeta: async () => meta };
+}
+
+const valueOf = (suggestions, key) => suggestions.find((s) => s.key === key)?.value ?? null;
+
+describe('fetchSuggestions — compound ranges collapse to caret', () => {
+  it('offers ^highest-in-range and ^latest for an AND range', async () => {
+    const deps = stubMeta({ versions: ['1.0.0', '1.9.0', '2.5.0', '3.1.0'], distTags: { latest: '3.1.0' } });
+
+    const s = await fetchSuggestions({ name: 'x', range: '>=1.0.0 <2.0.0' }, deps);
+
+    assert.ok(s, 'a compound-range package is no longer dropped');
+    assert.equal(valueOf(s, 'range'), '^1.9.0', 'Range = highest version the range already allows, as a caret');
+    assert.equal(valueOf(s, 'latest'), '^3.1.0', 'Latest = newest published, as a caret');
+  });
+
+  it('picks the highest branch of an OR range', async () => {
+    const deps = stubMeta({ versions: ['1.5.0', '2.9.0', '3.1.0'], distTags: { latest: '3.1.0' } });
+
+    const s = await fetchSuggestions({ name: 'x', range: '1.x || 2.x' }, deps);
+
+    assert.equal(valueOf(s, 'range'), '^2.9.0');
+    assert.equal(valueOf(s, 'latest'), '^3.1.0');
+  });
+
+  it('resolves a hyphen range', async () => {
+    const deps = stubMeta({ versions: ['1.0.0', '1.8.0', '2.0.0', '2.4.0'], distTags: { latest: '2.4.0' } });
+
+    const s = await fetchSuggestions({ name: 'x', range: '1.0.0 - 2.0.0' }, deps);
+
+    assert.equal(valueOf(s, 'range'), '^2.0.0', 'highest version at or below the inclusive upper bound');
+    assert.equal(valueOf(s, 'latest'), '^2.4.0');
+  });
+
+  it('suppresses Latest when it already falls inside the compound range', async () => {
+    const deps = stubMeta({ versions: ['1.0.0', '3.1.0'], distTags: { latest: '3.1.0' } });
+
+    const s = await fetchSuggestions({ name: 'x', range: '>=1.0.0 <4.0.0' }, deps);
+
+    assert.equal(valueOf(s, 'range'), '^3.1.0');
+    assert.equal(valueOf(s, 'latest'), null, 'Latest equals the Range collapse, so it is not shown twice');
+  });
+
+  it('drops the package when the compound range is unparseable', async () => {
+    const deps = stubMeta({ versions: ['1.0.0'], distTags: { latest: '1.0.0' } });
+
+    assert.equal(await fetchSuggestions({ name: 'x', range: '>= not a range' }, deps), null);
+  });
+
+  it('still handles a simple caret range unchanged', async () => {
+    const deps = stubMeta({ versions: ['4.0.0', '4.9.0', '5.0.0'], distTags: { latest: '5.0.0' } });
+
+    const s = await fetchSuggestions({ name: 'x', range: '^4.0.0' }, deps);
+
+    assert.equal(valueOf(s, 'range'), '^4.9.0');
+    assert.equal(valueOf(s, 'latest'), '^5.0.0');
+  });
+
+  it('skips protocol ranges (git/file/etc)', async () => {
+    const deps = stubMeta({ versions: ['1.0.0'], distTags: { latest: '1.0.0' } });
+
+    assert.equal(await fetchSuggestions({ name: 'x', range: 'file:../x' }, deps), null);
+    assert.equal(await fetchSuggestions({ name: 'x', range: 'workspace:*' }, deps), null);
   });
 });
