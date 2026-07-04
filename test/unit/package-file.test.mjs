@@ -297,6 +297,28 @@ describe('applyUpgrades', () => {
     assert.deepEqual((await readJson(dir)).overrides, { minimist: '1.2.6' });
   });
 
+  it('treats a removal as a no-op when the manifest has no overrides block at all', async () => {
+    const original = pkg({ dependencies: { a: '1.0.0' } });
+    const dir = await project({ 'package.json': original });
+    const m = await loadManifest(dir);
+
+    const res = await applyUpgrades(m, new Map(), {}, ['leftpad']);
+
+    assert.equal(res.removed.length, 0);
+    assert.equal(await readRaw(dir), original, 'file should be left untouched');
+  });
+
+  it('ignores a malformed override spec (neither a version string nor {scoped})', async () => {
+    const original = pkg({ dependencies: { a: '1.0.0' } });
+    const dir = await project({ 'package.json': original });
+    const m = await loadManifest(dir);
+
+    const res = await applyUpgrades(m, new Map(), { 'dependency-a': { bogus: true } });
+
+    assert.equal(res.overrides.length, 0);
+    assert.equal(await readRaw(dir), original, 'file should be left untouched');
+  });
+
   it('ignores (and does not write for) a removal of an override that is not present', async () => {
     const original = pkg({ overrides: { minimist: '1.2.6' } });
     const dir = await project({ 'package.json': original });

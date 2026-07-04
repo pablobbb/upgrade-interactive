@@ -31,6 +31,12 @@ describe('colorizeVersionDiff', () => {
       { text: 'git://example.com/repo', color: null },
     ]);
   });
+
+  it('colors only the prerelease segment when only the prerelease differs', () => {
+    const spans = colorizeVersionDiff('1.2.3', '1.2.3-rc.1');
+
+    assert.equal(colored(spans), '-rc.1');
+  });
 });
 
 // A registry double: fetchPackageMeta returns the given { versions, distTags }
@@ -99,5 +105,55 @@ describe('fetchSuggestions — compound ranges collapse to caret', () => {
 
     assert.equal(await fetchSuggestions({ name: 'x', range: 'file:../x' }, deps), null);
     assert.equal(await fetchSuggestions({ name: 'x', range: 'workspace:*' }, deps), null);
+  });
+});
+
+describe('fetchSuggestions — simple ranges', () => {
+  it('preserves a tilde modifier in both suggestions', async () => {
+    const deps = stubMeta({ versions: ['4.0.0', '4.0.5', '4.9.0', '5.0.0'], distTags: { latest: '5.0.0' } });
+
+    const s = await fetchSuggestions({ name: 'x', range: '~4.0.0' }, deps);
+
+    assert.equal(valueOf(s, 'range'), '~4.0.5', 'Range respects the tilde (patch-only) bound');
+    assert.equal(valueOf(s, 'latest'), '~5.0.0', 'Latest keeps the original modifier style');
+  });
+
+  it('treats an exact pinned version as an implicit caret for the Range column', async () => {
+    const deps = stubMeta({ versions: ['4.0.0', '4.9.0', '5.0.0'], distTags: { latest: '5.0.0' } });
+
+    const s = await fetchSuggestions({ name: 'x', range: '4.0.0' }, deps);
+
+    assert.equal(valueOf(s, 'range'), '4.9.0', 'Range = newest same-major, still written as an exact pin');
+    assert.equal(valueOf(s, 'latest'), '5.0.0');
+  });
+
+  it('keeps the caret modifier for a short ^major.minor range', async () => {
+    const deps = stubMeta({ versions: ['1.2.0', '1.9.0', '2.0.0'], distTags: { latest: '2.0.0' } });
+
+    const s = await fetchSuggestions({ name: 'x', range: '^1.2' }, deps);
+
+    assert.equal(valueOf(s, 'range'), '^1.9.0');
+    assert.equal(valueOf(s, 'latest'), '^2.0.0');
+  });
+
+  it('resolves a bare dist-tag range through the dist-tags map', async () => {
+    const deps = stubMeta({ versions: ['1.0.0', '2.0.0-beta.1'], distTags: { latest: '1.0.0', beta: '2.0.0-beta.1' } });
+
+    const s = await fetchSuggestions({ name: 'x', range: 'beta' }, deps);
+
+    assert.equal(valueOf(s, 'range'), '2.0.0-beta.1', 'the tag itself resolves through dist-tags');
+    assert.equal(valueOf(s, 'latest'), '1.0.0');
+  });
+
+  it('drops a package that is already fully up to date', async () => {
+    const deps = stubMeta({ versions: ['4.9.0'], distTags: { latest: '4.9.0' } });
+
+    assert.equal(await fetchSuggestions({ name: 'x', range: '^4.9.0' }, deps), null);
+  });
+
+  it('drops a package whose metadata cannot be fetched', async () => {
+    const deps = { fetchPackageMeta: async () => null };
+
+    assert.equal(await fetchSuggestions({ name: 'x', range: '^1.0.0' }, deps), null);
   });
 });

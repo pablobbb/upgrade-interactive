@@ -294,6 +294,58 @@ describe('computeVulnerabilities — pin instances', () => {
   });
 });
 
+// --- Advisory labeling and fix-version fallbacks ------------------------------
+
+describe('computeVulnerabilities — advisory fallbacks', () => {
+  // One vulnerable installed package; only the advisory shape varies per test.
+  function vulnerableWith(advisoryFields, metaVersions = ['1.0.0', '2.0.0']) {
+    const installed = {
+      versions: new Map([['pkg', new Set(['1.0.0'])]]),
+      direct: new Set(['pkg']),
+      packages: {},
+    };
+    const registry = stubRegistry({
+      meta: { pkg: { versions: metaVersions, distTags: {} } },
+      advisories: { pkg: [advisory({ vulnerable_versions: '<2.0.0', ...advisoryFields })] },
+    });
+    return computeVulnerabilities({ installed }, registry);
+  }
+
+  it('prefers the CVE number over the GHSA id as the label', async () => {
+    const { vulns } = await vulnerableWith({ cves: ['CVE-2020-1234'], github_advisory_id: 'GHSA-zzzz' });
+
+    assert.equal(vulns.get('pkg').cve, 'CVE-2020-1234');
+  });
+
+  it('falls back to the GHSA id and derives the advisory url from it', async () => {
+    const { vulns } = await vulnerableWith({ url: null, github_advisory_id: 'GHSA-abcd' });
+
+    const v = vulns.get('pkg');
+    assert.equal(v.cve, 'GHSA-abcd');
+    assert.equal(v.url, 'https://github.com/advisories/GHSA-abcd');
+  });
+
+  it('labels by numeric advisory id when no CVE, GHSA id, or GHSA url exists', async () => {
+    const { vulns } = await vulnerableWith({ url: 'https://example.com/adv/9', id: 9 });
+
+    assert.equal(vulns.get('pkg').cve, 'advisory 9');
+  });
+
+  it('derives firstPatched from patched_versions when no safe version is published yet', async () => {
+    const { vulns } = await vulnerableWith({ patched_versions: '>=2.0.0' }, ['1.0.0']);
+
+    const v = vulns.get('pkg');
+    assert.deepEqual(v.safeVersions, [], 'nothing published is safe');
+    assert.equal(v.firstPatched, '2.0.0', 'the advisory itself names the fix');
+  });
+
+  it('ignores an advisory whose affected range is unparseable instead of crashing', async () => {
+    const { vulns } = await vulnerableWith({ vulnerable_versions: 'garbage ~~ range' });
+
+    assert.equal(vulns.has('pkg'), false);
+  });
+});
+
 // --- Removable-override analysis ---------------------------------------------
 
 describe('computeVulnerabilities — removable overrides', () => {
@@ -371,6 +423,38 @@ describe('computeVulnerabilities — removable overrides', () => {
     );
 
     assert.equal(removableOverrides.get('leftpad').reason, 'dead');
+  });
+
+  it("does not flag when a dependent's range is not a semver range at all", async () => {
+    const installed = treeWith({
+      packages: { '': {}, 'node_modules/consumer': { version: '1.0.0', dependencies: { lodash: 'git://github.com/x/y' } } },
+    });
+    const registry = stubRegistry({
+      meta: { lodash: { versions: ['4.17.21'], distTags: {} } },
+    });
+
+    const { removableOverrides } = await computeVulnerabilities(
+      { overrides: { lodash: '4.17.21' }, installed },
+      registry
+    );
+
+    assert.equal(removableOverrides.has('lodash'), false, 'unresolvable ranges must never be treated as safe to unpin');
+  });
+
+  it("does not flag when a dependent's range matches no published version", async () => {
+    const installed = treeWith({
+      packages: { '': {}, 'node_modules/consumer': { version: '1.0.0', dependencies: { lodash: '^99.0.0' } } },
+    });
+    const registry = stubRegistry({
+      meta: { lodash: { versions: ['4.17.21'], distTags: {} } },
+    });
+
+    const { removableOverrides } = await computeVulnerabilities(
+      { overrides: { lodash: '4.17.21' }, installed },
+      registry
+    );
+
+    assert.equal(removableOverrides.has('lodash'), false);
   });
 
   it('does not flag when the override target metadata cannot be fetched', async () => {
