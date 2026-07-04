@@ -157,9 +157,11 @@ Deliberate additions / differences (this is *inspired by* yarn, not a clone):
 - **Sectioned layout** — the list is grouped into Dependencies / Dev
   dependencies / override sections by default (yarn shows one flat list; use
   `--no-section` to match that).
-- Only plain semver ranges are resolved (git/file/link/workspace ranges,
-  and compound ranges like `>=1.0.0 <2.0.0`, are skipped — yarn handles
-  these through its pluggable resolvers, which is out of scope here).
+- Compound ranges (`>=1.0.0 <2.0.0`, `1.x || 2.x`, `1.0.0 - 2.0.0`) have no
+  single modifier to re-apply, so they're **collapsed to a caret**: Range =
+  `^<highest version the range already allows>`, Latest = `^<newest published>`.
+  Only protocol ranges (git/file/link/workspace, npm aliases) are skipped —
+  those can't be resolved against the registry's version list at all.
 - Only `dependencies`/`devDependencies` are scanned (matches yarn's own
   scope for this command — it skips `peerDependencies`/`optionalDependencies` too).
 - The list stays alphabetically sorted the whole time it's loading. Yarn's

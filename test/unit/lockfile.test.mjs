@@ -71,6 +71,17 @@ describe('loadInstalledVersions', () => {
     assert.deepEqual([...res.versions.keys()], ['x']);
   });
 
+  it('returns an empty direct set when the lockfile has no root entry', async () => {
+    const dir = await projectWithLock({
+      packages: { 'node_modules/x': { version: '1.0.0' } },
+    });
+
+    const res = await loadInstalledVersions(dir);
+
+    assert.equal(res.direct.size, 0);
+    assert.deepEqual([...res.versions.keys()], ['x']);
+  });
+
   it('returns null when there is no lockfile', async () => {
     const dir = await projectWithLock(undefined);
 

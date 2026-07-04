@@ -5,16 +5,19 @@ import { fetchPackageMeta } from './registry.js';
 // [modifier, major, .minor, .patch, -prerelease] groups.
 const SIMPLE_SEMVER = /^((?:[\^~]|>=?)?)([0-9]+)(\.[0-9]+)(\.[0-9]+)((?:-\S+)?)$/;
 
-// Ranges we can't safely resolve against the registry (git/file/link/workspace
-// protocols, npm aliases, complex boolean ranges, dist-tags other than a bare
-// tag name, etc). Yarn handles these through pluggable resolvers; we just skip them.
-function isSimpleRange(range) {
-  if (!range) return false;
-  if (/^(git|github|gitlab|bitbucket|file|link|workspace|http|https|npm):/.test(range)) return false;
-  // Reject compound ranges ("1.x || 2.x", "1.0.0 - 2.0.0", etc) and anything
-  // with internal whitespace; those aren't resolvable by our simple scheme.
-  if (/\s/.test(range)) return false;
-  return true;
+// Protocol ranges we can't resolve against the registry version list at all
+// (git/file/link/workspace, npm aliases, etc). Yarn handles these through
+// pluggable resolvers; we just skip them.
+function isProtocolRange(range) {
+  return !range || /^(git|github|gitlab|bitbucket|file|link|workspace|http|https|npm):/.test(range);
+}
+
+// A compound range spans several comparators ("1.x || 2.x", ">=1.0.0 <2.0.0",
+// "1.0.0 - 2.0.0") — always whitespace-separated in npm syntax. It has no single
+// modifier to re-apply and already permits every in-range upgrade, so we collapse
+// it to a caret rather than trying to preserve its shape.
+function isCompoundRange(range) {
+  return /\s/.test(range);
 }
 
 function getModifier(range) {
@@ -85,26 +88,40 @@ export function colorizeVersionDiff(from, to) {
  * (mirrors yarn: a package with no viable Range/Latest suggestion is
  * dropped from the list entirely).
  */
-export async function fetchSuggestions(descriptor) {
+export async function fetchSuggestions(descriptor, deps = {}) {
+  const getMeta = deps.fetchPackageMeta || fetchPackageMeta;
   const { name, range } = descriptor;
-  if (!isSimpleRange(range)) return null;
+  if (isProtocolRange(range)) return null;
 
-  const meta = await fetchPackageMeta(name);
+  const compound = isCompoundRange(range);
+  // An unparseable compound range (e.g. malformed boolean) has nothing to resolve.
+  if (compound && !semver.validRange(range)) return null;
+
+  const meta = await getMeta(name);
   if (!meta) return null;
-
-  const referenceRange = semver.valid(range) ? `^${range}` : range;
 
   let rangeResolution = null;
   let latestResolution = null;
-  try {
-    rangeResolution = resolveAgainstMeta(meta, range, referenceRange);
-  } catch {
-    rangeResolution = null;
-  }
-  try {
-    latestResolution = resolveAgainstMeta(meta, range, 'latest');
-  } catch {
-    latestResolution = null;
+  if (compound) {
+    // Collapse to a caret: Range = the highest version the compound range
+    // already allows, Latest = the newest published version. Both re-formatted
+    // with `^`, since the original range carries no single modifier.
+    const best = semver.maxSatisfying(meta.versions, range, { includePrerelease: false });
+    rangeResolution = best ? `^${best}` : null;
+    const latest = meta.distTags && meta.distTags.latest;
+    latestResolution = latest ? `^${latest}` : null;
+  } else {
+    const referenceRange = semver.valid(range) ? `^${range}` : range;
+    try {
+      rangeResolution = resolveAgainstMeta(meta, range, referenceRange);
+    } catch {
+      rangeResolution = null;
+    }
+    try {
+      latestResolution = resolveAgainstMeta(meta, range, 'latest');
+    } catch {
+      latestResolution = null;
+    }
   }
 
   const suggestions = [
