@@ -17,7 +17,7 @@
     "url": "https://github.com/pablobbb/upgrade-interactive/issues"
   },
   "scripts": {
-    "test": "node --test \"test/unit/**/*.test.mjs\"",
+    "test": "node --test test/unit/*.test.mjs",
     "test:integration": "node test/app.test.mjs",
     "test:all": "npm run test && npm run test:integration"
   },
