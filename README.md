@@ -6,9 +6,8 @@
 [![license](https://img.shields.io/npm/l/upgrade-interactive.svg)](./LICENSE)
 
 An interactive dependency upgrader for npm projects, inspired by `yarn
-upgrade-interactive`. Same three-column picker and keybindings, plus two things
-yarn doesn't have: built-in **vulnerability warnings** and one-key npm
-**`overrides`**.
+upgrade-interactive`. A three-column Current/Range/Latest picker, plus built-in
+**vulnerability warnings** and one-key npm **`overrides`**.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/pablobbb/upgrade-interactive/main/assets/screenshot.png" alt="upgrade-interactive showing the three-column Current/Range/Latest picker, with version-diff coloring, a vulnerability warning, and override sections" width="100%">
@@ -36,7 +35,7 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
      "Wanted").
    - **Latest** — the `latest`-tagged version, even if it's a major bump.
 
-   Packages with nothing new to offer are left out, same as yarn.
+   Packages with nothing new to offer are left out of the list.
 3. Lets you pick, per package, **Current** / **Range** / **Latest**.
 4. **Checks for known vulnerabilities** (on by default) across direct *and*
    transitive dependencies. Flagged rows show a ⚠ icon, severity, and a
@@ -69,7 +68,7 @@ override sections. Pass `--no-section` for a single flat list.
 | `Esc`   | Abort — nothing is written                            |
 
 Version numbers are colorized by bump size (minor vs. major), highlighting only
-the part that changed — same idea as yarn's diff coloring.
+the part that changed.
 
 ## Flags
 
@@ -95,20 +94,11 @@ config → default (on).
 > couldn't check for vulnerable packages`) instead of pretending everything is
 > clean, and upgrades still work.
 
-## Differences from yarn
+## Notes
 
-This is *inspired by* yarn, not a clone. It matches yarn's three-column layout,
-navigation, `c`/`r`/`l` shortcuts, diff coloring, and the rule that packages with
-no upgrade never appear. Deliberate differences:
-
-- **Vulnerability warnings + `overrides`** — flag and pin vulnerable direct and
-  transitive packages, and remove overrides that are no longer needed. Yarn has
-  no equivalent.
-- **Sectioned layout** by default (`--no-section` to match yarn's flat list).
 - **Compound ranges** (`>=1.0.0 <2.0.0`, `1.x || 2.x`, `1.0.0 - 2.0.0`) have no
   single modifier to re-apply, so they collapse to a caret. Protocol ranges
   (git/file/link/workspace, npm aliases) are skipped entirely.
-- Only `dependencies` / `devDependencies` are scanned (as yarn does).
-- The list stays alphabetically sorted while loading, instead of letting rows
-  jump around as requests finish.
+- Only `dependencies` / `devDependencies` are scanned.
+- The list stays alphabetically sorted the whole time it's loading.
 - No monorepo/workspace support (single `package.json` only).
