@@ -8,6 +8,7 @@ import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
 import { loadInstalledVersions } from '../lockfile.js';
 import { computeVulnerabilities } from '../vulnerabilities.js';
+import { shouldScope } from '../override-select.js';
 
 const e = React.createElement;
 const CONCURRENCY = 8;
@@ -224,7 +225,7 @@ export function App({
     // When the package is installed at several versions across the tree, a
     // single global pin would be wrong — offer per-parent scoped pins instead,
     // as long as at least one vulnerable instance has an in-range fix.
-    if (vuln.pinStrategy === 'scoped' && (vuln.instances || []).some((i) => i.vulnerable && i.safeCandidates?.length)) {
+    if (shouldScope(vuln)) {
       setOverride({ name, mode: 'scoped', instances: vuln.instances });
       return;
     }
