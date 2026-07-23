@@ -13,7 +13,7 @@
 
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { rm } from 'node:fs/promises';
+import { rm, access } from 'node:fs/promises';
 import path from 'node:path';
 import { applyUpgrades } from '../../src/package-file.js';
 import {
@@ -25,6 +25,15 @@ import {
   stageFixture,
   auditFixture,
 } from '../fixture-helpers.mjs';
+
+async function exists(file) {
+  try {
+    await access(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const tmpDirs = [];
 afterEach(async () => {
@@ -52,8 +61,20 @@ describe('real-world fixtures — full pipeline to written overrides', async () 
       const removals = removalsFromRemovable(removableOverrides);
       await applyUpgrades(manifest, new Map(), overrides, removals);
 
-      const written = (await readJson(path.join(work, 'package.json'))).overrides || {};
+      const manifestJson = await readJson(path.join(work, 'package.json'));
+      const written = manifestJson.overrides || {};
       assert.deepEqual(written, expected, `${name}: written overrides should match expected-overrides.json`);
+
+      // Fixtures whose fix lands as a dependency-range bump (a direct dep that
+      // can't take a top-level override) carry an expected-dependencies.json.
+      const depsFile = path.join(fixtureDir, 'expected-dependencies.json');
+      if (await exists(depsFile)) {
+        const expectedDeps = await readJson(depsFile);
+        const merged = { ...manifestJson.dependencies, ...manifestJson.devDependencies };
+        for (const [dep, range] of Object.entries(expectedDeps)) {
+          assert.equal(merged[dep], range, `${name}: ${dep} should be bumped to ${range}`);
+        }
+      }
     });
   }
 });

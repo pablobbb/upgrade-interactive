@@ -77,7 +77,11 @@ and run `npm run upgrade-interactive`.
    — the picker instead offers **per-dependent scoped pins**: it pins each
    vulnerable copy under its parent (`parent › package`) and leaves already-safe
    copies alone. If one parent is itself present at multiple versions needing
-   different fixes, those pins are keyed by `parent@version`.
+   different fixes, those pins are keyed by `parent@version`. If the vulnerable
+   package is one of **your own direct dependencies**, it bumps that
+   dependency's range in `dependencies`/`devDependencies` instead of writing an
+   override — npm rejects a top-level override that conflicts with a direct
+   dependency (`EOVERRIDE`), so a range bump is the correct fix there.
 6. **Flags existing `overrides` that are no longer needed** — either because
    nothing in the tree depends on that package anymore, or because your deps
    would now resolve to a non-vulnerable version without the pin. Press `x` to
@@ -99,7 +103,7 @@ list.
 | `↑` / `↓`          | Move between packages                                |
 | `←` / `→`          | Move between Current / Range / Latest for that package |
 | `c` / `r` / `l`     | Select **c**urrent / **r**ange / **l**atest for *every* package at once |
-| `o`                | Override the focused vulnerable package to a safe version (audit mode) |
+| `o`                | Pin the focused vulnerable package to a safe version — an `overrides` entry, or a range bump if it's a direct dependency (audit mode) |
 | `x`                | Remove the focused override when it's no longer needed (audit mode) |
 | `Enter`            | Apply the selected upgrades and run `npm install`     |
 | `Ctrl+C` / `Esc`   | Abort — nothing is written                            |
@@ -153,7 +157,10 @@ Deliberate additions / differences (this is *inspired by* yarn, not a clone):
   transitive packages, lets you pin a safe version via npm `overrides` (a single
   global pin, or per-dependent **scoped** pins when a global pin would disturb an
   already-safe copy), and flags existing overrides that are no longer needed so
-  you can remove them. Yarn's command has no equivalent.
+  you can remove them. For a package you depend on **directly**, it bumps the
+  dependency's own range rather than writing an override, since npm rejects an
+  override that conflicts with a direct dependency (`EOVERRIDE`). Yarn's command
+  has no equivalent.
 - **Sectioned layout** — the list is grouped into Dependencies / Dev
   dependencies / override sections by default (yarn shows one flat list; use
   `--no-section` to match that).

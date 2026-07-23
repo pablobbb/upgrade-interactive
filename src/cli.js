@@ -41,7 +41,8 @@ Controls (inside the interactive UI)
   <up>/<down>     select a package
   <left>/<right>  select which version to apply (Current / Range / Latest)
   c / r / l       select all packages' Current / Range / Latest column at once
-  o               override a vulnerable package to a safe version (audit mode)
+  o               pin a vulnerable package to a safe version (override, or a
+                  range bump for a direct dependency) (audit mode)
   x               remove an existing override that's no longer needed (audit mode)
   <enter>         apply the selected upgrades (and run npm install)
   <ctrl+c> / esc  abort without changing anything
