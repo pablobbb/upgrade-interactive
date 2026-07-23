@@ -256,7 +256,10 @@ describe('applyUpgrades', () => {
     });
   });
 
-  it('writes a scoped pin with a null parent as a top-level override', async () => {
+  it('writes a null-parent pin as a top-level override when the package is not a direct dep', async () => {
+    // Fallback path: a null parent normally means the root project (a direct
+    // dependency), but if the name isn't actually in dependencies there is no
+    // range to bump, so it degrades to a top-level pin.
     const dir = await project({ 'package.json': pkg({ dependencies: { a: '1.0.0' } }) });
     const m = await loadManifest(dir);
 
@@ -265,6 +268,41 @@ describe('applyUpgrades', () => {
     });
 
     assert.deepEqual((await readJson(dir)).overrides, { 'dependency-a': '1.3.0' });
+  });
+
+  it('bumps a direct dependency range instead of writing a conflicting top-level override', async () => {
+    // npm rejects a top-level override for a package you directly depend on
+    // (EOVERRIDE), so the pin must land as a dependency-range bump instead.
+    const dir = await project({ 'package.json': pkg({ dependencies: { 'brace-expansion': '^1.1.0' } }) });
+    const m = await loadManifest(dir);
+
+    const res = await applyUpgrades(m, new Map(), { 'brace-expansion': '1.1.16' });
+
+    const json = await readJson(dir);
+    assert.equal(json.dependencies['brace-expansion'], '1.1.16', 'the direct dependency range is bumped');
+    assert.equal(json.overrides, undefined, 'no overrides block is created');
+    assert.deepEqual(res.applied, [
+      { name: 'brace-expansion', field: 'dependencies', from: '^1.1.0', to: '1.1.16' },
+    ]);
+    assert.deepEqual(res.overrides, [], 'the change is reported as an upgrade, not an override');
+  });
+
+  it('routes a null-parent scoped pin to a range bump while keeping nested pins as overrides', async () => {
+    const dir = await project({ 'package.json': pkg({ devDependencies: { 'dependency-a': '^1.0.0' } }) });
+    const m = await loadManifest(dir);
+
+    await applyUpgrades(m, new Map(), {
+      'dependency-a': {
+        scoped: [
+          { parentName: null, version: '1.3.0' },
+          { parentName: 'pkg-b', parentVersion: '2.0.0', version: '2.5.0' },
+        ],
+      },
+    });
+
+    const json = await readJson(dir);
+    assert.equal(json.devDependencies['dependency-a'], '1.3.0', 'the direct (null-parent) instance bumps the devDependency');
+    assert.deepEqual(json.overrides, { 'pkg-b': { 'dependency-a': '2.5.0' } }, 'the nested instance is still written as an override');
   });
 
   it('does not re-add an override that is already at the requested version', async () => {

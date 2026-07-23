@@ -1,5 +1,0 @@
-{
-  "expect": "rejected",
-  "code": "EOVERRIDE",
-  "reason": "Direct-dependency override conflict: the tool writes a top-level override for brace-expansion while it is also a direct dependency (^1.1.0). npm rejects this. Correct fix is to bump the dependency range instead. This fixture documents the current bug; update it when the direct-dep path is fixed."
-}

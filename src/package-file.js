@@ -37,13 +37,21 @@ export async function loadManifest(cwd) {
   return { filePath, json, raw, indent, trailingNewline, descriptors };
 }
 
-// Write one override spec for `name` into the resolved `root` overrides object,
-// pushing an {name,to,parent?} record for each entry actually changed. A spec is
-// either a version string (top-level pin, forcing every instance) or
+// Write one override spec for `name` into the manifest `json`, pushing an
+// {name,to,parent?} record onto `out` for each override actually changed. A spec
+// is either a version string (a pin forcing every instance) or
 // { scoped: [{ parentName, parentVersion, version }] } where each pin is nested
-// under its parent package (parentName === null falls back to a top-level pin,
-// for a direct dependency). A parent whose value is already a string override of
+// under its parent package (parentName === null is a direct-dependency instance,
+// i.e. the root project). A parent whose value is already a string override of
 // the parent itself is preserved under the "." key when we add a child pin.
+//
+// Direct dependencies never get a top-level override: npm rejects an override
+// for a package you directly depend on when it doesn't match the declared spec
+// (EOVERRIDE, "conflicts with direct dependency"). So when `name` is a direct
+// dependency (`directField` knows its field), we bump that dependency's range to
+// the pinned version instead and record it on `applied`, exactly as if the user
+// had selected the upgrade. Scoped pins *under other parents* still become
+// nested overrides — those don't conflict with the direct edge.
 //
 // When one parent name needs *different* child versions for different installed
 // copies of itself, a bare "pkg" key can't express both — so those pins are
@@ -56,11 +64,39 @@ export async function loadManifest(cwd) {
 // one decision before we get here (see mergeInstancesByOverrideKey), so this
 // writer never faces that conflict in the real flow. If a caller passes such a
 // pair anyway, the later pin wins.
-function writeOverrideSpec(root, name, spec, out) {
+function writeOverrideSpec(json, name, spec, out, directField, applied) {
+  const field = directField.get(name);
+
+  // Bump a direct dependency's declared range to `version` instead of writing a
+  // conflicting top-level override. Returns false if there's no section to write
+  // to (only in isolated writer tests where `name` isn't really a direct dep).
+  const pinDirect = (version) => {
+    const section = json[field];
+    if (!section || typeof section !== 'object') return false;
+    const from = section[name];
+    if (from !== version) {
+      section[name] = version;
+      applied.push({ name, field, from, to: version });
+    }
+    return true;
+  };
+
+  const overridesRoot = () => {
+    if (!json.overrides || typeof json.overrides !== 'object') json.overrides = {};
+    return json.overrides;
+  };
+
+  const pinTopLevel = (version) => {
+    const root = overridesRoot();
+    if (root[name] === version) return;
+    root[name] = version;
+    out.push({ name, to: version });
+  };
+
   if (typeof spec === 'string') {
-    if (!spec || root[name] === spec) return;
-    root[name] = spec;
-    out.push({ name, to: spec });
+    if (!spec) return;
+    if (field) pinDirect(spec);
+    else pinTopLevel(spec);
     return;
   }
   if (!spec || !Array.isArray(spec.scoped)) return;
@@ -77,14 +113,16 @@ function writeOverrideSpec(root, name, spec, out) {
   for (const pin of spec.scoped) {
     if (!pin || !pin.version) continue;
     if (pin.parentName == null) {
-      if (root[name] === pin.version) continue;
-      root[name] = pin.version;
-      out.push({ name, to: pin.version });
+      // Direct-dependency instance: bump the range. Fall back to a top-level pin
+      // only when it isn't actually a direct dep (isolated writer tests).
+      if (field && pinDirect(pin.version)) continue;
+      pinTopLevel(pin.version);
       continue;
     }
     // Fall back to the bare name if we can't qualify (no version recorded).
     const qualify = (targetsByParent.get(pin.parentName)?.size || 0) > 1 && pin.parentVersion;
     const key = qualify ? `${pin.parentName}@${pin.parentVersion}` : pin.parentName;
+    const root = overridesRoot();
     let bucket = root[key];
     if (typeof bucket === 'string') bucket = root[key] = { '.': bucket };
     else if (!bucket || typeof bucket !== 'object') bucket = root[key] = {};
@@ -118,15 +156,17 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
     applied.push({ name: descriptor.name, field: descriptor.field, from: descriptor.range, to: newRange });
   }
 
+  // A package that is itself a direct dependency can't take a top-level override
+  // (npm rejects it), so writeOverrideSpec routes those pins to a range bump on
+  // `applied` instead; the map tells it which names/fields are direct.
+  const directField = new Map(manifest.descriptors.map((d) => [d.name, d.field]));
+
   const appliedOverrides = [];
-  const overrideEntries = Object.entries(overrides || {});
-  if (overrideEntries.length > 0) {
-    if (!manifest.json.overrides || typeof manifest.json.overrides !== 'object') {
-      manifest.json.overrides = {};
-    }
-    for (const [name, spec] of overrideEntries) {
-      writeOverrideSpec(manifest.json.overrides, name, spec, appliedOverrides);
-    }
+  for (const [name, spec] of Object.entries(overrides || {})) {
+    // writeOverrideSpec creates manifest.json.overrides lazily, only if it writes
+    // a real override entry — pins that become direct-dependency range bumps
+    // never materialize an (empty) overrides block.
+    writeOverrideSpec(manifest.json, name, spec, appliedOverrides, directField, applied);
   }
 
   const removed = [];
@@ -144,7 +184,17 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
       delete manifest.json.overrides[name];
       removed.push({ name });
     }
-    if (Object.keys(manifest.json.overrides).length === 0) delete manifest.json.overrides;
+  }
+
+  // Drop an overrides block left empty by removals (writeOverrideSpec already
+  // avoids creating one when every pin routed to a range bump).
+  if (
+    (appliedOverrides.length > 0 || removed.length > 0) &&
+    manifest.json.overrides &&
+    typeof manifest.json.overrides === 'object' &&
+    Object.keys(manifest.json.overrides).length === 0
+  ) {
+    delete manifest.json.overrides;
   }
 
   if (applied.length === 0 && appliedOverrides.length === 0 && removed.length === 0) {
