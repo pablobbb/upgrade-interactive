@@ -38,7 +38,17 @@ function runNpmInstall(cwd) {
       // staged dir also carries a .tool-versions. Both are harmless in CI.
       { cwd, env: { ...process.env, ASDF_NODEJS_VERSION: process.versions.node }, timeout: 120000 },
       (error, stdout, stderr) => {
-        resolve({ code: error ? (error.code ?? 1) : 0, output: `${stdout}\n${stderr}` });
+        const output = `${stdout}\n${stderr}`;
+        // Distinguish "npm ran and exited non-zero" (a real rejection) from "npm
+        // never ran" (not on PATH, killed by timeout). A non-zero *exit* sets a
+        // numeric error.code; a spawn/timeout failure sets a string code
+        // ('ENOENT') or none. Without this split, a code-less `rejected` fixture
+        // would pass just because npm was missing — a false green.
+        if (error && typeof error.code !== 'number') {
+          resolve({ ran: false, code: null, output: `${error.message}\n${output}` });
+          return;
+        }
+        resolve({ ran: true, code: error ? error.code : 0, output });
       }
     );
   });
@@ -79,7 +89,8 @@ describe('real-world fixtures — npm round-trip', async () => {
         removalsFromRemovable(removableOverrides)
       );
 
-      const { code, output } = await runNpmInstall(work);
+      const { ran, code, output } = await runNpmInstall(work);
+      assert.ok(ran, `${name}: npm failed to run (is npm on PATH? did it time out?)\n${output}`);
 
       if (config.expect === 'rejected') {
         assert.notEqual(code, 0, `${name}: expected npm to reject the overrides\n${output}`);

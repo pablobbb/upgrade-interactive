@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { loadManifest } from '../src/package-file.js';
 import { loadInstalledVersions } from '../src/lockfile.js';
 import { computeVulnerabilities } from '../src/vulnerabilities.js';
+import { defaultOverrideSelection } from '../src/override-select.js';
 
 export const FIXTURES_DIR = fileURLToPath(new URL('./fixtures/', import.meta.url));
 
@@ -41,25 +42,14 @@ export function stubFromSnapshot(snapshot) {
 }
 
 // Turn the audit result into the `overrides` map applyUpgrades expects, choosing
-// the same defaults the UI's pickers do: for a scoped vuln, pin each vulnerable,
-// fixable dependent to its newest safe in-range version (bestSafeInRange — the
-// ScopedOverridePicker default); for a global vuln, the lowest safe version
-// (safeVersions[0] — the OverridePicker default). Mirrors App.js `openOverride`.
+// exactly the defaults the UI's pickers stage — via `defaultOverrideSelection`,
+// the same helper the pickers use for their initial state, so the fixtures
+// assert against the real default rather than a copy that could drift from it.
 export function overridesFromVulns(vulns) {
   const overrides = {};
   for (const [name, vuln] of vulns) {
-    const pinnable = (vuln.instances || []).filter((i) => i.vulnerable && i.safeCandidates?.length);
-    if (vuln.pinStrategy === 'scoped' && pinnable.length > 0) {
-      overrides[name] = {
-        scoped: pinnable.map((i) => ({
-          parentName: i.parentName,
-          parentVersion: i.parentVersion,
-          version: i.bestSafeInRange,
-        })),
-      };
-    } else if (vuln.safeVersions && vuln.safeVersions.length > 0) {
-      overrides[name] = vuln.safeVersions[0];
-    }
+    const spec = defaultOverrideSelection(vuln);
+    if (spec != null) overrides[name] = spec;
   }
   return overrides;
 }

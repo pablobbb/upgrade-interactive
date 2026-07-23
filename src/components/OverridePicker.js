@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { isPinnableInstance, defaultScopedChoiceIndex } from '../override-select.js';
 
 const e = React.createElement;
 
@@ -43,10 +44,6 @@ export function OverridePicker({ name, versions, onSelect, onCancel }) {
   );
 }
 
-function isPinnable(i) {
-  return i.vulnerable && Array.isArray(i.safeCandidates) && i.safeCandidates.length > 0;
-}
-
 /**
  * A picker for the case where a package is installed at several versions across
  * the tree and a single global pin would be wrong. Lists each vulnerable
@@ -55,10 +52,11 @@ function isPinnable(i) {
  * left alone. Enter stages a { scoped: [...] } spec; Esc cancels.
  */
 export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
-  const pinnable = instances.filter(isPinnable);
-  const others = instances.filter((i) => !isPinnable(i));
-  // Default each row to its newest in-range safe version (bestSafeInRange).
-  const [choices, setChoices] = useState(() => pinnable.map((i) => i.safeCandidates.length - 1));
+  const pinnable = instances.filter(isPinnableInstance);
+  const others = instances.filter((i) => !isPinnableInstance(i));
+  // Default each row to its newest in-range safe version (bestSafeInRange),
+  // shared with the harness so the default can't drift.
+  const [choices, setChoices] = useState(() => pinnable.map((i) => defaultScopedChoiceIndex(i)));
   const [row, setRow] = useState(0);
 
   useInput((input, key) => {
