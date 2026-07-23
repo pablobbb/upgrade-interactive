@@ -22,6 +22,7 @@ Usage
   $ npx upgrade-interactive [options]
 
 Options
+  --install       Run "npm install" after writing changes (default: on)
   --no-install    Update package.json only, skip running "npm install" afterwards
   --audit         Flag vulnerable packages (default: on)
   --no-audit      Skip the vulnerability check (no advisory network calls)
@@ -74,6 +75,7 @@ async function main() {
     return;
   }
 
+  // npm install runs by default; --no-install skips it, --install is the explicit default form.
   const skipInstall = args.includes('--no-install');
 
   if (!process.stdin.isTTY) {
