@@ -18,7 +18,7 @@
   },
   "scripts": {
     "test": "node --test test/unit/*.test.mjs",
-    "test:integration": "node test/app.test.mjs",
+    "test:integration": "node test/app.test.mjs && node --test test/integration/*.test.mjs",
     "test:all": "npm run test && npm run test:integration"
   },
   "engines": {

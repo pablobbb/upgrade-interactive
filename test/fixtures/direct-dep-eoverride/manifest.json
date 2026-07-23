@@ -1,0 +1,2 @@
+{ "name":"cli-thing","version":"3.2.1","private":true,
+  "dependencies":{"brace-expansion":"^1.1.0"} }
