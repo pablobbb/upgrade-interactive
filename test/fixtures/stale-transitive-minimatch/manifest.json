@@ -1,0 +1,9 @@
+{
+  "name": "acme-web",
+  "version": "2.4.0",
+  "private": true,
+  "dependencies": {
+    "glob": "7.2.3",
+    "rimraf": "5.0.5"
+  }
+}
