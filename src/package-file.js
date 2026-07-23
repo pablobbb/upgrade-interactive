@@ -131,7 +131,15 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
 
   const removed = [];
   if (removals && removals.length > 0 && manifest.json.overrides && typeof manifest.json.overrides === 'object') {
+    // A removal drops a *top-level* override entry (the only kind the audit
+    // flags as removable). Skip it only when this same run wrote a top-level
+    // pin under that key, so an accepted addition isn't clobbered by a
+    // co-staged "drop unused override" for the same name. A scoped addition
+    // nested under a parent touches a different key, so it does NOT shield the
+    // top-level removal.
+    const addedTopLevel = new Set(appliedOverrides.filter((o) => !o.parent).map((o) => o.name));
     for (const name of removals) {
+      if (addedTopLevel.has(name)) continue;
       if (manifest.json.overrides[name] == null) continue;
       delete manifest.json.overrides[name];
       removed.push({ name });

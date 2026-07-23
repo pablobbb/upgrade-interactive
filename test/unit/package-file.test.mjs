@@ -288,6 +288,50 @@ describe('applyUpgrades', () => {
     assert.equal('overrides' in (await readJson(dir)), false);
   });
 
+  it('lets an added override win over a removal targeting the same name', async () => {
+    // The user accepted both "override dep1 to 5.0.8" and "drop the unused dep1
+    // override (5.0.7)". The addition must survive — not be clobbered by the
+    // removal that runs in the same pass.
+    const dir = await project({ 'package.json': pkg({ overrides: { dep1: '5.0.7' } }) });
+    const m = await loadManifest(dir);
+
+    const res = await applyUpgrades(m, new Map(), { dep1: '5.0.8' }, ['dep1']);
+
+    assert.deepEqual((await readJson(dir)).overrides, { dep1: '5.0.8' });
+    assert.deepEqual(res.overrides, [{ name: 'dep1', to: '5.0.8' }]);
+    assert.equal(res.removed.length, 0);
+  });
+
+  it('still removes a top-level override when the same-name addition is scoped under a parent', async () => {
+    // The scoped addition writes `pkg-a › dep1`, a different key than the
+    // top-level `dep1` pin the removal targets — so the removal must still run,
+    // dropping the stale top-level pin rather than being shielded by name.
+    const dir = await project({ 'package.json': pkg({ overrides: { dep1: '5.0.7' } }) });
+    const m = await loadManifest(dir);
+
+    const res = await applyUpgrades(
+      m,
+      new Map(),
+      { dep1: { scoped: [{ parentName: 'pkg-a', version: '5.0.8' }] } },
+      ['dep1'],
+    );
+
+    assert.deepEqual((await readJson(dir)).overrides, { 'pkg-a': { dep1: '5.0.8' } });
+    assert.deepEqual(res.removed, [{ name: 'dep1' }]);
+  });
+
+  it('shields only the colliding name, still removing the other staged removals', async () => {
+    const dir = await project({
+      'package.json': pkg({ overrides: { dep1: '5.0.7', leftpad: '1.3.0' } }),
+    });
+    const m = await loadManifest(dir);
+
+    const res = await applyUpgrades(m, new Map(), { dep1: '5.0.8' }, ['dep1', 'leftpad']);
+
+    assert.deepEqual((await readJson(dir)).overrides, { dep1: '5.0.8' });
+    assert.deepEqual(res.removed, [{ name: 'leftpad' }]);
+  });
+
   it('keeps sibling overrides when removing one', async () => {
     const dir = await project({ 'package.json': pkg({ overrides: { leftpad: '1.3.0', minimist: '1.2.6' } }) });
     const m = await loadManifest(dir);
