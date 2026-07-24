@@ -77,6 +77,9 @@ the part that changed.
 - `--install` / `--no-install` — run `npm install` after writing changes (default: on)
 - `--audit` / `--no-audit` — vulnerability check (default: on)
 - `--section` / `--no-section` — grouped sections vs. flat list (default: on)
+- `-w, --workspace <name>` — in a workspaces repo, limit to matching workspace(s);
+  repeatable, matches by package name or path (e.g. `-w packages/api -w @acme/web`)
+- `--no-workspaces` — only the root `package.json`, ignoring any `workspaces` field
 - `-h, --help`, `-v, --version`
 
 All three are on by default. To change a default permanently, use an env var or a
@@ -107,6 +110,7 @@ Precedence, highest first: CLI flag → `NUI_INSTALL` / `NUI_AUDIT` / `NUI_SECTI
 - **npm workspaces** are supported: a root `package.json` with a `workspaces`
   field is shown as the root followed by one section per workspace, and each
   package's range is edited in its own manifest. `overrides` are always written
-  to the root manifest (npm honors them only there). The `workspaces` glob
-  understands literal paths, a `*` segment, and a trailing `**` — a subset of
-  npm's patterns. (More configuration is documented under **Flags** as it lands.)
+  to the root manifest (npm honors them only there), and `npm install` runs once
+  at the root. Scope with `-w`/`--no-workspaces` (see **Flags**). The `workspaces`
+  glob understands literal paths, a `*` segment, and a trailing `**` — a subset
+  of npm's patterns.

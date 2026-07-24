@@ -59,11 +59,21 @@ export async function loadManifest(cwd) {
  *
  * Descriptors whose `name` is itself a local workspace package (an internal
  * sibling dependency) are skipped — they aren't upgradable from the registry.
+ *
+ * Options:
+ *   - `workspaces: false` — ignore any `workspaces` field and load only `cwd`'s
+ *     own manifest (the `--no-workspaces` escape hatch, exact legacy behavior).
+ *   - `filter: string[]` — limit the *displayed/editable* descriptors to
+ *     workspaces whose package name or relPath matches one of these (npm's `-w`).
+ *     Every manifest is still loaded (the root must stay writable for the
+ *     root-only overrides), but only matched workspaces contribute rows.
  */
-export async function loadProject(cwd) {
-  const discovered = await discoverWorkspaces(cwd);
+export async function loadProject(cwd, { workspaces = true, filter = null } = {}) {
+  const discovered = workspaces ? await discoverWorkspaces(cwd) : null;
   const infos = discovered || [{ dir: cwd, name: null, relPath: '.' }];
   const workspaceNames = new Set((discovered || []).map((p) => p.name).filter(Boolean));
+  const filterSet = filter && filter.length > 0 ? new Set(filter) : null;
+  const included = (info) => !filterSet || filterSet.has(info.name) || filterSet.has(info.relPath);
 
   const manifests = [];
   const descriptors = [];
@@ -72,6 +82,9 @@ export async function loadProject(cwd) {
     manifest.workspace = info.relPath === '.' ? null : info.name;
     manifest.relPath = info.relPath;
     manifests.push(manifest);
+    // A filtered-out workspace stays loaded (root overrides need it) but shows
+    // no rows.
+    if (!included(info)) continue;
     for (const d of manifest.descriptors) {
       if (workspaceNames.has(d.name)) continue; // internal sibling dep — not upgradable
       descriptors.push({

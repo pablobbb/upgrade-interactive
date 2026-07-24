@@ -484,6 +484,35 @@ describe('loadProject', () => {
     assert.deepEqual(new Set(proj.descriptors.map((d) => d.id)).size, proj.descriptors.length, 'ids are unique');
   });
 
+  it('with { workspaces: false } loads only the root manifest (--no-workspaces)', async () => {
+    const dir = await monorepo();
+
+    const proj = await loadProject(dir, { workspaces: false });
+
+    assert.equal(proj.manifests.length, 1);
+    assert.equal(proj.workspaces, null);
+    assert.deepEqual(proj.descriptors.map((d) => d.name), ['chalk']); // only the root's own dep
+  });
+
+  it('with a filter shows only matching workspaces but keeps every manifest loaded', async () => {
+    const dir = await monorepo();
+
+    const proj = await loadProject(dir, { filter: ['packages/a'] });
+
+    // All three manifests stay loaded (root must remain writable for overrides)...
+    assert.equal(proj.manifests.length, 3);
+    // ...but only workspace a contributes rows.
+    assert.deepEqual([...new Set(proj.descriptors.map((d) => d.relPath))], [path.join('packages', 'a')]);
+  });
+
+  it('filters by package name as well as by path', async () => {
+    const dir = await monorepo();
+
+    const proj = await loadProject(dir, { filter: ['@acme/b'] });
+
+    assert.deepEqual([...new Set(proj.descriptors.map((d) => d.workspace))], ['@acme/b']);
+  });
+
   it('skips internal cross-workspace dependencies', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'nui-proj-'));
     tmpDirs.push(dir);

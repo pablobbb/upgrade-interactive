@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveToggle, resolveToggles, TOGGLES } from '../../src/flags.js';
+import { resolveToggle, resolveToggles, parseWorkspaceOptions, TOGGLES } from '../../src/flags.js';
 
 const specs = Object.entries(TOGGLES); // [ ['install', {onFlag,...}], ... ]
 
@@ -132,5 +132,39 @@ test('resolveToggles — wiring', async (t) => {
       config: { install: false, audit: true }, // overridden by the env vars above
     });
     assert.deepEqual(out, { install: true, audit: false, section: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseWorkspaceOptions — workspace scoping flags.
+// ---------------------------------------------------------------------------
+test('parseWorkspaceOptions', async (t) => {
+  await t.test('defaults to workspaces on, no filter', () => {
+    assert.deepEqual(parseWorkspaceOptions([]), { workspaces: true, filter: [] });
+  });
+
+  await t.test('--no-workspaces turns workspaces off', () => {
+    assert.deepEqual(parseWorkspaceOptions(['--no-workspaces']), { workspaces: false, filter: [] });
+  });
+
+  await t.test('collects repeatable -w / --workspace values (space form)', () => {
+    const out = parseWorkspaceOptions(['-w', 'packages/a', '--workspace', '@acme/b']);
+    assert.deepEqual(out.filter, ['packages/a', '@acme/b']);
+  });
+
+  await t.test('accepts the = form', () => {
+    const out = parseWorkspaceOptions(['-w=packages/a', '--workspace=@acme/b']);
+    assert.deepEqual(out.filter, ['packages/a', '@acme/b']);
+  });
+
+  await t.test('does not swallow a following flag as a -w value', () => {
+    const out = parseWorkspaceOptions(['-w', '--no-audit']);
+    assert.deepEqual(out.filter, []);
+  });
+
+  await t.test('combines with --no-workspaces independently', () => {
+    const out = parseWorkspaceOptions(['--no-workspaces', '-w', 'packages/a']);
+    assert.equal(out.workspaces, false);
+    assert.deepEqual(out.filter, ['packages/a']);
   });
 });

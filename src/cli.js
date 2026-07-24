@@ -8,7 +8,7 @@ import path from 'node:path';
 
 import { App } from './components/App.js';
 import { loadProject, applyProject } from './package-file.js';
-import { resolveToggles } from './flags.js';
+import { resolveToggles, parseWorkspaceOptions } from './flags.js';
 
 const e = React.createElement;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,6 +29,8 @@ Options
   --no-audit      Skip the vulnerability check (no advisory network calls)
   --section       Group the list into Dependencies / Dev dependencies / Overrides (default: on)
   --no-section    Show one flat list instead
+  -w, --workspace <name>   Limit to matching workspace(s); repeatable, matches package name or path
+  --no-workspaces          Only the root package.json (ignore any "workspaces" field)
   -h, --help      Show this help message
   -v, --version   Show the version number
 
@@ -39,6 +41,11 @@ package.json config block:
   "upgrade-interactive": { "install": false, "audit": false, "section": true }
 
 Precedence: command-line flag > environment variable > package.json config > default (on).
+
+In an npm workspaces repo (a root "workspaces" field) the root and each workspace
+are shown as their own section, and each package's range is written to its own
+manifest; "overrides" are always written to the root. Use -w to focus on
+particular workspaces, or --no-workspaces for the root manifest alone.
 
 Controls (inside the interactive UI)
   <up>/<down>     select a package
@@ -72,9 +79,10 @@ async function main() {
   }
 
   const cwd = process.cwd();
+  const { workspaces, filter } = parseWorkspaceOptions(args);
   let project;
   try {
-    project = await loadProject(cwd);
+    project = await loadProject(cwd, { workspaces, filter });
   } catch (err) {
     process.stderr.write(`${err.message}\n`);
     process.exitCode = 1;
@@ -84,13 +92,17 @@ async function main() {
   const config = project.root.json['upgrade-interactive'];
   const { install, audit, section } = resolveToggles({ args, env: process.env, config });
 
+  // Audit against the project root: npm workspaces share the root lockfile, so
+  // this also makes runs from inside a workspace subdirectory resolve correctly.
+  const rootDir = path.dirname(project.root.filePath);
+
   const result = await new Promise((resolve) => {
     const { waitUntilExit } = render(
       e(App, {
         descriptors: project.descriptors,
         audit,
         section,
-        cwd,
+        cwd: rootDir,
         overrides: project.root.json.overrides || {},
         onSubmit: (selections, overrides, removals) => resolve({ type: 'submit', selections, overrides, removals }),
         onAbort: () => resolve({ type: 'abort' }),
@@ -125,14 +137,25 @@ async function main() {
   );
 
   process.stdout.write('\n');
-  const byField = { dependencies: [], devDependencies: [] };
-  for (const change of applied) byField[change.field].push(change);
-
-  for (const field of ['dependencies', 'devDependencies']) {
-    if (byField[field].length === 0) continue;
-    process.stdout.write(`${field}\n`);
-    for (const change of byField[field]) {
-      process.stdout.write(`  ${change.name}  ${change.from} \u2192 ${change.to}\n`);
+  // Group upgrades by workspace (root first, in the order applyProject wrote
+  // them), then by field. A standalone project has a single (root) group, so its
+  // output is unchanged: no workspace heading, field headers flush-left.
+  const isMonorepo = project.workspaces != null;
+  const groups = new Map(); // label -> { dependencies: [], devDependencies: [] }
+  for (const change of applied) {
+    const label = change.workspace || 'root';
+    if (!groups.has(label)) groups.set(label, { dependencies: [], devDependencies: [] });
+    groups.get(label)[change.field].push(change);
+  }
+  const pad = isMonorepo ? '  ' : '';
+  for (const [label, byField] of groups) {
+    if (isMonorepo) process.stdout.write(`${label}\n`);
+    for (const field of ['dependencies', 'devDependencies']) {
+      if (byField[field].length === 0) continue;
+      process.stdout.write(`${pad}${field}\n`);
+      for (const change of byField[field]) {
+        process.stdout.write(`${pad}  ${change.name}  ${change.from} \u2192 ${change.to}\n`);
+      }
     }
   }
 
@@ -157,8 +180,11 @@ async function main() {
     return;
   }
 
+  // Install once, from the project root — npm workspaces share the root
+  // lockfile, so a per-workspace install would be wrong. For a standalone
+  // project the root dir is just cwd.
   process.stdout.write('\nRunning npm install...\n');
-  await runNpmInstall(cwd);
+  await runNpmInstall(rootDir);
 }
 
 function runNpmInstall(cwd) {
