@@ -100,6 +100,43 @@ Precedence, highest first: CLI flag → `NUI_INSTALL` / `NUI_AUDIT` / `NUI_SECTI
 > couldn't check for vulnerable packages`) instead of pretending everything is
 > clean, and upgrades still work.
 
+## Workspaces
+
+When the nearest `package.json` up the tree declares a `workspaces` field, the
+whole monorepo is loaded — so you can run from the root or from inside any
+workspace. The list is organized in two levels: an outer **workspace** heading
+(the root first, then each workspace), and inside each, the usual
+**Dependencies** / **Dev dependencies** grouping.
+
+- **Every dependency is its own row — no cross-workspace de-duplication.** A
+  package used by five workspaces shows up five times, once per workspace, even
+  when the range is identical. That's deliberate: each workspace's dependency
+  set stays independently reviewable as *its own* set. Editing a row writes only
+  that workspace's manifest, preserving its individual formatting. Bulk
+  `c`/`r`/`l` still applies across every visible row in one keystroke.
+- **`overrides` are root-only.** npm honors `overrides` only in the root
+  manifest, so pinning a vulnerable package (`o`) always writes there. Because an
+  override is global, you stage it **once**, from one row: the green
+  `→ override X.Y.Z` badge still appears on every row for that package, but the
+  other rows show a read-only note (`ⓘ override staged under <workspace> — press
+  o there to change`) and `o` is a no-op on them. Edit or remove the override
+  from the row that created it.
+- **`npm install` runs once, at the root** (workspaces share one lockfile), and
+  the vulnerability audit reads that shared root lockfile.
+- **Scope the run** with `-w`/`--workspace` (repeatable) or `--no-workspaces`
+  (root manifest only). The shared vulnerability/override section always reflects
+  the whole tree — a package hidden by `-w` still surfaces there.
+
+Deliberate divergences from npm:
+
+- The `workspaces` glob understands literal paths, a single `*` segment, and a
+  trailing `**` — a practical subset of npm's full pattern support.
+- Internal cross-workspace dependencies (one workspace depending on another by
+  name) are skipped — they're local, not registry, packages.
+- A cross-workspace **version conflict** of the same *direct* dependency (each
+  workspace resolving its own local copy) can't be pinned with one override,
+  since a root override is global; upgrade those per row instead.
+
 ## Notes
 
 - **Compound ranges** (`>=1.0.0 <2.0.0`, `1.x || 2.x`, `1.0.0 - 2.0.0`) have no
@@ -107,10 +144,3 @@ Precedence, highest first: CLI flag → `NUI_INSTALL` / `NUI_AUDIT` / `NUI_SECTI
   (git/file/link/workspace, npm aliases) are skipped entirely.
 - Only `dependencies` / `devDependencies` are scanned.
 - The list stays alphabetically sorted the whole time it's loading.
-- **npm workspaces** are supported: a root `package.json` with a `workspaces`
-  field is shown as the root followed by one section per workspace, and each
-  package's range is edited in its own manifest. `overrides` are always written
-  to the root manifest (npm honors them only there), and `npm install` runs once
-  at the root. Scope with `-w`/`--no-workspaces` (see **Flags**). The `workspaces`
-  glob understands literal paths, a `*` segment, and a trailing `**` — a subset
-  of npm's patterns.

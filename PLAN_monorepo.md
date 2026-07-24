@@ -1,6 +1,6 @@
 # Plan: monorepo / npm-workspaces support
 
-Status: **draft — not started**
+Status: **implemented** (Phases 1–6 landed; see git history)
 Scope: make `upgrade-interactive` work in npm-workspace monorepos (root
 `package.json` with a `workspaces` field), while keeping single-package
 behavior byte-for-byte identical.
