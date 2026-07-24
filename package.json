@@ -1,6 +1,6 @@
 {
   "name": "upgrade-interactive",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "An interactive dependency upgrader for npm projects, inspired by `yarn upgrade-interactive` (Yarn Berry / Yarn 4), with built-in vulnerability warnings.",
   "type": "module",
   "bin": {
