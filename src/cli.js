@@ -8,7 +8,7 @@ import path from 'node:path';
 
 import { App } from './components/App.js';
 import { loadManifest, applyUpgrades } from './package-file.js';
-import { resolveToggle } from './flags.js';
+import { resolveToggles } from './flags.js';
 
 const e = React.createElement;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -82,15 +82,7 @@ async function main() {
   }
 
   const config = manifest.json['upgrade-interactive'];
-  const install = resolveToggle({
-    args, env: process.env, config, onFlag: '--install', offFlag: '--no-install', envVar: 'NUI_INSTALL', configKey: 'install',
-  });
-  const audit = resolveToggle({
-    args, env: process.env, config, onFlag: '--audit', offFlag: '--no-audit', envVar: 'NUI_AUDIT', configKey: 'audit',
-  });
-  const section = resolveToggle({
-    args, env: process.env, config, onFlag: '--section', offFlag: '--no-section', envVar: 'NUI_SECTION', configKey: 'section',
-  });
+  const { install, audit, section } = resolveToggles({ args, env: process.env, config });
 
   const result = await new Promise((resolve) => {
     const { waitUntilExit } = render(

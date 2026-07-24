@@ -15,3 +15,22 @@ export function resolveToggle({ args, env, config, onFlag, offFlag, envVar, conf
   if (config && typeof config[configKey] === 'boolean') return config[configKey];
   return true;
 }
+
+// Every boolean toggle the CLI exposes, defined once so they all behave
+// identically. The key is the name used in code; each spec is the flag / env
+// var / config key it reads. Keeping these in one table is what guarantees
+// --install, --audit and --section share the same precedence rules.
+export const TOGGLES = {
+  install: { onFlag: '--install', offFlag: '--no-install', envVar: 'NUI_INSTALL', configKey: 'install' },
+  audit: { onFlag: '--audit', offFlag: '--no-audit', envVar: 'NUI_AUDIT', configKey: 'audit' },
+  section: { onFlag: '--section', offFlag: '--no-section', envVar: 'NUI_SECTION', configKey: 'section' },
+};
+
+// Resolve all CLI toggles at once, e.g. { install, audit, section }.
+export function resolveToggles({ args, env, config }) {
+  const out = {};
+  for (const [name, spec] of Object.entries(TOGGLES)) {
+    out[name] = resolveToggle({ args, env, config, ...spec });
+  }
+  return out;
+}
