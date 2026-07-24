@@ -1,6 +1,8 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { discoverWorkspaces } from './workspaces.js';
+
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies'];
 
 export async function loadManifest(cwd) {
@@ -35,6 +37,55 @@ export async function loadManifest(cwd) {
   descriptors.sort((a, b) => a.name.localeCompare(b.name));
 
   return { filePath, json, raw, indent, trailingNewline, descriptors };
+}
+
+/**
+ * Load a whole project as an ordered list of manifests: the root first, then
+ * each npm workspace (when the root declares a `workspaces` field). A standalone
+ * package with no workspaces flows through this same shape — a one-manifest
+ * project with `workspace: null` — so callers never branch on "is it a monorepo".
+ *
+ * Returns { root, manifests, descriptors, workspaces }:
+ *   - `manifests`  — per-file loadManifest results, root first, each tagged with
+ *     `workspace` (display name; null for the root) and `relPath`.
+ *   - `descriptors` — the flat, cross-workspace row list. Every declared dep is
+ *     its own descriptor (NOT deduped across workspaces): the same package in
+ *     five workspaces yields five descriptors. Each gains `workspace`, `relPath`
+ *     and a unique `id` (`${relPath} ${field} ${name}`) that maps 1:1 to exactly
+ *     one (manifest, field, name). Ordering is root's alpha-sorted deps, then
+ *     each workspace's, in project order.
+ *   - `workspaces` — the discovered package list (root first) or null when
+ *     standalone.
+ *
+ * Descriptors whose `name` is itself a local workspace package (an internal
+ * sibling dependency) are skipped — they aren't upgradable from the registry.
+ */
+export async function loadProject(cwd) {
+  const discovered = await discoverWorkspaces(cwd);
+  const infos = discovered || [{ dir: cwd, name: null, relPath: '.' }];
+  const workspaceNames = new Set((discovered || []).map((p) => p.name).filter(Boolean));
+
+  const manifests = [];
+  const descriptors = [];
+  for (const info of infos) {
+    const manifest = await loadManifest(info.dir);
+    manifest.workspace = info.relPath === '.' ? null : info.name;
+    manifest.relPath = info.relPath;
+    manifests.push(manifest);
+    for (const d of manifest.descriptors) {
+      if (workspaceNames.has(d.name)) continue; // internal sibling dep — not upgradable
+      descriptors.push({
+        name: d.name,
+        range: d.range,
+        field: d.field,
+        workspace: manifest.workspace,
+        relPath: info.relPath,
+        id: `${info.relPath} ${d.field} ${d.name}`,
+      });
+    }
+  }
+
+  return { root: manifests[0], manifests, descriptors, workspaces: discovered };
 }
 
 // Write one override spec for `name` into the manifest `json`, pushing an
@@ -203,6 +254,51 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
 
   const serialized = JSON.stringify(manifest.json, null, manifest.indent) + (manifest.trailingNewline ? '\n' : '');
   await writeFile(manifest.filePath, serialized, 'utf8');
+
+  return { applied, overrides: appliedOverrides, removed };
+}
+
+/**
+ * Apply project-wide selections to a project loaded by `loadProject`. Selections
+ * are keyed by descriptor `id` (not name), so a package appearing in several
+ * workspaces is written to exactly the manifest its row belongs to — no fan-out.
+ *
+ * Each manifest is written at most once, reusing the single-file `applyUpgrades`
+ * writer, so per-file formatting (indent, trailing newline) is preserved
+ * independently. `overrides` and `removals` are npm-workspace root-only: they are
+ * routed exclusively to the root manifest regardless of which workspace owns the
+ * vulnerable dependency (npm honors `overrides` only in the root manifest).
+ *
+ * Returns { applied, overrides, removed } aggregated across manifests; each
+ * `applied` entry gains `workspace` (the display name, null for the root) for the
+ * per-workspace post-submit summary.
+ */
+export async function applyProject(project, selections, overrides = {}, removals = []) {
+  // Route each id-keyed selection to its owning manifest, collapsing to the
+  // name-keyed Map the per-file writer expects (a name is unique within a file).
+  const byRelPath = new Map();
+  for (const d of project.descriptors) {
+    const range = selections.get(d.id);
+    if (range == null) continue;
+    if (!byRelPath.has(d.relPath)) byRelPath.set(d.relPath, new Map());
+    byRelPath.get(d.relPath).set(d.name, range);
+  }
+
+  const applied = [];
+  const appliedOverrides = [];
+  const removed = [];
+  for (const manifest of project.manifests) {
+    const isRoot = manifest === project.root;
+    const nameMap = byRelPath.get(manifest.relPath) || new Map();
+    // Nothing to write for a child manifest with no selections (overrides and
+    // removals only ever touch the root), so skip its no-op write entirely.
+    if (!isRoot && nameMap.size === 0) continue;
+
+    const res = await applyUpgrades(manifest, nameMap, isRoot ? overrides : {}, isRoot ? removals : []);
+    for (const a of res.applied) applied.push({ ...a, workspace: manifest.workspace });
+    appliedOverrides.push(...res.overrides);
+    removed.push(...res.removed);
+  }
 
   return { applied, overrides: appliedOverrides, removed };
 }
