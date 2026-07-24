@@ -83,6 +83,15 @@ export function SectionHeader({ title }) {
   return e(Box, { marginTop: 1 }, e(Text, { bold: true, underline: true, color: 'gray' }, title));
 }
 
+// The outer, per-workspace heading. Styled distinctly from SectionHeader (the
+// inner field grouping) so the two levels read as different levels: bright and
+// unadorned versus the dim underlined field titles nested beneath it. The root
+// workspace is labelled "root"; others show "<relPath> (<package name>)".
+export function WorkspaceHeader({ relPath, workspace }) {
+  const label = relPath === '.' ? 'root' : workspace ? `${relPath} (${workspace})` : relPath;
+  return e(Box, { marginTop: 1 }, e(Text, { bold: true, color: 'magentaBright' }, `▌ ${label}`));
+}
+
 export function Row({ name, active, suggestions, selectedColumn, vuln, override }) {
   const main = e(
     Box,

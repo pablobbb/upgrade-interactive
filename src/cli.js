@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { App } from './components/App.js';
-import { loadManifest, applyUpgrades } from './package-file.js';
+import { loadProject, applyProject } from './package-file.js';
 import { resolveToggles } from './flags.js';
 
 const e = React.createElement;
@@ -72,26 +72,26 @@ async function main() {
   }
 
   const cwd = process.cwd();
-  let manifest;
+  let project;
   try {
-    manifest = await loadManifest(cwd);
+    project = await loadProject(cwd);
   } catch (err) {
     process.stderr.write(`${err.message}\n`);
     process.exitCode = 1;
     return;
   }
 
-  const config = manifest.json['upgrade-interactive'];
+  const config = project.root.json['upgrade-interactive'];
   const { install, audit, section } = resolveToggles({ args, env: process.env, config });
 
   const result = await new Promise((resolve) => {
     const { waitUntilExit } = render(
       e(App, {
-        descriptors: manifest.descriptors,
+        descriptors: project.descriptors,
         audit,
         section,
         cwd,
-        overrides: manifest.json.overrides || {},
+        overrides: project.root.json.overrides || {},
         onSubmit: (selections, overrides, removals) => resolve({ type: 'submit', selections, overrides, removals }),
         onAbort: () => resolve({ type: 'abort' }),
       }),
@@ -117,8 +117,8 @@ async function main() {
     return;
   }
 
-  const { applied, overrides, removed } = await applyUpgrades(
-    manifest,
+  const { applied, overrides, removed } = await applyProject(
+    project,
     result.selections,
     overrideSelections,
     overrideRemovals

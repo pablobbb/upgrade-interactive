@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
-import { Row, VulnRow, OverrideRow, LoadingRow, SectionHeader } from './Row.js';
+import { Row, VulnRow, OverrideRow, LoadingRow, SectionHeader, WorkspaceHeader } from './Row.js';
+import { buildDisplayRows } from './rows.js';
 import { OverridePicker, ScopedOverridePicker } from './OverridePicker.js';
 import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
@@ -41,8 +42,21 @@ export function App({
   runAudit = defaultRunAudit,
 }) {
   const { exit } = useApp();
-  const [entries, setEntries] = useState(() => descriptors.map(() => null));
-  const [allLoaded, setAllLoaded] = useState(descriptors.length === 0);
+  // Normalize once so single-package callers (plain { name, range, field }
+  // descriptors) and workspace callers share one code path. Memoized on the
+  // descriptors prop so the audit/suggestion effects don't re-run every render.
+  const normDescriptors = useMemo(
+    () =>
+      descriptors.map((d) => ({
+        ...d,
+        id: d.id ?? d.name,
+        workspace: d.workspace ?? null,
+        relPath: d.relPath ?? '.',
+      })),
+    [descriptors]
+  );
+  const [entries, setEntries] = useState(() => normDescriptors.map(() => null));
+  const [allLoaded, setAllLoaded] = useState(normDescriptors.length === 0);
   const [focusedKey, setFocusedKey] = useState(null);
   const [selectedColumns, setSelectedColumns] = useState({});
   const [stagedOverrides, setStagedOverrides] = useState({});
@@ -59,11 +73,11 @@ export function App({
 
   // Load upgrade suggestions for each descriptor.
   useEffect(() => {
-    if (descriptors.length === 0) return;
+    if (normDescriptors.length === 0) return;
     let cancelled = false;
 
     mapWithConcurrency(
-      descriptors,
+      normDescriptors,
       CONCURRENCY,
       async (descriptor) => {
         const suggestions = await fetchSuggestions(descriptor);
@@ -85,14 +99,14 @@ export function App({
     return () => {
       cancelled = true;
     };
-  }, [descriptors]);
+  }, [normDescriptors]);
 
   // Check installed + range-resolved versions against npm's advisory database.
   useEffect(() => {
     if (!audit) return;
     let cancelled = false;
 
-    Promise.resolve(runAudit({ cwd, descriptors, overrides }))
+    Promise.resolve(runAudit({ cwd, descriptors: normDescriptors, overrides }))
       .then((res) => {
         if (cancelled || !mountedRef.current) return;
         setAuditState(res || { offline: false, vulns: new Map() });
@@ -105,71 +119,34 @@ export function App({
     return () => {
       cancelled = true;
     };
-  }, [audit, cwd, descriptors, overrides, runAudit]);
+  }, [audit, cwd, normDescriptors, overrides, runAudit]);
 
   // ---- Build the ordered display list (headers + rows) ----------------------
   const vulns = auditState ? auditState.vulns : null;
 
-  const depItems = descriptors.map((descriptor, i) => ({ descriptor, entry: entries[i], i }));
-  const visibleDeps = allLoaded ? depItems.filter((x) => x.entry !== null) : depItems;
-
-  const depRow = (x) =>
-    x.entry === null
-      ? { kind: 'loading', key: `loading:${x.i}` }
-      : {
-          kind: 'dep',
-          key: `dep:${x.descriptor.name}`,
-          descriptor: x.descriptor,
-          entry: x.entry,
-          vuln: vulns ? vulns.get(x.descriptor.name) || null : null,
-        };
-
-  // A vuln shows inline on its dep row when that package has an upgrade row;
-  // everything else (transitive deps, or direct deps with no upgrade available)
-  // falls through to the Overrides section so it's never silently dropped.
-  const shownDepNames = new Set(visibleDeps.filter((x) => x.entry !== null).map((x) => x.descriptor.name));
+  // A vuln shows inline on its dep row when that package has an upgrade row in
+  // *any* workspace; everything else (transitive deps, or direct deps with no
+  // upgrade available) falls through to the shared Overrides section so it's
+  // never silently dropped. Keyed by name, so it generalizes across workspaces.
+  const loadedNames = normDescriptors
+    .map((d, i) => (entries[i] !== null ? d.name : null))
+    .filter((name) => name !== null);
+  const shownDepNames = new Set(loadedNames);
   const overrideVulns = vulns
     ? [...vulns.entries()].filter(([name]) => !shownDepNames.has(name))
     : [];
   const removable = auditState && auditState.removableOverrides ? auditState.removableOverrides : null;
   const removableList = removable ? [...removable.entries()] : [];
 
-  const rows = [];
-  // The old single "Overrides" section conflated two different actions, so it's
-  // split into a group of vulnerable packages you'd *add* an override for and a
-  // group of existing overrides you can *drop*. Each header is independent so an
-  // empty group doesn't leave a dangling title.
-  const pushOverrides = () => {
-    if (overrideVulns.length > 0) {
-      rows.push({ kind: 'header', key: 'h:pin', title: 'Override to a safe version' });
-      for (const [name, vuln] of overrideVulns) {
-        rows.push({ kind: 'vuln', key: `vuln:${name}`, name, vuln });
-      }
-    }
-    if (removableList.length > 0) {
-      rows.push({ kind: 'header', key: 'h:unused', title: 'Unused overrides' });
-      for (const [name, info] of removableList) {
-        rows.push({ kind: 'override', key: `ovr:${name}`, name, pin: info.pin, reason: info.reason });
-      }
-    }
-  };
-
-  if (section) {
-    const deps = visibleDeps.filter((x) => x.descriptor.field === 'dependencies');
-    const dev = visibleDeps.filter((x) => x.descriptor.field === 'devDependencies');
-    if (deps.length > 0) {
-      rows.push({ kind: 'header', key: 'h:deps', title: 'Dependencies' });
-      for (const x of deps) rows.push(depRow(x));
-    }
-    if (dev.length > 0) {
-      rows.push({ kind: 'header', key: 'h:dev', title: 'Dev dependencies' });
-      for (const x of dev) rows.push(depRow(x));
-    }
-    pushOverrides();
-  } else {
-    for (const x of visibleDeps) rows.push(depRow(x));
-    pushOverrides();
-  }
+  const rows = buildDisplayRows({
+    descriptors: normDescriptors,
+    entries,
+    allLoaded,
+    vulns,
+    section,
+    overrideVulns,
+    removableList,
+  });
 
   const navKeys = rows.filter(isNavigable).map((r) => r.key);
   const navKeyStr = navKeys.join('|');
@@ -186,15 +163,15 @@ export function App({
     (direction) => {
       if (!focusedRow || focusedRow.kind !== 'dep') return;
       const { suggestions } = focusedRow.entry;
-      const name = focusedRow.descriptor.name;
-      const current = selectedColumns[name] ?? 0;
+      const id = focusedRow.descriptor.id;
+      const current = selectedColumns[id] ?? 0;
       let next = current;
       for (let step = 0; step < suggestions.length; step++) {
         next = clamp(next + direction, 0, suggestions.length - 1);
         if (suggestions[next].spans.length > 0 || next === 0) break;
         if (next === current) break;
       }
-      setSelectedColumns((prev) => ({ ...prev, [name]: next }));
+      setSelectedColumns((prev) => ({ ...prev, [id]: next }));
     },
     [focusedRow, selectedColumns]
   );
@@ -205,10 +182,10 @@ export function App({
         const next = { ...prev };
         for (const entry of entries) {
           if (!entry) continue;
-          const { name } = entry.descriptor;
-          if (which === 'c') next[name] = 0;
-          else if (which === 'r') next[name] = 1;
-          else if (which === 'l') next[name] = entry.suggestions[2].value != null ? 2 : 1;
+          const { id } = entry.descriptor;
+          if (which === 'c') next[id] = 0;
+          else if (which === 'r') next[id] = 1;
+          else if (which === 'l') next[id] = entry.suggestions[2].value != null ? 2 : 1;
         }
         return next;
       });
@@ -275,9 +252,9 @@ export function App({
         const selections = new Map();
         for (const entry of entries) {
           if (!entry) continue;
-          const col = selectedColumns[entry.descriptor.name] ?? 0;
+          const col = selectedColumns[entry.descriptor.id] ?? 0;
           const value = entry.suggestions[col]?.value ?? null;
-          if (value) selections.set(entry.descriptor.name, value);
+          if (value) selections.set(entry.descriptor.id, value);
         }
         const removals = Object.keys(stagedRemovals).filter((name) => stagedRemovals[name]);
         onSubmit(selections, { ...stagedOverrides }, removals);
@@ -316,6 +293,9 @@ export function App({
       : null,
     windowStart > 0 ? e(Text, { dimColor: true }, `  ↑ ${windowStart} more above`) : null,
     ...visible.map((row) => {
+      if (row.kind === 'wsheader') {
+        return e(WorkspaceHeader, { key: row.key, relPath: row.relPath, workspace: row.workspace });
+      }
       if (row.kind === 'header') return e(SectionHeader, { key: row.key, title: row.title });
       if (row.kind === 'loading') return e(LoadingRow, { key: row.key });
       if (row.kind === 'vuln') {
@@ -337,7 +317,7 @@ export function App({
           staged: !!stagedRemovals[row.name],
         });
       }
-      const col = selectedColumns[row.descriptor.name] ?? 0;
+      const col = selectedColumns[row.descriptor.id] ?? 0;
       return e(Row, {
         key: row.key,
         name: row.descriptor.name,

@@ -53,7 +53,9 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
 7. Writes your choices back to `package.json` and runs `npm install`.
 
 By default the list is grouped into **Dependencies**, **Dev dependencies**, and
-override sections. Pass `--no-section` for a single flat list.
+override sections. Pass `--no-section` for a single flat list. In an npm
+workspace repo, each workspace additionally gets its own outer section (root
+first); `--no-section` collapses only the inner field grouping.
 
 ## Controls
 
@@ -102,4 +104,9 @@ Precedence, highest first: CLI flag → `NUI_INSTALL` / `NUI_AUDIT` / `NUI_SECTI
   (git/file/link/workspace, npm aliases) are skipped entirely.
 - Only `dependencies` / `devDependencies` are scanned.
 - The list stays alphabetically sorted the whole time it's loading.
-- No monorepo/workspace support (single `package.json` only).
+- **npm workspaces** are supported: a root `package.json` with a `workspaces`
+  field is shown as the root followed by one section per workspace, and each
+  package's range is edited in its own manifest. `overrides` are always written
+  to the root manifest (npm honors them only there). The `workspaces` glob
+  understands literal paths, a `*` segment, and a trailing `**` — a subset of
+  npm's patterns. (More configuration is documented under **Flags** as it lands.)
