@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import { App } from './components/App.js';
 import { loadManifest, applyUpgrades } from './package-file.js';
+import { resolveToggle } from './flags.js';
 
 const e = React.createElement;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -31,10 +32,11 @@ Options
   -h, --help      Show this help message
   -v, --version   Show the version number
 
-Audit and sectioning are on by default. Persist a preference either way with the
-NUI_AUDIT / NUI_SECTION environment variables, or a package.json config block:
+Install, audit and sectioning are on by default. Persist a preference either way
+with the NUI_INSTALL / NUI_AUDIT / NUI_SECTION environment variables, or a
+package.json config block:
 
-  "upgrade-interactive": { "audit": false, "section": true }
+  "upgrade-interactive": { "install": false, "audit": false, "section": true }
 
 Precedence: command-line flag > environment variable > package.json config > default (on).
 
@@ -49,18 +51,6 @@ Controls (inside the interactive UI)
   <ctrl+c> / esc  abort without changing anything
 `;
 
-// Resolve a boolean toggle from flags > env var > package.json config > default(true).
-function resolveToggle({ args, env, config, onFlag, offFlag, envVar, configKey }) {
-  if (args.includes(offFlag)) return false;
-  if (args.includes(onFlag)) return true;
-  const envVal = env[envVar];
-  if (envVal != null && envVal !== '') {
-    return !/^(0|false|no|off)$/i.test(envVal.trim());
-  }
-  if (config && typeof config[configKey] === 'boolean') return config[configKey];
-  return true;
-}
-
 async function main() {
   const args = process.argv.slice(2);
 
@@ -74,9 +64,6 @@ async function main() {
     process.stdout.write(JSON.parse(pkgRaw).version + '\n');
     return;
   }
-
-  // npm install runs by default; --no-install skips it, --install is the explicit default form.
-  const skipInstall = args.includes('--no-install');
 
   if (!process.stdin.isTTY) {
     process.stderr.write('upgrade-interactive requires an interactive terminal (TTY).\n');
@@ -95,6 +82,9 @@ async function main() {
   }
 
   const config = manifest.json['upgrade-interactive'];
+  const install = resolveToggle({
+    args, env: process.env, config, onFlag: '--install', offFlag: '--no-install', envVar: 'NUI_INSTALL', configKey: 'install',
+  });
   const audit = resolveToggle({
     args, env: process.env, config, onFlag: '--audit', offFlag: '--no-audit', envVar: 'NUI_AUDIT', configKey: 'audit',
   });
@@ -170,7 +160,7 @@ async function main() {
     return;
   }
 
-  if (skipInstall) {
+  if (!install) {
     process.stdout.write('\nUpdated package.json. Run npm install to apply.\n');
     return;
   }

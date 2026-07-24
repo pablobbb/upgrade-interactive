@@ -77,18 +77,19 @@ the part that changed.
 - `--section` / `--no-section` — grouped sections vs. flat list (default: on)
 - `-h, --help`, `-v, --version`
 
-To change a default permanently, use an env var or a `package.json` config block:
+All three are on by default. To change a default permanently, use an env var or a
+`package.json` config block:
 
 ```json
-"upgrade-interactive": { "audit": false, "section": true }
+"upgrade-interactive": { "install": false, "audit": false, "section": true }
 ```
 
 ```sh
 NUI_AUDIT=0 npx upgrade-interactive
 ```
 
-Precedence, highest first: CLI flag → `NUI_AUDIT` / `NUI_SECTION` → `package.json`
-config → default (on).
+Precedence, highest first: CLI flag → `NUI_INSTALL` / `NUI_AUDIT` / `NUI_SECTION`
+→ `package.json` config → default (on).
 
 > Auditing needs network access. Offline, the tool says so (`no network —
 > couldn't check for vulnerable packages`) instead of pretending everything is
