@@ -96,3 +96,27 @@ export function buildDisplayRows({
 
   return rows;
 }
+
+/**
+ * Resolve what a single row should show for a staged override. `stagedOverrides`
+ * is keyed by package name but carries provenance
+ * ({ spec, originKey, originLabel }), so a package appearing in several
+ * workspaces stages once, from one origin row: the green badge (`spec`) renders
+ * on every matching row, but the editable action stays on the origin. A
+ * non-origin row gets a read-only `note` (and no interactive hint).
+ *
+ * Returns { spec, note }: `spec` is the staged override spec (undefined when
+ * nothing is staged) and `note` is the "staged elsewhere" text (null on the
+ * origin row, or when nothing is staged). `originLabel` null means the origin is
+ * the shared vulnerability section ("already staged above"); otherwise it's the
+ * origin workspace's display name ("staged under <label>").
+ */
+export function overrideView(stagedOverrides, name, rowKey) {
+  const record = stagedOverrides[name];
+  if (!record) return { spec: undefined, note: null };
+  if (record.originKey === rowKey) return { spec: record.spec, note: null };
+  const note = record.originLabel
+    ? `ⓘ override staged under ${record.originLabel} — press o there to change`
+    : 'ⓘ override already staged above — press o there to change';
+  return { spec: record.spec, note };
+}

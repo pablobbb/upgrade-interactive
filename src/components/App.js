@@ -3,7 +3,7 @@ import { Box, Text, useInput, useApp } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
 import { Row, VulnRow, OverrideRow, LoadingRow, SectionHeader, WorkspaceHeader } from './Row.js';
-import { buildDisplayRows } from './rows.js';
+import { buildDisplayRows, overrideView } from './rows.js';
 import { OverridePicker, ScopedOverridePicker } from './OverridePicker.js';
 import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
@@ -199,16 +199,25 @@ export function App({
     const vuln = focusedRow.vuln;
     if (!vuln) return;
     const name = focusedRow.kind === 'dep' ? focusedRow.descriptor.name : focusedRow.name;
+    // Provenance: an override for this package staged from a *different* row can
+    // only be edited from that origin row. Editing from the origin (or a first
+    // stage) is allowed; `o` on any other matching row is a no-op.
+    const existing = stagedOverrides[name];
+    if (existing && existing.originKey !== focusedRow.key) return;
+    // The root workspace has no display name; label it "root". A vuln-section
+    // row has no owning workspace (originLabel null → "already staged above").
+    const originKey = focusedRow.key;
+    const originLabel = focusedRow.kind === 'dep' ? focusedRow.descriptor.workspace ?? 'root' : null;
     // When the package is installed at several versions across the tree, a
     // single global pin would be wrong — offer per-parent scoped pins instead,
     // as long as at least one vulnerable instance has an in-range fix.
     if (shouldScope(vuln)) {
-      setOverride({ name, mode: 'scoped', instances: vuln.instances });
+      setOverride({ name, mode: 'scoped', instances: vuln.instances, originKey, originLabel });
       return;
     }
     if (!vuln.safeVersions || vuln.safeVersions.length === 0) return;
-    setOverride({ name, mode: 'global', versions: vuln.safeVersions });
-  }, [audit, focusedRow]);
+    setOverride({ name, mode: 'global', versions: vuln.safeVersions, originKey, originLabel });
+  }, [audit, focusedRow, stagedOverrides]);
 
   const toggleRemoval = useCallback(() => {
     if (!audit || !focusedRow || focusedRow.kind !== 'override') return;
@@ -257,7 +266,11 @@ export function App({
           if (value) selections.set(entry.descriptor.id, value);
         }
         const removals = Object.keys(stagedRemovals).filter((name) => stagedRemovals[name]);
-        onSubmit(selections, { ...stagedOverrides }, removals);
+        // Unwrap the provenance records back to the plain { name: spec } map the
+        // writer expects — origin bookkeeping is a UI-only concern.
+        const overrideSpecs = {};
+        for (const [name, record] of Object.entries(stagedOverrides)) overrideSpecs[name] = record.spec;
+        onSubmit(selections, overrideSpecs, removals);
         exit();
       }
     },
@@ -299,12 +312,14 @@ export function App({
       if (row.kind === 'header') return e(SectionHeader, { key: row.key, title: row.title });
       if (row.kind === 'loading') return e(LoadingRow, { key: row.key });
       if (row.kind === 'vuln') {
+        const ov = overrideView(stagedOverrides, row.name, row.key);
         return e(VulnRow, {
           key: row.key,
           name: row.name,
           active: row.key === focusedKey,
           vuln: row.vuln,
-          override: stagedOverrides[row.name],
+          override: ov.spec,
+          overrideNote: ov.note,
         });
       }
       if (row.kind === 'override') {
@@ -318,6 +333,7 @@ export function App({
         });
       }
       const col = selectedColumns[row.descriptor.id] ?? 0;
+      const ov = overrideView(stagedOverrides, row.descriptor.name, row.key);
       return e(Row, {
         key: row.key,
         name: row.descriptor.name,
@@ -325,7 +341,8 @@ export function App({
         suggestions: row.entry.suggestions,
         selectedColumn: col,
         vuln: row.vuln,
-        override: stagedOverrides[row.descriptor.name],
+        override: ov.spec,
+        overrideNote: ov.note,
       });
     }),
     windowEnd < rows.length ? e(Text, { dimColor: true }, `  ↓ ${rows.length - windowEnd} more below`) : null,
@@ -334,7 +351,10 @@ export function App({
           name: override.name,
           instances: override.instances,
           onSelect: (spec) => {
-            setStagedOverrides((prev) => ({ ...prev, [override.name]: spec }));
+            setStagedOverrides((prev) => ({
+              ...prev,
+              [override.name]: { spec, originKey: override.originKey, originLabel: override.originLabel },
+            }));
             setOverride(null);
           },
           onCancel: () => setOverride(null),
@@ -344,7 +364,10 @@ export function App({
             name: override.name,
             versions: override.versions,
             onSelect: (version) => {
-              setStagedOverrides((prev) => ({ ...prev, [override.name]: version }));
+              setStagedOverrides((prev) => ({
+                ...prev,
+                [override.name]: { spec: version, originKey: override.originKey, originLabel: override.originLabel },
+              }));
               setOverride(null);
             },
             onCancel: () => setOverride(null),

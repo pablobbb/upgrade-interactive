@@ -3,7 +3,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDisplayRows } from '../../src/components/rows.js';
+import { buildDisplayRows, overrideView } from '../../src/components/rows.js';
 
 // A normalized descriptor, as App produces before building rows.
 const d = (name, field, relPath = '.', workspace = null) => ({
@@ -125,5 +125,34 @@ describe('buildDisplayRows', () => {
     });
 
     assert.equal(rows[0].vuln, vuln);
+  });
+});
+
+describe('overrideView (override provenance)', () => {
+  const staged = {
+    lodash: { spec: '4.17.21', originKey: 'dep:packages/a dependencies lodash', originLabel: '@acme/a' },
+    minimist: { spec: '1.2.6', originKey: 'vuln:minimist', originLabel: null },
+  };
+
+  it('returns no spec and no note for a package with nothing staged', () => {
+    assert.deepEqual(overrideView(staged, 'chalk', 'dep:. dependencies chalk'), { spec: undefined, note: null });
+  });
+
+  it('shows the badge (spec) but no note on the origin row', () => {
+    const v = overrideView(staged, 'lodash', 'dep:packages/a dependencies lodash');
+    assert.equal(v.spec, '4.17.21');
+    assert.equal(v.note, null);
+  });
+
+  it('shows the badge and a "staged under <workspace>" note on a non-origin row', () => {
+    const v = overrideView(staged, 'lodash', 'dep:packages/b dependencies lodash');
+    assert.equal(v.spec, '4.17.21', 'badge still renders on every matching row');
+    assert.equal(v.note, 'ⓘ override staged under @acme/a — press o there to change');
+  });
+
+  it('uses the "already staged above" phrasing when the origin is the shared vuln section', () => {
+    // A different row referencing a shared-section override (originLabel null).
+    const v = overrideView(staged, 'minimist', 'dep:packages/z dependencies minimist');
+    assert.equal(v.note, 'ⓘ override already staged above — press o there to change');
   });
 });

@@ -92,7 +92,7 @@ export function WorkspaceHeader({ relPath, workspace }) {
   return e(Box, { marginTop: 1 }, e(Text, { bold: true, color: 'magentaBright' }, `▌ ${label}`));
 }
 
-export function Row({ name, active, suggestions, selectedColumn, vuln, override }) {
+export function Row({ name, active, suggestions, selectedColumn, vuln, override, overrideNote }) {
   const main = e(
     Box,
     { flexDirection: 'row' },
@@ -104,26 +104,8 @@ export function Row({ name, active, suggestions, selectedColumn, vuln, override 
   );
   if (!vuln) return main;
   // Put the (potentially long) advisory detail on its own indented line so it
-  // stays readable instead of wrapping past the version columns.
-  return e(
-    Box,
-    { flexDirection: 'column' },
-    main,
-    e(Box, { marginLeft: 4 }, e(VulnInfo, { vuln, override }))
-  );
-}
-
-// A vulnerable package fixed by an override (transitive, or direct with no
-// upgrade available): a current → fixed column pair on top, with the advisory
-// detail on its own indented line below — the same two-line shape as Row.
-export function VulnRow({ name, active, vuln, override }) {
-  const main = e(
-    Box,
-    { flexDirection: 'row' },
-    e(Box, { width: 2, flexShrink: 0 }, e(Text, { color: 'cyanBright', bold: true }, active ? '❯ ' : '  ')),
-    e(NameCell, { name }),
-    e(FixColumn, { current: vuln.current, fixed: vuln.firstPatched })
-  );
+  // stays readable instead of wrapping past the version columns. `overrideNote`
+  // (set only on non-origin rows) explains the staged override lives elsewhere.
   return e(
     Box,
     { flexDirection: 'column' },
@@ -131,9 +113,35 @@ export function VulnRow({ name, active, vuln, override }) {
     e(
       Box,
       { marginLeft: 4 },
-      e(VulnInfo, { vuln, override, hideFixed: true }),
-      override ? null : e(Text, { dimColor: true }, '  press o to override')
+      e(VulnInfo, { vuln, override }),
+      overrideNote ? e(Text, { dimColor: true }, `  ${overrideNote}`) : null
     )
+  );
+}
+
+// A vulnerable package fixed by an override (transitive, or direct with no
+// upgrade available): a current → fixed column pair on top, with the advisory
+// detail on its own indented line below — the same two-line shape as Row.
+export function VulnRow({ name, active, vuln, override, overrideNote }) {
+  const main = e(
+    Box,
+    { flexDirection: 'row' },
+    e(Box, { width: 2, flexShrink: 0 }, e(Text, { color: 'cyanBright', bold: true }, active ? '❯ ' : '  ')),
+    e(NameCell, { name }),
+    e(FixColumn, { current: vuln.current, fixed: vuln.firstPatched })
+  );
+  // Hint precedence: nothing to override yet → "press o"; staged here → the
+  // green badge alone; staged from another row → the read-only "elsewhere" note.
+  const hint = override
+    ? overrideNote
+      ? e(Text, { dimColor: true }, `  ${overrideNote}`)
+      : null
+    : e(Text, { dimColor: true }, '  press o to override');
+  return e(
+    Box,
+    { flexDirection: 'column' },
+    main,
+    e(Box, { marginLeft: 4 }, e(VulnInfo, { vuln, override, hideFixed: true }), hint)
   );
 }
 
