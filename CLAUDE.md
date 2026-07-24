@@ -2,8 +2,9 @@
 
 Interactive dependency upgrader for npm projects (Ink/React TUI), inspired by
 `yarn upgrade-interactive`, with vulnerability warnings and npm `overrides`
-support. Source lives in `src/`, unit tests in `test/unit/` (`npm test`),
-integration test via `npm run test:integration`.
+support. Source lives in `src/`, unit tests in `test/unit/` (`npm run
+test:unit`), integration test via `npm run test:integration`. `npm test`
+runs both.
 
 ## Keep the README in sync — every change
 
