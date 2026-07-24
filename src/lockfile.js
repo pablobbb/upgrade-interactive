@@ -14,11 +14,26 @@ function nameFromPath(pkgPath) {
 }
 
 /**
+ * A lockfile `packages` key names one of "our" manifests — the root ("") or a
+ * workspace — rather than an installed dependency. Workspace entries are plain
+ * repo paths (`packages/foo`); everything installed lives under a
+ * `node_modules/` segment, and the symlink nodes npm adds for workspaces
+ * (`node_modules/foo`, `link: true`) are dependencies-of-record, not manifests.
+ */
+function isManifestPath(pkgPath) {
+  return pkgPath === '' || !pkgPath.includes('node_modules/');
+}
+
+/**
  * Return { versions: Map<name, Set<version>>, direct: Set<name>, packages }
  * for the whole installed tree, or null if there's no usable lockfile (feature
  * then degrades to range-resolved-only checks for direct deps). `packages` is
  * the raw npm lockfile `packages` map, used to see which ranges dependents
  * declare for a package (for spotting no-longer-needed overrides).
+ *
+ * `direct` unions the declared deps of the root *and* every workspace manifest,
+ * so a package that a workspace depends on directly is classified as direct
+ * tree-wide (npm workspaces share this one root lockfile).
  */
 export async function loadInstalledVersions(cwd) {
   const filePath = path.join(cwd, 'package-lock.json');
@@ -48,11 +63,14 @@ export async function loadInstalledVersions(cwd) {
     versions.get(name).add(info.version);
   }
 
-  const root = packages[''] || {};
-  const direct = new Set([
-    ...Object.keys(root.dependencies || {}),
-    ...Object.keys(root.devDependencies || {}),
-  ]);
+  // Direct deps = what the root and each workspace manifest declare. In a
+  // single-package repo only the "" entry qualifies, so this is unchanged there.
+  const direct = new Set();
+  for (const [pkgPath, info] of Object.entries(packages)) {
+    if (!isManifestPath(pkgPath) || !info || typeof info !== 'object') continue;
+    for (const name of Object.keys(info.dependencies || {})) direct.add(name);
+    for (const name of Object.keys(info.devDependencies || {})) direct.add(name);
+  }
 
   return { versions, direct, packages };
 }

@@ -531,3 +531,51 @@ describe('computeVulnerabilities — removable overrides', () => {
     assert.equal(removableOverrides.has('leftpad'), false);
   });
 });
+
+// --- Workspaces --------------------------------------------------------------
+// The instance walk (resolveInstalledPath) must resolve a workspace's edges,
+// whether the dependency is hoisted to the root node_modules or installed local
+// to the workspace, and classify a workspace's direct dep as direct.
+describe('computeVulnerabilities — workspaces', () => {
+  const lodashRegistry = () =>
+    stubRegistry({
+      meta: { lodash: { versions: ['4.17.11', '4.17.21'], distTags: {} } },
+      advisories: { lodash: [advisory({ vulnerable_versions: '<4.17.19', severity: 'high' })] },
+    });
+  const lodashDescriptor = [{ name: 'lodash', range: '^4.17.0', field: 'dependencies' }];
+
+  it('classifies a workspace direct dependency as direct and resolves its hoisted install', async () => {
+    const packages = {
+      '': { name: 'root' },
+      'packages/a': { name: '@acme/a', version: '1.0.0', dependencies: { lodash: '^4.17.0' } },
+      'node_modules/@acme/a': { link: true, resolved: 'packages/a' }, // symlink node, no version
+      'node_modules/lodash': { version: '4.17.11' }, // hoisted to the root
+    };
+    const installed = { versions: new Map([['lodash', new Set(['4.17.11'])]]), direct: new Set(['lodash']), packages };
+
+    const { vulns } = await computeVulnerabilities({ descriptors: lodashDescriptor, installed }, lodashRegistry());
+
+    const v = vulns.get('lodash');
+    assert.ok(v, 'lodash should be flagged');
+    assert.equal(v.isDirect, true, "a workspace's direct dep is classified direct");
+    assert.equal(v.pinStrategy, 'global', 'one hoisted version → a single global pin');
+    assert.deepEqual(v.instances.map((i) => i.installedVersion), ['4.17.11'], "the workspace's edge resolves to the hoisted copy");
+    assert.equal(v.firstPatched, '4.17.21');
+  });
+
+  it('resolves a workspace-local (non-hoisted) install', async () => {
+    const packages = {
+      '': { name: 'root' },
+      'packages/a': { name: '@acme/a', version: '1.0.0', dependencies: { lodash: '^4.17.0' } },
+      'node_modules/@acme/a': { link: true, resolved: 'packages/a' },
+      'packages/a/node_modules/lodash': { version: '4.17.11' }, // local to the workspace, not hoisted
+    };
+    const installed = { versions: new Map([['lodash', new Set(['4.17.11'])]]), direct: new Set(['lodash']), packages };
+
+    const { vulns } = await computeVulnerabilities({ descriptors: lodashDescriptor, installed }, lodashRegistry());
+
+    const v = vulns.get('lodash');
+    assert.ok(v);
+    assert.deepEqual(v.instances.map((i) => i.installedVersion), ['4.17.11'], 'the workspace-local copy is resolved');
+  });
+});
