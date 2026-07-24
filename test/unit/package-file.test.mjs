@@ -5,10 +5,10 @@
 
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { loadManifest, applyUpgrades } from '../../src/package-file.js';
+import { loadManifest, applyUpgrades, loadProject, applyProject } from '../../src/package-file.js';
 
 const tmpDirs = [];
 afterEach(async () => {
@@ -421,5 +421,155 @@ describe('applyUpgrades', () => {
     const raw = await readRaw(dir);
     assert.ok(raw.includes('\n\t"dependencies"'), 'should keep tab indentation');
     assert.equal(raw.endsWith('\n'), false, 'should not add a trailing newline');
+  });
+});
+
+// --- loadProject / applyProject (workspaces) --------------------------------
+
+// Write a package.json into `dir/rel`, creating directories as needed.
+async function writePkg(dir, rel, obj) {
+  const target = path.join(dir, rel);
+  await mkdir(target, { recursive: true });
+  await writeFile(path.join(target, 'package.json'), pkg(obj), 'utf8');
+}
+async function readJsonAt(dir, rel) {
+  return JSON.parse(await readFile(path.join(dir, rel, 'package.json'), 'utf8'));
+}
+async function readRawAt(dir, rel) {
+  return readFile(path.join(dir, rel, 'package.json'), 'utf8');
+}
+
+// A minimal monorepo: root with two workspaces under packages/.
+async function monorepo() {
+  const dir = await mkdtemp(path.join(tmpdir(), 'nui-proj-'));
+  tmpDirs.push(dir);
+  await writePkg(dir, '.', {
+    name: 'root',
+    workspaces: ['packages/*'],
+    dependencies: { chalk: '^4.0.0' },
+  });
+  await writePkg(dir, 'packages/a', { name: '@acme/a', dependencies: { chalk: '^4.0.0', lodash: '^4.17.0' } });
+  await writePkg(dir, 'packages/b', { name: '@acme/b', devDependencies: { chalk: '^4.0.0' } });
+  return dir;
+}
+
+describe('loadProject', () => {
+  it('presents a standalone package as a one-manifest project (workspace: null)', async () => {
+    const dir = await project({ 'package.json': pkg({ dependencies: { chalk: '^4.0.0' } }) });
+
+    const proj = await loadProject(dir);
+
+    assert.equal(proj.manifests.length, 1);
+    assert.equal(proj.workspaces, null);
+    assert.deepEqual(
+      proj.descriptors.map((d) => ({ name: d.name, workspace: d.workspace, id: d.id })),
+      [{ name: 'chalk', workspace: null, id: '. dependencies chalk' }]
+    );
+  });
+
+  it('loads the root first, then each workspace, keeping duplicate names as distinct rows', async () => {
+    const dir = await monorepo();
+
+    const proj = await loadProject(dir);
+
+    assert.deepEqual(proj.manifests.map((m) => m.workspace), [null, '@acme/a', '@acme/b']);
+    // chalk appears in all three manifests — three distinct descriptors, not one.
+    const chalk = proj.descriptors.filter((d) => d.name === 'chalk');
+    assert.equal(chalk.length, 3);
+    assert.deepEqual(chalk.map((d) => d.id).sort(), [
+      '. dependencies chalk',
+      `${path.join('packages', 'a')} dependencies chalk`,
+      `${path.join('packages', 'b')} devDependencies chalk`,
+    ]);
+    assert.deepEqual(new Set(proj.descriptors.map((d) => d.id)).size, proj.descriptors.length, 'ids are unique');
+  });
+
+  it('skips internal cross-workspace dependencies', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'nui-proj-'));
+    tmpDirs.push(dir);
+    await writePkg(dir, '.', { name: 'root', workspaces: ['packages/*'] });
+    await writePkg(dir, 'packages/a', { name: '@acme/a', dependencies: { lodash: '^4.0.0' } });
+    // b depends on its sibling @acme/a — should not appear as an upgradable row.
+    await writePkg(dir, 'packages/b', { name: '@acme/b', dependencies: { '@acme/a': '^1.0.0', chalk: '^4.0.0' } });
+
+    const proj = await loadProject(dir);
+
+    assert.ok(!proj.descriptors.some((d) => d.name === '@acme/a'), 'sibling dep is excluded');
+    assert.deepEqual(proj.descriptors.map((d) => d.name).sort(), ['chalk', 'lodash']);
+  });
+});
+
+describe('applyProject', () => {
+  it('reproduces standalone applyUpgrades behavior byte-for-byte', async () => {
+    const original = pkg({ dependencies: { chalk: '^4.0.0', lodash: '^4.17.0' } });
+    // Two identical projects: one driven through applyUpgrades, one through applyProject.
+    const a = await project({ 'package.json': original });
+    const b = await project({ 'package.json': original });
+
+    await applyUpgrades(await loadManifest(a), new Map([['chalk', '^5.0.0']]));
+    const proj = await loadProject(b);
+    await applyProject(proj, new Map([['. dependencies chalk', '^5.0.0']]));
+
+    assert.equal(await readRaw(a), await readRaw(b), 'same bytes on disk');
+  });
+
+  it('writes each selection to only its own workspace manifest', async () => {
+    const dir = await monorepo();
+    const proj = await loadProject(dir);
+
+    // Upgrade chalk only in workspace a.
+    const res = await applyProject(proj, new Map([[`${path.join('packages', 'a')} dependencies chalk`, '^5.0.0']]));
+
+    assert.equal((await readJsonAt(dir, 'packages/a')).dependencies.chalk, '^5.0.0');
+    assert.equal((await readJsonAt(dir, '.')).dependencies.chalk, '^4.0.0', 'root untouched');
+    assert.equal((await readJsonAt(dir, 'packages/b')).devDependencies.chalk, '^4.0.0', 'workspace b untouched');
+    assert.deepEqual(res.applied, [
+      { name: 'chalk', field: 'dependencies', from: '^4.0.0', to: '^5.0.0', workspace: '@acme/a' },
+    ]);
+  });
+
+  it('does not rewrite manifests that have no selected changes', async () => {
+    const dir = await monorepo();
+    const proj = await loadProject(dir);
+    const before = await readRawAt(dir, 'packages/b');
+
+    await applyProject(proj, new Map([[`${path.join('packages', 'a')} dependencies lodash`, '^4.18.0']]));
+
+    assert.equal(await readRawAt(dir, 'packages/b'), before, 'unchanged manifest is left byte-identical');
+  });
+
+  it('routes overrides to the root manifest only, even for a child-workspace dependency', async () => {
+    const dir = await monorepo();
+    const proj = await loadProject(dir);
+
+    // lodash is a direct dep of workspace a, not the root — the override still
+    // lands as a top-level pin on the ROOT manifest (npm honors overrides there).
+    const res = await applyProject(proj, new Map(), { lodash: '4.17.21' });
+
+    assert.deepEqual((await readJsonAt(dir, '.')).overrides, { lodash: '4.17.21' });
+    assert.equal('overrides' in (await readJsonAt(dir, 'packages/a')), false, 'no overrides in the child');
+    assert.deepEqual(res.overrides, [{ name: 'lodash', to: '4.17.21' }]);
+  });
+
+  it('preserves each manifest\'s own formatting when several change', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'nui-proj-'));
+    tmpDirs.push(dir);
+    await mkdir(path.join(dir, 'packages/a'), { recursive: true });
+    // Root uses tabs + no trailing newline; workspace uses 2 spaces + newline.
+    await writeFile(path.join(dir, 'package.json'), pkg({ name: 'root', workspaces: ['packages/*'], dependencies: { chalk: '^4.0.0' } }, '\t', false), 'utf8');
+    await writeFile(path.join(dir, 'packages/a/package.json'), pkg({ name: 'a', dependencies: { lodash: '^4.0.0' } }, 2, true), 'utf8');
+
+    const proj = await loadProject(dir);
+    await applyProject(proj, new Map([
+      ['. dependencies chalk', '^5.0.0'],
+      [`${path.join('packages', 'a')} dependencies lodash`, '^4.18.0'],
+    ]));
+
+    const rootRaw = await readRawAt(dir, '.');
+    const wsRaw = await readRawAt(dir, 'packages/a');
+    assert.ok(rootRaw.includes('\n\t"'), 'root keeps tabs');
+    assert.equal(rootRaw.endsWith('\n'), false, 'root keeps no trailing newline');
+    assert.ok(wsRaw.includes('\n  "'), 'workspace keeps 2-space indent');
+    assert.equal(wsRaw.endsWith('\n'), true, 'workspace keeps trailing newline');
   });
 });
