@@ -128,6 +128,55 @@ describe('buildDisplayRows', () => {
     ]);
   });
 
+  it('keeps dep loading rows and audit placeholders distinct while both are pending', () => {
+    // Suggestions and the audit can be in flight at the same time; their loading
+    // rows must not collide (React needs unique keys to render them).
+    const descriptors = [d('a', 'dependencies'), d('b', 'dependencies')];
+    const rows = buildDisplayRows({
+      descriptors,
+      entries: [null, {}], // 'a' still loading, 'b' loaded
+      allLoaded: false,
+      vulns: null,
+      section: false,
+      auditPending: true,
+    });
+
+    assert.deepEqual(rows.map((r) => [r.kind, r.key]), [
+      ['loading', 'loading:0'],
+      ['dep', 'dep:. dependencies b'],
+      ['header', 'h:pin'],
+      ['loading', 'loading:pin'],
+      ['header', 'h:unused'],
+      ['loading', 'loading:unused'],
+    ]);
+    const keys = rows.map((r) => r.key);
+    assert.equal(new Set(keys).size, keys.length, 'row keys are unique');
+  });
+
+  it('appends the audit loading placeholders after every workspace section while pending', () => {
+    const descriptors = [
+      d('chalk', 'dependencies', 'packages/a', '@acme/a'),
+      d('zod', 'dependencies', 'packages/b', '@acme/b'),
+    ];
+    const rows = buildDisplayRows({
+      descriptors,
+      entries: loaded(descriptors),
+      allLoaded: true,
+      vulns: null,
+      section: false,
+      auditPending: true,
+    });
+
+    assert.deepEqual(rows.map((r) => r.kind), [
+      'wsheader', 'dep', 'wsheader', 'dep', 'header', 'loading', 'header', 'loading',
+    ]);
+    // The shared audit sections are tree-wide, so they trail both workspaces.
+    assert.deepEqual(
+      rows.slice(-4).map((r) => r.key),
+      ['h:pin', 'loading:pin', 'h:unused', 'loading:unused']
+    );
+  });
+
   it('shows loading rows for not-yet-loaded descriptors before allLoaded', () => {
     const descriptors = [d('a', 'dependencies'), d('b', 'dependencies')];
     const rows = buildDisplayRows({ descriptors, entries: [null, {}], allLoaded: false, vulns: null, section: false });
