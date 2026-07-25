@@ -105,6 +105,29 @@ describe('buildDisplayRows', () => {
     ]);
   });
 
+  it('shows loading placeholders for both audit sections while auditPending', () => {
+    const descriptors = [d('chalk', 'dependencies')];
+    const rows = buildDisplayRows({
+      descriptors,
+      entries: loaded(descriptors),
+      allLoaded: true,
+      vulns: null,
+      section: false,
+      // Pending wins even if lists somehow arrive — they're empty mid-audit anyway.
+      overrideVulns: [['minimist', { severity: 'high' }]],
+      removableList: [['leftpad', { pin: '1.3.0', reason: 'dead' }]],
+      auditPending: true,
+    });
+
+    assert.deepEqual(rows.map((r) => [r.kind, r.key]), [
+      ['dep', 'dep:. dependencies chalk'],
+      ['header', 'h:pin'],
+      ['loading', 'loading:pin'],
+      ['header', 'h:unused'],
+      ['loading', 'loading:unused'],
+    ]);
+  });
+
   it('shows loading rows for not-yet-loaded descriptors before allLoaded', () => {
     const descriptors = [d('a', 'dependencies'), d('b', 'dependencies')];
     const rows = buildDisplayRows({ descriptors, entries: [null, {}], allLoaded: false, vulns: null, section: false });

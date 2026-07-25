@@ -160,6 +160,58 @@ async function testAuditWarnings() {
   assert(frame.includes('minimist'), 'a transitive vulnerable package appears in the override section');
 }
 
+async function testAuditPendingLoading() {
+  const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
+  // Gate the audit so it stays pending long enough to observe the placeholders,
+  // then release it and confirm the sections resolve.
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const { lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      audit: true,
+      section: true,
+      overrides: { 'left-pad': '1.3.0' },
+      runAudit: async () => {
+        await gate;
+        return {
+          offline: false,
+          vulns: new Map(),
+          removableOverrides: new Map([['left-pad', { pin: '1.3.0', reason: 'dead' }]]),
+        };
+      },
+      onSubmit: () => {},
+      onAbort: () => {},
+    })
+  );
+
+  await wait(3000); // suggestions load; audit still gated
+  const pending = lastFrame();
+  assert(
+    pending.includes('Override to a safe version') && pending.includes('Unused overrides'),
+    'both audit section headers render while the audit is pending'
+  );
+  assert(
+    (pending.match(/Loading\.\.\./g) || []).length >= 2,
+    'each pending audit section shows a Loading… placeholder'
+  );
+
+  release();
+  await wait(200);
+  const resolved = lastFrame();
+  unmount();
+
+  assert(!resolved.includes('Loading...'), 'placeholders disappear once the audit resolves');
+  assert(
+    !resolved.includes('Override to a safe version'),
+    'the vuln section drops out when the audit finds nothing'
+  );
+  assert(
+    resolved.includes('Unused overrides') && resolved.includes('left-pad'),
+    'the unused-override section fills in with the resolved row'
+  );
+}
+
 async function testAuditDisabled() {
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
   const { lastFrame, unmount } = render(
@@ -428,6 +480,7 @@ async function main() {
   await testAbort();
   await testBulkLatest();
   await testAuditWarnings();
+  await testAuditPendingLoading();
   await testAuditDisabled();
   await testOfflineNotice();
   await testOverrideFlow();

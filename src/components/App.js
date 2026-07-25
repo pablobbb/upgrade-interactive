@@ -137,6 +137,9 @@ export function App({
     : [];
   const removable = auditState && auditState.removableOverrides ? auditState.removableOverrides : null;
   const removableList = removable ? [...removable.entries()] : [];
+  // Audit requested but not yet resolved — the override sections show loading
+  // placeholders until `runAudit` returns.
+  const auditPending = audit && auditState === null;
 
   const rows = buildDisplayRows({
     descriptors: normDescriptors,
@@ -146,6 +149,7 @@ export function App({
     section,
     overrideVulns,
     removableList,
+    auditPending,
   });
 
   const navKeys = rows.filter(isNavigable).map((r) => r.key);

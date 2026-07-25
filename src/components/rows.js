@@ -16,6 +16,7 @@
  * @param section      group each workspace's rows by field when true
  * @param overrideVulns  [name, vuln][] for the shared "Override to a safe version" section
  * @param removableList  [name, info][] for the shared "Unused overrides" section
+ * @param auditPending  audit still in flight — show loading placeholders for the two audit sections
  */
 export function buildDisplayRows({
   descriptors,
@@ -25,6 +26,7 @@ export function buildDisplayRows({
   section,
   overrideVulns = [],
   removableList = [],
+  auditPending = false,
 }) {
   const depItems = descriptors.map((descriptor, i) => ({ descriptor, entry: entries[i], i }));
   const visibleDeps = allLoaded ? depItems.filter((x) => x.entry !== null) : depItems;
@@ -82,15 +84,24 @@ export function buildDisplayRows({
 
   // Shared vulnerability / override sections come after every workspace section:
   // they cover transitive packages no single workspace's manifest owns, plus
-  // root-only override bookkeeping — both inherently tree-wide.
-  if (overrideVulns.length > 0) {
+  // root-only override bookkeeping — both inherently tree-wide. While the audit
+  // is still running both lists are empty, so surface each section header with a
+  // loading placeholder instead of leaving a gap that silently fills in later.
+  if (auditPending) {
     rows.push({ kind: 'header', key: 'h:pin', title: 'Override to a safe version' });
-    for (const [name, vuln] of overrideVulns) rows.push({ kind: 'vuln', key: `vuln:${name}`, name, vuln });
-  }
-  if (removableList.length > 0) {
+    rows.push({ kind: 'loading', key: 'loading:pin' });
     rows.push({ kind: 'header', key: 'h:unused', title: 'Unused overrides' });
-    for (const [name, info] of removableList) {
-      rows.push({ kind: 'override', key: `ovr:${name}`, name, pin: info.pin, reason: info.reason });
+    rows.push({ kind: 'loading', key: 'loading:unused' });
+  } else {
+    if (overrideVulns.length > 0) {
+      rows.push({ kind: 'header', key: 'h:pin', title: 'Override to a safe version' });
+      for (const [name, vuln] of overrideVulns) rows.push({ kind: 'vuln', key: `vuln:${name}`, name, vuln });
+    }
+    if (removableList.length > 0) {
+      rows.push({ kind: 'header', key: 'h:unused', title: 'Unused overrides' });
+      for (const [name, info] of removableList) {
+        rows.push({ kind: 'override', key: `ovr:${name}`, name, pin: info.pin, reason: info.reason });
+      }
     }
   }
 
