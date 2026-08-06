@@ -25,14 +25,40 @@ async function readManifest(dir) {
   }
 }
 
-/** Accept both the array form and the `{ packages: [...] }` object form. */
+/**
+ * Accept both the array form and the `{ packages: [...] }` object form, split
+ * into the patterns that select directories and the `!`-prefixed ones that
+ * exclude them. Like minimatch, negations apply to the whole positive result
+ * regardless of where they appear in the list, so order doesn't matter here.
+ */
 function normalizePatterns(workspacesField) {
   const list = Array.isArray(workspacesField)
     ? workspacesField
     : workspacesField && Array.isArray(workspacesField.packages)
       ? workspacesField.packages
       : [];
-  return list.filter((p) => typeof p === 'string' && p.length > 0);
+  const include = [];
+  const exclude = [];
+  for (const p of list) {
+    if (typeof p !== 'string' || p.length === 0) continue;
+    if (p.startsWith('!')) {
+      const rest = p.slice(1);
+      if (rest.length > 0) exclude.push(rest);
+    } else {
+      include.push(p);
+    }
+  }
+  return { include, exclude };
+}
+
+/** Absolute directories under `root` matched by any of `patterns`. */
+async function matchPatterns(root, patterns) {
+  const dirs = [];
+  for (const pattern of patterns) {
+    const segments = pattern.split('/').map((s) => s.trim()).filter(Boolean);
+    dirs.push(...(await matchSegments(root, segments)));
+  }
+  return dirs;
 }
 
 /** Immediate subdirectories of `dir`, excluding node_modules. Never throws. */
@@ -58,6 +84,7 @@ async function listSubdirs(dir) {
  *   - a "*" segment         ("packages/*" — any single directory name)
  *   - a trailing "**"       ("packages/**" — that dir and all descendants)
  * A "**" is only meaningful as the final segment; anything after it is ignored.
+ * Negation is handled a level up, in normalizePatterns/expandWorkspaces.
  */
 async function matchSegments(base, segments) {
   if (segments.length === 0) return [base];
@@ -89,22 +116,21 @@ async function matchSegments(base, segments) {
 /**
  * Expand a `workspaces` field into `[{ dir, name, relPath }]`, one entry per
  * matched directory that actually contains a package.json. Excludes the root
- * itself and de-dupes directories matched by more than one pattern. Sorted by
- * relative path for stable ordering.
+ * itself, anything a `!` pattern excludes, and de-dupes directories matched by
+ * more than one pattern. Sorted by relative path for stable ordering.
  */
 export async function expandWorkspaces(rootDir, workspacesField) {
   const root = path.resolve(rootDir);
+  const { include, exclude } = normalizePatterns(workspacesField);
+  const excluded = new Set(await matchPatterns(root, exclude));
   const seen = new Set();
   const result = [];
-  for (const pattern of normalizePatterns(workspacesField)) {
-    const segments = pattern.split('/').map((s) => s.trim()).filter(Boolean);
-    for (const dir of await matchSegments(root, segments)) {
-      if (dir === root || seen.has(dir)) continue;
-      seen.add(dir);
-      const manifest = await readManifest(dir);
-      if (!manifest) continue; // no package.json here — not a workspace
-      result.push({ dir, name: manifest.name, relPath: path.relative(root, dir) });
-    }
+  for (const dir of await matchPatterns(root, include)) {
+    if (dir === root || seen.has(dir) || excluded.has(dir)) continue;
+    seen.add(dir);
+    const manifest = await readManifest(dir);
+    if (!manifest) continue; // no package.json here — not a workspace
+    result.push({ dir, name: manifest.name, relPath: path.relative(root, dir) });
   }
   result.sort((a, b) => a.relPath.localeCompare(b.relPath));
   return result;

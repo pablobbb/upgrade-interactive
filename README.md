@@ -110,7 +110,8 @@ vulnerable package used by several workspaces is staged as an override once,
 from one row.
 
 Scope with `-w <name>` (repeatable) or `--no-workspaces`. The `workspaces` glob
-supports literal paths, `*`, and trailing `**` — a subset of npm's patterns.
+supports literal paths, `*`, trailing `**`, and `!` exclusions — a subset of
+npm's patterns.
 
 ## Notes
 

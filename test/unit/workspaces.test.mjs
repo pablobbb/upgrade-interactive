@@ -129,6 +129,50 @@ describe('expandWorkspaces', () => {
     assert.deepEqual(await expandWorkspaces(root, undefined), []);
     assert.deepEqual(await expandWorkspaces(root, { nope: 1 }), []);
   });
+
+  it('excludes a directory matched by a "!" pattern', async () => {
+    const root = await scaffold({
+      'packages/a': { name: 'a' },
+      'packages/legacy': { name: 'legacy' },
+    });
+
+    const ws = await expandWorkspaces(root, ['packages/*', '!packages/legacy']);
+
+    assert.deepEqual(ws.map((w) => w.name), ['a']);
+  });
+
+  it('applies a negation regardless of where it appears in the list', async () => {
+    const root = await scaffold({
+      'packages/a': { name: 'a' },
+      'packages/legacy': { name: 'legacy' },
+    });
+
+    const ws = await expandWorkspaces(root, ['!packages/legacy', 'packages/*']);
+
+    assert.deepEqual(ws.map((w) => w.name), ['a']);
+  });
+
+  it('negates with a glob of its own', async () => {
+    const root = await scaffold({
+      'apps/web': { name: 'web' },
+      'packages/a': { name: 'a' },
+      'packages/b': { name: 'b' },
+    });
+
+    const ws = await expandWorkspaces(root, ['apps/*', 'packages/*', '!packages/*']);
+
+    assert.deepEqual(ws.map((w) => w.name), ['web']);
+  });
+
+  it('ignores a bare "!" and a negation that matches nothing', async () => {
+    const root = await scaffold({
+      'packages/a': { name: 'a' },
+    });
+
+    const ws = await expandWorkspaces(root, ['packages/*', '!', '!packages/nope']);
+
+    assert.deepEqual(ws.map((w) => w.name), ['a']);
+  });
 });
 
 describe('findProjectRoot', () => {
