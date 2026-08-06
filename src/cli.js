@@ -140,7 +140,10 @@ async function main() {
   // Group upgrades by workspace (root first, in the order applyProject wrote
   // them), then by field. A standalone project has a single (root) group, so its
   // output is unchanged: no workspace heading, field headers flush-left.
-  const isMonorepo = project.workspaces != null;
+  // Derived from the descriptors, exactly as buildDisplayRows does, so a
+  // `workspaces` field that expands to nothing can't print a "root" heading here
+  // for a run whose TUI showed no workspace header.
+  const isMonorepo = project.descriptors.some((d) => d.relPath !== '.' || d.workspace != null);
   const groups = new Map(); // label -> { dependencies: [], devDependencies: [] }
   for (const change of applied) {
     const label = change.workspace || 'root';
