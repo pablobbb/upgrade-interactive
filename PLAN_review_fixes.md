@@ -1,6 +1,6 @@
 # Plan: code-review fixes on `feature/monorepo-workspaces-support`
 
-Status: **in progress**
+Status: **implemented** (Phases A–C landed; the follow-up below is not)
 Scope: fix the defects a code review of the 11-commit workspaces branch found,
 plus two pre-existing bugs the branch makes prominent. Single-package behavior
 must stay byte-for-byte identical throughout.
@@ -138,9 +138,15 @@ the same root rewrite. The flag has to live on the vuln.
 - Document the divergence in the README's Workspaces section — the comment
   currently claims this and the README does not say it.
 - `CLAUDE.md` requires deliberate yarn divergences to live in a "How closely does
-  this match yarn?" README section that no longer exists. Restore a short section
-  (preferred — this is the second divergence with nowhere to live) or update
-  `CLAUDE.md`.
+  this match yarn?" README section that no longer exists.
+
+  **Resolved as:** documented in the Workspaces section, `CLAUDE.md` left alone.
+  That section was not lost by accident — it was deleted deliberately in 870d2e5
+  ("docs: simplify README"), and 3ad1dd9 on this branch trimmed the Workspaces
+  section in the same direction. Restoring it would undo that. `CLAUDE.md` still
+  points at a section that does not exist and should be updated to name the
+  section divergences actually live in; that is a one-line edit left for the
+  repo owner, since it is an instruction file rather than code.
 
 ## Phase C — cleanup
 
@@ -162,7 +168,7 @@ package names (`#`) is unobservable. It stops git classifying the file as binary
 which today hides its diffs (`git diff` shows nothing without `--text`) and makes
 `grep -r` skip it without saying so.
 
-### C3. (Optional) dep+devDep duplicate name
+### C3. dep+devDep duplicate name
 
 `src/package-file.js:292-298` collapses id-keyed selections to name-keyed ones
 "a name is unique within a file", which is false when a package appears in both
@@ -176,7 +182,12 @@ name-keyed callers and tests.
 
 Low value: needs a manifest npm itself treats as malformed, and on `main` both
 rows already shared one name-keyed selection and both fields were written anyway
-— so nothing regressed on the write path.
+— so nothing regressed on the write path. Done anyway; it was four lines.
+
+Left alone: `directField` in `applyUpgrades` has the same name-keyed ambiguity,
+so an override routed to a package declared in both fields bumps whichever field
+`loadManifest` saw last. Pre-existing, on the override path rather than the
+selection path, and out of scope here.
 
 ## Deferred to a follow-up branch
 
