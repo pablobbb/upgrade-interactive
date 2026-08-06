@@ -603,6 +603,106 @@ describe('applyProject', () => {
     assert.equal(await readRaw(a), await readRaw(b), 'same bytes on disk');
   });
 
+  // Workspace support re-keyed the whole pipeline from bare name to a composite
+  // id. These cases are the guarantee that a single-package project still lands
+  // on exactly the bytes the pre-workspaces writer produced, across every kind
+  // of edit and every formatting variant the writer preserves.
+  const standaloneCases = [
+    {
+      what: 'a devDependencies selection',
+      json: { dependencies: { chalk: '^4.0.0' }, devDependencies: { eslint: '^7.0.0' } },
+      legacy: new Map([['eslint', '^8.0.0']]),
+      project: new Map([['. devDependencies eslint', '^8.0.0']]),
+    },
+    {
+      what: 'selections in both fields at once',
+      json: { dependencies: { chalk: '^4.0.0' }, devDependencies: { eslint: '^7.0.0' } },
+      legacy: new Map([['chalk', '^5.0.0'], ['eslint', '^8.0.0']]),
+      project: new Map([['. dependencies chalk', '^5.0.0'], ['. devDependencies eslint', '^8.0.0']]),
+    },
+    {
+      what: 'a top-level override on a transitive package',
+      json: { dependencies: { chalk: '^4.0.0' } },
+      overrides: { minimist: '1.2.6' },
+    },
+    {
+      what: 'a scoped override nested under a parent',
+      json: { dependencies: { chalk: '^4.0.0' } },
+      overrides: { minimist: { scoped: [{ parentName: 'pkg-a', parentVersion: '1.0.0', version: '1.2.6' }] } },
+    },
+    {
+      what: 'an override that becomes a direct range bump',
+      json: { dependencies: { chalk: '^4.0.0' } },
+      overrides: { chalk: '4.1.2' },
+    },
+    {
+      what: 'an override removal',
+      json: { dependencies: { chalk: '^4.0.0' }, overrides: { 'left-pad': '1.3.0' } },
+      removals: ['left-pad'],
+    },
+    {
+      what: 'a removal that empties the overrides block',
+      json: { dependencies: { chalk: '^4.0.0' }, overrides: { 'left-pad': '1.3.0' } },
+      removals: ['left-pad'],
+    },
+    {
+      what: 'tab indentation',
+      json: { dependencies: { chalk: '^4.0.0' } },
+      indent: '\t',
+      legacy: new Map([['chalk', '^5.0.0']]),
+      project: new Map([['. dependencies chalk', '^5.0.0']]),
+    },
+    {
+      what: 'a file with no trailing newline',
+      json: { dependencies: { chalk: '^4.0.0' } },
+      trailingNewline: false,
+      legacy: new Map([['chalk', '^5.0.0']]),
+      project: new Map([['. dependencies chalk', '^5.0.0']]),
+    },
+    {
+      what: 'a no-op selection (same range)',
+      json: { dependencies: { chalk: '^4.0.0' } },
+      legacy: new Map([['chalk', '^4.0.0']]),
+      project: new Map([['. dependencies chalk', '^4.0.0']]),
+    },
+  ];
+
+  for (const c of standaloneCases) {
+    it(`matches applyUpgrades byte-for-byte: ${c.what}`, async () => {
+      const original = pkg(c.json, c.indent ?? 2, c.trailingNewline ?? true);
+      const a = await project({ 'package.json': original });
+      const b = await project({ 'package.json': original });
+
+      const legacyRes = await applyUpgrades(
+        await loadManifest(a),
+        c.legacy ?? new Map(),
+        c.overrides ?? {},
+        c.removals ?? []
+      );
+      const projectRes = await applyProject(
+        await loadProject(b),
+        c.project ?? new Map(),
+        c.overrides ?? {},
+        c.removals ?? []
+      );
+
+      assert.equal(await readRaw(a), await readRaw(b), 'same bytes on disk');
+      // The reported changes must match too — they drive the printed summary.
+      // applyProject additionally tags each entry with its workspace (null here).
+      assert.deepEqual(
+        projectRes.applied.map(({ workspace, ...rest }) => rest),
+        legacyRes.applied,
+        'same applied list'
+      );
+      assert.deepEqual(projectRes.overrides, legacyRes.overrides, 'same overrides list');
+      assert.deepEqual(projectRes.removed, legacyRes.removed, 'same removed list');
+      assert.ok(
+        projectRes.applied.every((a2) => a2.workspace === null),
+        'a standalone project reports no workspace'
+      );
+    });
+  }
+
   it('writes each selection to only its own workspace manifest', async () => {
     const dir = await monorepo();
     const proj = await loadProject(dir);

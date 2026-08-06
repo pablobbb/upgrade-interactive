@@ -17,6 +17,9 @@ const CONCURRENCY = 8;
 // each render — otherwise the audit effect's deps change every commit and it
 // re-runs in an unbounded loop.
 const EMPTY_OVERRIDES = Object.freeze({});
+// A standalone project's only manifest is the lockfile root. Stable reference
+// for the same reason EMPTY_OVERRIDES is one — it feeds the audit effect's deps.
+const ROOT_ONLY_MANIFESTS = Object.freeze(['']);
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
@@ -41,9 +44,9 @@ function originLabelOf(row) {
   return row.kind === 'dep' ? (row.descriptor.workspace ?? 'root') : null;
 }
 
-async function defaultRunAudit({ cwd, descriptors, overrides }) {
-  const installed = await loadInstalledVersions(cwd);
-  return computeVulnerabilities({ descriptors, installed, overrides });
+async function defaultRunAudit({ cwd, descriptors, overrides, manifestPaths }) {
+  const installed = await loadInstalledVersions(cwd, manifestPaths);
+  return computeVulnerabilities({ descriptors, installed, overrides, manifestPaths });
 }
 
 export function App({
@@ -54,6 +57,10 @@ export function App({
   section = false,
   cwd = process.cwd(),
   overrides = EMPTY_OVERRIDES,
+  // Lockfile-style keys for this project's own manifests: [''] standalone, plus
+  // one relative path per workspace. Lets the audit tell a workspace apart from
+  // an ordinary `file:` dependency, which has the identical lockfile shape.
+  manifestPaths = ROOT_ONLY_MANIFESTS,
   runAudit = defaultRunAudit,
 }) {
   const { exit } = useApp();
@@ -121,7 +128,7 @@ export function App({
     if (!audit) return;
     let cancelled = false;
 
-    Promise.resolve(runAudit({ cwd, descriptors: normDescriptors, overrides }))
+    Promise.resolve(runAudit({ cwd, descriptors: normDescriptors, overrides, manifestPaths }))
       .then((res) => {
         if (cancelled || !mountedRef.current) return;
         setAuditState(res || { offline: false, vulns: new Map() });
@@ -134,7 +141,7 @@ export function App({
     return () => {
       cancelled = true;
     };
-  }, [audit, cwd, normDescriptors, overrides, runAudit]);
+  }, [audit, cwd, normDescriptors, overrides, manifestPaths, runAudit]);
 
   // ---- Build the ordered display list (headers + rows) ----------------------
   const vulns = auditState ? auditState.vulns : null;

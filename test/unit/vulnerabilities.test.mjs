@@ -620,7 +620,11 @@ describe('computeVulnerabilities — workspaces', () => {
     };
 
     const { vulns } = await computeVulnerabilities(
-      { descriptors: [{ name: 'lodash', range: '^3.0.0', field: 'dependencies' }], installed },
+      {
+        descriptors: [{ name: 'lodash', range: '^3.0.0', field: 'dependencies' }],
+        installed,
+        manifestPaths: ['', 'packages/a'],
+      },
       registry
     );
 
@@ -638,5 +642,45 @@ describe('computeVulnerabilities — workspaces', () => {
       'the default selection stages nothing, so `o` cannot write a wrong pin'
     );
     assert.equal(isPinBlocked(v), true);
+  });
+
+  // npm implements workspaces as `file:` links, so an ordinary local dependency
+  // ("lib": "file:./lib") produces a top-level `lib` lockfile entry with exactly
+  // a workspace's shape. Path shape therefore cannot decide what is one of our
+  // manifests — only the discovered set can. A single-package project must not
+  // be treated as a monorepo and must keep its pre-workspaces behavior.
+  it('does not report a conflict for a file: dependency in a single-package project', async () => {
+    const registry = stubRegistry({
+      meta: { lodash: { versions: ['3.10.1', '4.17.11', '4.17.21'], distTags: {} } },
+      advisories: { lodash: [advisory({ vulnerable_versions: '<4.17.19', severity: 'high' })] },
+    });
+    // Identical to the two-workspace case above, except `lib` is a plain local
+    // dependency and the project declares no workspaces.
+    const packages = {
+      '': { name: 'app', dependencies: { lodash: '^3.0.0', lib: 'file:./lib' } },
+      lib: { name: 'lib', version: '1.0.0', dependencies: { lodash: '^4.17.0' } },
+      'node_modules/lib': { link: true, resolved: 'lib' },
+      'node_modules/lodash': { version: '3.10.1' },
+      'lib/node_modules/lodash': { version: '4.17.11' },
+    };
+    const installed = {
+      versions: new Map([['lodash', new Set(['3.10.1', '4.17.11'])]]),
+      direct: new Set(['lodash']),
+      packages,
+    };
+
+    const { vulns } = await computeVulnerabilities(
+      {
+        descriptors: [{ name: 'lodash', range: '^3.0.0', field: 'dependencies' }],
+        installed,
+        manifestPaths: [''], // standalone: the root is the only manifest
+      },
+      registry
+    );
+
+    const v = vulns.get('lodash');
+    assert.ok(v, 'lodash is still flagged as vulnerable');
+    assert.equal(v.pinConflict, false, 'a local dependency is not a second manifest');
+    assert.ok(!v.instances.some((i) => i.conflict), 'no instance is flagged');
   });
 });

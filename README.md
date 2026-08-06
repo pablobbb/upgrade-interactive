@@ -109,6 +109,14 @@ first), and edits are written to that workspace's own manifest. `overrides` and
 vulnerable package used by several workspaces is staged as an override once,
 from one row.
 
+"From anywhere in the tree" includes running inside a workspace: from
+`packages/api` the tool still operates on the whole repo and reads its
+`upgrade-interactive` config from the **root** `package.json`. Use
+`--no-workspaces` for the old one-manifest behavior.
+
+A repository with no `workspaces` field is unaffected by any of this — it loads
+exactly one `package.json` and renders no workspace headings.
+
 Because npm honors `overrides` only in the root manifest, a vulnerable package
 whose workspaces declare *different* ranges can't be fixed by any single
 override entry. Those rows say so and offer no pin — upgrade each workspace's

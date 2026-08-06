@@ -78,9 +78,17 @@ export function removalsFromRemovable(removableOverrides) {
 // + apply both additions and removals.
 export async function auditFixture(work, snapshot) {
   const manifest = await loadManifest(work);
-  const installed = await loadInstalledVersions(work);
+  // Every fixture is a single-package project, so the root is the only manifest
+  // — the same value cli.js computes via manifestPathsOf for a standalone run.
+  const manifestPaths = [''];
+  const installed = await loadInstalledVersions(work, manifestPaths);
   const { vulns, removableOverrides } = await computeVulnerabilities(
-    { descriptors: manifest.descriptors, installed, overrides: manifest.json.overrides || {} },
+    {
+      descriptors: manifest.descriptors,
+      installed,
+      overrides: manifest.json.overrides || {},
+      manifestPaths,
+    },
     stubFromSnapshot(snapshot)
   );
   return { manifest, installed, vulns, removableOverrides };

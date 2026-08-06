@@ -9,6 +9,7 @@ import path from 'node:path';
 import { App } from './components/App.js';
 import { loadProject, applyProject } from './package-file.js';
 import { resolveToggles, parseWorkspaceOptions } from './flags.js';
+import { formatSummary, isMonorepoProject, manifestPathsOf } from './summary.js';
 
 const e = React.createElement;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -95,6 +96,7 @@ async function main() {
   // Audit against the project root: npm workspaces share the root lockfile, so
   // this also makes runs from inside a workspace subdirectory resolve correctly.
   const rootDir = path.dirname(project.root.filePath);
+  const manifestPaths = manifestPathsOf(project);
 
   const result = await new Promise((resolve) => {
     const { waitUntilExit } = render(
@@ -104,6 +106,7 @@ async function main() {
         section,
         cwd: rootDir,
         overrides: project.root.json.overrides || {},
+        manifestPaths,
         onSubmit: (selections, overrides, removals) => resolve({ type: 'submit', selections, overrides, removals }),
         onAbort: () => resolve({ type: 'abort' }),
       }),
@@ -137,41 +140,7 @@ async function main() {
   );
 
   process.stdout.write('\n');
-  // Group upgrades by workspace (root first, in the order applyProject wrote
-  // them), then by field. A standalone project has a single (root) group, so its
-  // output is unchanged: no workspace heading, field headers flush-left.
-  // Derived from the descriptors, exactly as buildDisplayRows does, so a
-  // `workspaces` field that expands to nothing can't print a "root" heading here
-  // for a run whose TUI showed no workspace header.
-  const isMonorepo = project.descriptors.some((d) => d.relPath !== '.' || d.workspace != null);
-  const groups = new Map(); // label -> { dependencies: [], devDependencies: [] }
-  for (const change of applied) {
-    const label = change.workspace || 'root';
-    if (!groups.has(label)) groups.set(label, { dependencies: [], devDependencies: [] });
-    groups.get(label)[change.field].push(change);
-  }
-  const pad = isMonorepo ? '  ' : '';
-  for (const [label, byField] of groups) {
-    if (isMonorepo) process.stdout.write(`${label}\n`);
-    for (const field of ['dependencies', 'devDependencies']) {
-      if (byField[field].length === 0) continue;
-      process.stdout.write(`${pad}${field}\n`);
-      for (const change of byField[field]) {
-        process.stdout.write(`${pad}  ${change.name}  ${change.from} \u2192 ${change.to}\n`);
-      }
-    }
-  }
-
-  if (overrides.length > 0 || removed.length > 0) {
-    process.stdout.write('overrides\n');
-    for (const change of overrides) {
-      const target = change.parent ? `${change.parent} \u203a ${change.name}` : change.name;
-      process.stdout.write(`  ${target}  \u2192 ${change.to}\n`);
-    }
-    for (const change of removed) {
-      process.stdout.write(`  ${change.name}  removed\n`);
-    }
-  }
+  process.stdout.write(formatSummary({ applied, overrides, removed, isMonorepo: isMonorepoProject(project) }));
 
   if (applied.length === 0 && overrides.length === 0 && removed.length === 0) {
     process.stdout.write('No effective changes.\n');

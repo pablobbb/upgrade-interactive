@@ -186,7 +186,7 @@ function overrideKeyOf(i) {
 // so they become one row pinned to a single version that fixes every vulnerable
 // copy without downgrading any of them. Instances with distinct keys (including
 // the same parent name at *different* versions) are left untouched.
-function mergeInstancesByOverrideKey(instances) {
+function mergeInstancesByOverrideKey(instances, manifestPaths) {
   const groups = new Map();
   for (const i of instances) {
     const key = overrideKeyOf(i);
@@ -202,14 +202,23 @@ function mergeInstancesByOverrideKey(instances) {
     // Merging is only sound when the copies agree on the declared range: that
     // assumption is what lets us union their candidate lists and keep one
     // copy's range on the result. Manifests in the same project (the root and
-    // each workspace) share the ' root' key while declaring whatever they like,
+    // each workspace) share the '#root' key while declaring whatever they like,
     // so a group spanning several manifests with different ranges has no single
     // honest pin — one npm `overrides` entry can't give two workspaces
     // different versions. Flag it and offer nothing rather than writing a
     // version that satisfies only one of them.
+    //
+    // The copies must be *known* project manifests, not merely lockfile paths
+    // that look like one: a `file:` local dependency produces the same shape
+    // (see isManifestPath in lockfile.js). Without the discovered set we can't
+    // tell, so we don't claim a conflict — that keeps a single-package project
+    // on exactly its pre-workspaces behavior.
+    const conflictingPaths = new Set(copies.map((c) => c.parentPath));
     const conflict =
       new Set(copies.map((c) => c.declaredRange)).size > 1 &&
-      new Set(copies.map((c) => c.parentPath)).size > 1;
+      conflictingPaths.size > 1 &&
+      !!manifestPaths &&
+      [...conflictingPaths].filter((p) => manifestPaths.has(p)).length > 1;
     // Pin no lower than the highest installed copy so none is downgraded, and
     // only to a version safe for every copy.
     const floor = maxVersion(copies.map((c) => c.installedVersion));
@@ -271,9 +280,12 @@ function collectRemovableOverrides(overrideInfo, ok, advisories) {
  *   `overrides` package name -> { pin, reason: 'dead' | 'redundant' }.
  */
 export async function computeVulnerabilities(
-  { descriptors = [], installed = null, overrides = {} } = {},
+  { descriptors = [], installed = null, overrides = {}, manifestPaths = null } = {},
   deps = {}
 ) {
+  // Which lockfile entries are this project's own manifests. Only a real
+  // multi-manifest project can produce an unpinnable cross-manifest conflict.
+  const manifestSet = manifestPaths ? new Set(manifestPaths) : null;
   // Registry collaborators are injectable so this decision logic can be unit
   // tested against fixed advisory/metadata fixtures instead of the live npm API.
   const getMeta = deps.fetchPackageMeta || fetchPackageMeta;
@@ -419,7 +431,7 @@ export async function computeVulnerabilities(
     // work off instances collapsed by override key, so copies of the same
     // parent@version become one pin instead of colliding.
     const pinStrategy = decidePinStrategy(rawInstances, publishedSafe);
-    const instances = mergeInstancesByOverrideKey(rawInstances);
+    const instances = mergeInstancesByOverrideKey(rawInstances, manifestSet);
 
     vulns.set(name, {
       advisories: matching,
