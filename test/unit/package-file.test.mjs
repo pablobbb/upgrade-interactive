@@ -513,6 +513,26 @@ describe('loadProject', () => {
     assert.deepEqual([...new Set(proj.descriptors.map((d) => d.workspace))], ['@acme/b']);
   });
 
+  // npm treats a name declared in both fields as a mistake, but it happens, and
+  // the id-keyed rows make the two independently selectable — so the writer must
+  // address the slot, not just the name.
+  it('keeps dependencies and devDependencies entries of the same name apart', async () => {
+    const dir = await project({
+      'package.json': pkg({
+        dependencies: { chalk: '^4.0.0' },
+        devDependencies: { chalk: '^4.0.0' },
+      }),
+    });
+
+    const proj = await loadProject(dir);
+    const dev = proj.descriptors.find((d) => d.field === 'devDependencies');
+    await applyProject(proj, new Map([[dev.id, '^5.0.0']]));
+
+    const json = await readJsonAt(dir, '.');
+    assert.equal(json.devDependencies.chalk, '^5.0.0', 'the selected row is written');
+    assert.equal(json.dependencies.chalk, '^4.0.0', 'the other field is left alone');
+  });
+
   it('matches the root by its "." path', async () => {
     const dir = await monorepo();
 

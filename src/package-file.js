@@ -30,7 +30,10 @@ export async function loadManifest(cwd) {
     const section = json[field];
     if (!section || typeof section !== 'object') continue;
     for (const [name, range] of Object.entries(section)) {
-      descriptors.push({ name, range, field });
+      // `key` addresses exactly one (field, name) slot. A name can legitimately
+      // appear in both dependencies and devDependencies, so it is not on its own
+      // enough to route a selection to the right slot.
+      descriptors.push({ name, range, field, key: `${field} ${name}` });
     }
   }
 
@@ -238,7 +241,10 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
   const applied = [];
 
   for (const descriptor of manifest.descriptors) {
-    const newRange = selections.get(descriptor.name);
+    // Prefer the field-qualified key so a package declared in both dependencies
+    // and devDependencies gets each slot's own selection; fall back to the bare
+    // name for callers that key by name alone.
+    const newRange = selections.get(descriptor.key) ?? selections.get(descriptor.name);
     if (!newRange || newRange === descriptor.range) continue;
 
     manifest.json[descriptor.field][descriptor.name] = newRange;
@@ -312,14 +318,16 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
  * per-workspace post-submit summary.
  */
 export async function applyProject(project, selections, overrides = {}, removals = []) {
-  // Route each id-keyed selection to its owning manifest, collapsing to the
-  // name-keyed Map the per-file writer expects (a name is unique within a file).
+  // Route each id-keyed selection to its owning manifest, re-keyed by the
+  // "<field> <name>" slot the per-file writer addresses. Keying by bare name
+  // would fan one row's selection out to both fields when a package is declared
+  // in dependencies *and* devDependencies.
   const byRelPath = new Map();
   for (const d of project.descriptors) {
     const range = selections.get(d.id);
     if (range == null) continue;
     if (!byRelPath.has(d.relPath)) byRelPath.set(d.relPath, new Map());
-    byRelPath.get(d.relPath).set(d.name, range);
+    byRelPath.get(d.relPath).set(`${d.field} ${d.name}`, range);
   }
 
   const applied = [];
@@ -327,12 +335,12 @@ export async function applyProject(project, selections, overrides = {}, removals
   const removed = [];
   for (const manifest of project.manifests) {
     const isRoot = manifest === project.root;
-    const nameMap = byRelPath.get(manifest.relPath) || new Map();
+    const slotMap = byRelPath.get(manifest.relPath) || new Map();
     // Nothing to write for a child manifest with no selections (overrides and
     // removals only ever touch the root), so skip its no-op write entirely.
-    if (!isRoot && nameMap.size === 0) continue;
+    if (!isRoot && slotMap.size === 0) continue;
 
-    const res = await applyUpgrades(manifest, nameMap, isRoot ? overrides : {}, isRoot ? removals : []);
+    const res = await applyUpgrades(manifest, slotMap, isRoot ? overrides : {}, isRoot ? removals : []);
     for (const a of res.applied) applied.push({ ...a, workspace: manifest.workspace });
     appliedOverrides.push(...res.overrides);
     removed.push(...res.removed);
