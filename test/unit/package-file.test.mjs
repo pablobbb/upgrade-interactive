@@ -513,6 +513,47 @@ describe('loadProject', () => {
     assert.deepEqual([...new Set(proj.descriptors.map((d) => d.workspace))], ['@acme/b']);
   });
 
+  it('matches the root by its "." path', async () => {
+    const dir = await monorepo();
+
+    const proj = await loadProject(dir, { filter: ['.'] });
+
+    assert.deepEqual([...new Set(proj.descriptors.map((d) => d.relPath))], ['.']);
+  });
+
+  it('rejects a filter value that matches no workspace', async () => {
+    const dir = await monorepo();
+
+    await assert.rejects(
+      () => loadProject(dir, { filter: ['packages/typo'] }),
+      /No workspace matches: packages\/typo/
+    );
+  });
+
+  it('names every unmatched filter value, not just the first', async () => {
+    const dir = await monorepo();
+
+    await assert.rejects(
+      () => loadProject(dir, { filter: ['@acme/a', 'nope-one', 'nope-two'] }),
+      /No workspace matches: nope-one, nope-two/
+    );
+  });
+
+  it('rejects a filter in a project with no workspaces at all', async () => {
+    const dir = await project({ 'package.json': pkg({ dependencies: { chalk: '^4.0.0' } }) });
+
+    await assert.rejects(() => loadProject(dir, { filter: ['packages/a'] }), /No workspace matches/);
+  });
+
+  it('rejects --no-workspaces combined with a filter', async () => {
+    const dir = await monorepo();
+
+    await assert.rejects(
+      () => loadProject(dir, { workspaces: false, filter: ['packages/a'] }),
+      /--no-workspaces cannot be combined with -w/
+    );
+  });
+
   it('skips internal cross-workspace dependencies', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'nui-proj-'));
     tmpDirs.push(dir);

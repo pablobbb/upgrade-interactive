@@ -113,6 +113,9 @@ Scope with `-w <name>` (repeatable) or `--no-workspaces`. The `workspaces` glob
 supports literal paths, `*`, trailing `**`, and `!` exclusions — a subset of
 npm's patterns.
 
+A `-w` value that matches no workspace is an error rather than an empty list, as
+is combining `-w` with `--no-workspaces`.
+
 ## Notes
 
 - **Compound ranges** (`>=1.0.0 <2.0.0`, `1.x || 2.x`, `1.0.0 - 2.0.0`) have no

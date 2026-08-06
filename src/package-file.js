@@ -67,16 +67,27 @@ export async function loadManifest(cwd) {
  *     workspaces whose package name or relPath matches one of these (npm's `-w`).
  *     Every manifest is still loaded (the root must stay writable for the
  *     root-only overrides), but only matched workspaces contribute rows.
+ *
+ * Throws when the options can't select anything: a `filter` value that matches
+ * no package, or a `filter` combined with `workspaces: false`.
  */
 export async function loadProject(cwd, { workspaces = true, filter = null } = {}) {
+  const filterSet = filter && filter.length > 0 ? new Set(filter) : null;
+  // `--no-workspaces` loads the root manifest alone, which no -w value can
+  // select — silently showing an empty list would look like "nothing to
+  // upgrade" rather than the contradiction it is.
+  if (!workspaces && filterSet) {
+    throw new Error('--no-workspaces cannot be combined with -w/--workspace');
+  }
+
   const discovered = workspaces ? await discoverWorkspaces(cwd) : null;
   const infos = discovered || [{ dir: cwd, name: null, relPath: '.' }];
   const workspaceNames = new Set((discovered || []).map((p) => p.name).filter(Boolean));
-  const filterSet = filter && filter.length > 0 ? new Set(filter) : null;
   const included = (info) => !filterSet || filterSet.has(info.name) || filterSet.has(info.relPath);
 
   const manifests = [];
   const descriptors = [];
+  const matched = new Set();
   for (const info of infos) {
     const manifest = await loadManifest(info.dir);
     manifest.workspace = info.relPath === '.' ? null : info.name;
@@ -85,6 +96,10 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
     // A filtered-out workspace stays loaded (root overrides need it) but shows
     // no rows.
     if (!included(info)) continue;
+    if (filterSet) {
+      if (filterSet.has(info.name)) matched.add(info.name);
+      if (filterSet.has(info.relPath)) matched.add(info.relPath);
+    }
     for (const d of manifest.descriptors) {
       if (workspaceNames.has(d.name)) continue; // internal sibling dep — not upgradable
       descriptors.push({
@@ -95,6 +110,16 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
         relPath: info.relPath,
         id: `${info.relPath} ${d.field} ${d.name}`,
       });
+    }
+  }
+
+  // A -w value that matches no package name or path is a typo, not a request
+  // for an empty list. Report every unmatched value at once so fixing one
+  // doesn't just surface the next.
+  if (filterSet) {
+    const unmatched = [...filterSet].filter((f) => !matched.has(f));
+    if (unmatched.length > 0) {
+      throw new Error(`No workspace matches: ${unmatched.join(', ')}`);
     }
   }
 
