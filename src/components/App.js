@@ -26,6 +26,21 @@ function isNavigable(row) {
   return row.kind === 'dep' || row.kind === 'vuln' || row.kind === 'override';
 }
 
+/** The package name a row stages an override for, or null if it stages none. */
+function overrideNameOf(row) {
+  if (row.kind === 'dep') return row.descriptor.name;
+  if (row.kind === 'vuln') return row.name;
+  return null;
+}
+
+// The workspace label shown for an override staged from `row`. A dep row is
+// owned by its workspace (the root manifest has no display name, so label it
+// "root"); a shared vuln-section row has no owning workspace, and a null label
+// renders as "already staged above" instead.
+function originLabelOf(row) {
+  return row.kind === 'dep' ? (row.descriptor.workspace ?? 'root') : null;
+}
+
 async function defaultRunAudit({ cwd, descriptors, overrides }) {
   const installed = await loadInstalledVersions(cwd);
   return computeVulnerabilities({ descriptors, installed, overrides });
@@ -163,6 +178,27 @@ export function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navKeyStr, focusedKey]);
 
+  // Re-home a staged override whose origin row has disappeared. A `vuln:<name>`
+  // row is dropped from the shared section as soon as that package's own
+  // suggestions load, so an override staged from it during that window would
+  // otherwise be locked forever: `o` would no-op on every remaining row while
+  // the note pointed at a row that no longer renders.
+  useEffect(() => {
+    setStagedOverrides((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [name, record] of Object.entries(prev)) {
+        if (navKeys.includes(record.originKey)) continue;
+        const home = rows.find((r) => overrideNameOf(r) === name);
+        if (!home) continue; // nothing owns it right now — leave the record alone
+        next[name] = { ...record, originKey: home.key, originLabel: originLabelOf(home) };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navKeyStr]);
+
   const cycleColumn = useCallback(
     (direction) => {
       if (!focusedRow || focusedRow.kind !== 'dep') return;
@@ -202,16 +238,16 @@ export function App({
     if (focusedRow.kind !== 'dep' && focusedRow.kind !== 'vuln') return;
     const vuln = focusedRow.vuln;
     if (!vuln) return;
-    const name = focusedRow.kind === 'dep' ? focusedRow.descriptor.name : focusedRow.name;
+    const name = overrideNameOf(focusedRow);
     // Provenance: an override for this package staged from a *different* row can
     // only be edited from that origin row. Editing from the origin (or a first
-    // stage) is allowed; `o` on any other matching row is a no-op.
+    // stage) is allowed; `o` on any other matching row is a no-op — but only
+    // while the origin row is still on screen, so a vanished origin can never
+    // leave the override uneditable.
     const existing = stagedOverrides[name];
-    if (existing && existing.originKey !== focusedRow.key) return;
-    // The root workspace has no display name; label it "root". A vuln-section
-    // row has no owning workspace (originLabel null → "already staged above").
+    if (existing && existing.originKey !== focusedRow.key && navKeys.includes(existing.originKey)) return;
     const originKey = focusedRow.key;
-    const originLabel = focusedRow.kind === 'dep' ? focusedRow.descriptor.workspace ?? 'root' : null;
+    const originLabel = originLabelOf(focusedRow);
     // When the package is installed at several versions across the tree, a
     // single global pin would be wrong — offer per-parent scoped pins instead,
     // as long as at least one vulnerable instance has an in-range fix.
@@ -221,7 +257,8 @@ export function App({
     }
     if (!vuln.safeVersions || vuln.safeVersions.length === 0) return;
     setOverride({ name, mode: 'global', versions: vuln.safeVersions, originKey, originLabel });
-  }, [audit, focusedRow, stagedOverrides]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audit, focusedRow, stagedOverrides, navKeyStr]);
 
   const toggleRemoval = useCallback(() => {
     if (!audit || !focusedRow || focusedRow.kind !== 'override') return;

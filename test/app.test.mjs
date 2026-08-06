@@ -285,6 +285,79 @@ async function testOverrideFlow() {
   assert(overrides && overrides.chalk === '5.0.0', 'selecting a version stages an overrides entry that is passed to onSubmit');
 }
 
+// The audit resolves on the microtask queue while the package's suggestions are
+// still in flight over the network, so it has no dep row yet and shows up in the
+// shared "Override to a safe version" section instead. Staging from that row and
+// then letting the suggestions land used to strand the override: the vuln row is
+// filtered out for good once the entry loads, and the provenance guard then made
+// `o` a no-op on every remaining row.
+//
+// Uses a package no other test touches — registry.js caches package metadata by
+// name, so a warm cache would resolve the dep row before the first keypress and
+// quietly turn this into a test of the ordinary same-row flow.
+async function testOverrideOriginRehomed() {
+  const descriptors = [{ name: 'lodash', range: '^4.17.0', field: 'dependencies' }];
+  const vulns = new Map();
+  vulns.set('lodash', {
+    advisories: [],
+    severity: 'high',
+    isDirect: true,
+    cve: 'CVE-2021-7777',
+    url: 'https://github.com/advisories/GHSA-rehome',
+    affectedRange: '<4.17.20',
+    current: '4.17.15',
+    firstPatched: '4.17.20',
+    safeVersions: ['4.17.20', '4.17.21'],
+  });
+
+  let overrides = null;
+  const { stdin, lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      audit: true,
+      section: true,
+      runAudit: async () => ({ offline: false, vulns }),
+      onSubmit: (sel, ovr) => {
+        overrides = ovr;
+      },
+      onAbort: () => {},
+    })
+  );
+
+  await wait(100); // audit resolved, the suggestions have not
+  const pending = lastFrame();
+  assert(
+    pending.includes('Loading...') && pending.includes('Override to a safe version'),
+    'a package whose suggestions are still loading appears in the shared override section'
+  );
+
+  stdin.write('o'); // stage from the vuln row
+  await wait(80);
+  stdin.write('\r'); // take the first safe version (4.17.20)
+  await wait(50);
+
+  await wait(3500); // suggestions land; the vuln row is replaced by a dep row
+  const loaded = lastFrame().replace(/\s+/g, ' ');
+  assert(!loaded.includes('already staged above'), 'the note pointing at the vanished origin row is gone');
+
+  stdin.write('o'); // re-open from the dep row that now owns the override
+  await wait(80);
+  assert(
+    lastFrame().includes('Override lodash to a safe version'),
+    "'o' still opens the picker after the origin row disappeared"
+  );
+
+  stdin.write('\u001B[B'); // down -> 4.17.21
+  await wait(50);
+  stdin.write('\r'); // select
+  await wait(50);
+  stdin.write('\r'); // submit
+  await wait(100);
+  unmount();
+
+  assert(overrides && overrides.lodash === '4.17.21', 'the re-homed override is editable and submits the new version');
+}
+
 async function testRemovableOverride() {
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
   const removableOverrides = new Map([['left-pad', { pin: '1.3.0', reason: 'dead' }]]);
@@ -486,6 +559,7 @@ async function main() {
   await testOverrideFlow();
   await testScopedOverrideFlow();
   await testScopedOverrideDisambiguation();
+  await testOverrideOriginRehomed();
   await testRemovableOverride();
 
   if (failures > 0) {
