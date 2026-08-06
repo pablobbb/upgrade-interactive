@@ -313,6 +313,13 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
  * routed exclusively to the root manifest regardless of which workspace owns the
  * vulnerable dependency (npm honors `overrides` only in the root manifest).
  *
+ * Consequence: a pin for a package a *workspace* declares directly is written as
+ * a root-level entry rather than a range bump on that workspace's own manifest —
+ * which npm rejects (EOVERRIDE) when the pin falls outside the workspace's
+ * declared range. Routing such a pin to its owning manifest needs scoped specs to
+ * carry the manifest they came from; until then the audit refuses the cases it
+ * can detect (see `pinConflict` in vulnerabilities.js).
+ *
  * Returns { applied, overrides, removed } aggregated across manifests; each
  * `applied` entry gains `workspace` (the display name, null for the root) for the
  * per-workspace post-submit summary.

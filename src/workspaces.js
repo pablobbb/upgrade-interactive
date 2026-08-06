@@ -1,7 +1,7 @@
 // npm-workspaces discovery: find the project root (the manifest whose
 // `workspaces` field owns `cwd`) and expand that field into concrete workspace
 // directories. Uses a deliberately minimal in-house glob so we add no new
-// dependencies and stay on Node 18 (no fs.glob). See PLAN_monorepo.md.
+// dependencies and stay on Node 18 (no fs.glob).
 
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';

@@ -119,6 +119,14 @@ function resolveInstalledPath(packages, parentPath, name) {
 // pin to offer at all: mergeInstancesByOverrideKey flags that group and
 // `pinConflict` refuses `o` on the row. Documented in the README's Workspaces
 // section.
+//
+// Known limitation: a `file:` local dependency's link target is a lockfile path
+// with no `node_modules/` segment too, so it also lands here as root-like. That
+// is why the *conflict* check consults the discovered manifest set rather than
+// the path — but the instance itself still merges with the root, so a
+// divergent-range local dependency can still take a pin aimed at the root. The
+// fix is to classify a non-manifest, non-`node_modules` path as a named parent
+// (its own `overrides` key) instead of a root edge.
 function collectPinInstances(packages, name, advisoryList, publishedSafe) {
   const instances = [];
   for (const [parentPath, info] of Object.entries(packages || {})) {
