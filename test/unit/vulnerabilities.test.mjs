@@ -7,6 +7,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeVulnerabilities } from '../../src/vulnerabilities.js';
+import { defaultOverrideSelection, isPinBlocked } from '../../src/override-select.js';
 
 // --- Test data builders ------------------------------------------------------
 
@@ -577,5 +578,65 @@ describe('computeVulnerabilities — workspaces', () => {
     const v = vulns.get('lodash');
     assert.ok(v);
     assert.deepEqual(v.instances.map((i) => i.installedVersion), ['4.17.11'], 'the workspace-local copy is resolved');
+  });
+
+  it('still merges manifests that agree on the declared range', async () => {
+    const packages = {
+      '': { name: 'root', dependencies: { lodash: '^4.17.0' } },
+      'packages/a': { name: '@acme/a', version: '1.0.0', dependencies: { lodash: '^4.17.0' } },
+      'node_modules/@acme/a': { link: true, resolved: 'packages/a' },
+      'node_modules/lodash': { version: '4.17.11' },
+    };
+    const installed = { versions: new Map([['lodash', new Set(['4.17.11'])]]), direct: new Set(['lodash']), packages };
+
+    const { vulns } = await computeVulnerabilities({ descriptors: lodashDescriptor, installed }, lodashRegistry());
+
+    const v = vulns.get('lodash');
+    assert.equal(v.pinConflict, false, 'agreeing manifests are not a conflict');
+    assert.equal(v.instances.length, 1, 'the root and the workspace collapse into one pin');
+    assert.deepEqual(v.instances[0].safeCandidates, ['4.17.21']);
+  });
+
+  // npm honors `overrides` only in the root manifest, so when the root and a
+  // workspace declare different ranges for the same package there is no single
+  // entry that fixes both: a pin satisfying one silently rewrites or under-fixes
+  // the other. Offer nothing rather than something wrong.
+  it('refuses to pin when manifests declare different ranges', async () => {
+    const registry = stubRegistry({
+      meta: { lodash: { versions: ['3.10.1', '4.17.11', '4.17.21'], distTags: {} } },
+      advisories: { lodash: [advisory({ vulnerable_versions: '<4.17.19', severity: 'high' })] },
+    });
+    const packages = {
+      '': { name: 'root', dependencies: { lodash: '^3.0.0' } },
+      'packages/a': { name: '@acme/a', version: '1.0.0', dependencies: { lodash: '^4.17.0' } },
+      'node_modules/@acme/a': { link: true, resolved: 'packages/a' },
+      'node_modules/lodash': { version: '3.10.1' }, // the root's copy, hoisted
+      'packages/a/node_modules/lodash': { version: '4.17.11' }, // the workspace's own
+    };
+    const installed = {
+      versions: new Map([['lodash', new Set(['3.10.1', '4.17.11'])]]),
+      direct: new Set(['lodash']),
+      packages,
+    };
+
+    const { vulns } = await computeVulnerabilities(
+      { descriptors: [{ name: 'lodash', range: '^3.0.0', field: 'dependencies' }], installed },
+      registry
+    );
+
+    const v = vulns.get('lodash');
+    assert.ok(v, 'lodash is still flagged as vulnerable');
+    assert.equal(v.pinConflict, true, 'the divergent ranges are reported as a conflict');
+    const merged = v.instances.find((i) => i.conflict);
+    assert.ok(merged, 'the collapsed root/workspace instance carries the flag');
+    assert.deepEqual(merged.safeCandidates, [], 'no candidate is offered for the conflicted instance');
+    assert.equal(merged.bestSafeInRange, null);
+    assert.deepEqual(merged.conflictRanges.sort(), ['^3.0.0', '^4.17.0']);
+    assert.equal(
+      defaultOverrideSelection(v),
+      null,
+      'the default selection stages nothing, so `o` cannot write a wrong pin'
+    );
+    assert.equal(isPinBlocked(v), true);
   });
 });

@@ -109,6 +109,11 @@ first), and edits are written to that workspace's own manifest. `overrides` and
 vulnerable package used by several workspaces is staged as an override once,
 from one row.
 
+Because npm honors `overrides` only in the root manifest, a vulnerable package
+whose workspaces declare *different* ranges can't be fixed by any single
+override entry. Those rows say so and offer no pin — upgrade each workspace's
+own row instead.
+
 Scope with `-w <name>` (repeatable) or `--no-workspaces`. The `workspaces` glob
 supports literal paths, `*`, trailing `**`, and `!` exclusions — a subset of
 npm's patterns.

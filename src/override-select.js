@@ -28,11 +28,21 @@ export function shouldScope(vuln) {
   return vuln.pinStrategy === 'scoped' && pinnableInstances(vuln).length > 0;
 }
 
+// True when no `overrides` entry can express a fix: manifests in this project
+// declare different ranges for the package, and npm honors overrides only at
+// the root, so any single pin would satisfy one manifest and silently rewrite
+// or under-fix the others. Blocks *both* picker paths — clearing the scoped
+// candidates alone would just fall through to the global one.
+export function isPinBlocked(vuln) {
+  return !!vuln.pinConflict;
+}
+
 // The exact `overrides` value the UI would stage if the user pressed `o` on this
 // vuln and hit <enter> without changing anything: a { scoped: [...] } spec for a
 // multi-version package, a single global version string, or null when there's no
 // safe fix to offer. This is the value that flows into applyUpgrades.
 export function defaultOverrideSelection(vuln) {
+  if (isPinBlocked(vuln)) return null;
   if (shouldScope(vuln)) {
     return {
       scoped: pinnableInstances(vuln).map((i) => ({

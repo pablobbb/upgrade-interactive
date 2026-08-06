@@ -9,7 +9,7 @@ import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
 import { loadInstalledVersions } from '../lockfile.js';
 import { computeVulnerabilities } from '../vulnerabilities.js';
-import { shouldScope } from '../override-select.js';
+import { shouldScope, isPinBlocked } from '../override-select.js';
 
 const e = React.createElement;
 const CONCURRENCY = 8;
@@ -238,6 +238,8 @@ export function App({
     if (focusedRow.kind !== 'dep' && focusedRow.kind !== 'vuln') return;
     const vuln = focusedRow.vuln;
     if (!vuln) return;
+    // Nothing is expressible for this package — the row says why.
+    if (isPinBlocked(vuln)) return;
     const name = overrideNameOf(focusedRow);
     // Provenance: an override for this package staged from a *different* row can
     // only be edited from that origin row. Editing from the origin (or a first
