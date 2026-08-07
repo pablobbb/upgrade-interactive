@@ -81,7 +81,7 @@ export async function auditFixture(work, snapshot) {
   // Every fixture is a single-package project, so the root is the only manifest
   // — the same value cli.js computes via manifestPathsOf for a standalone run.
   const manifestPaths = [''];
-  const installed = await loadInstalledVersions(work, manifestPaths);
+  const installed = await loadInstalledVersions(work);
   const { vulns, removableOverrides } = await computeVulnerabilities(
     {
       descriptors: manifest.descriptors,

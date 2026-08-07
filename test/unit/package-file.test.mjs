@@ -735,9 +735,10 @@ describe('applyProject', () => {
 
       assert.equal(await readRaw(a), await readRaw(b), 'same bytes on disk');
       // The reported changes must match too — they drive the printed summary.
-      // applyProject additionally tags each entry with its workspace (null here).
+      // applyProject additionally tags each entry with the manifest it came from
+      // (the root, here), which the single-file writer has no notion of.
       assert.deepEqual(
-        projectRes.applied.map(({ workspace, ...rest }) => rest),
+        projectRes.applied.map(({ workspace, relPath, ...rest }) => rest),
         legacyRes.applied,
         'same applied list'
       );
@@ -761,7 +762,14 @@ describe('applyProject', () => {
     assert.equal((await readJsonAt(dir, '.')).dependencies.chalk, '^4.0.0', 'root untouched');
     assert.equal((await readJsonAt(dir, 'packages/b')).devDependencies.chalk, '^4.0.0', 'workspace b untouched');
     assert.deepEqual(res.applied, [
-      { name: 'chalk', field: 'dependencies', from: '^4.0.0', to: '^5.0.0', workspace: '@acme/a' },
+      {
+        name: 'chalk',
+        field: 'dependencies',
+        from: '^4.0.0',
+        to: '^5.0.0',
+        workspace: '@acme/a',
+        relPath: path.join('packages', 'a'),
+      },
     ]);
   });
 

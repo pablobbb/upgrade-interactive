@@ -82,8 +82,8 @@ the part that changed.
 - `--no-workspaces` — only the root `package.json`, ignoring any `workspaces` field
 - `-h, --help`, `-v, --version`
 
-All three are on by default. To change a default permanently, use an env var or a
-`package.json` config block:
+`--install`, `--audit` and `--section` are on by default. To change a default
+permanently, use an env var or a `package.json` config block:
 
 ```json
 "upgrade-interactive": { "install": false, "audit": false, "section": true }

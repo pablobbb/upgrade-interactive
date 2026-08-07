@@ -81,6 +81,33 @@ describe('formatSummary — monorepo output', () => {
 
     assert.equal(out, 'overrides\n  lodash  → 4.17.21\n');
   });
+
+  // npm allows a workspace with no `name` (it infers one from the directory) and
+  // writes it into the lockfile like any other. Labelling it 'root' would file
+  // its upgrades under a manifest they were not written to, and would contradict
+  // the TUI, whose WorkspaceHeader shows the path in exactly this case.
+  it('labels a nameless workspace by its path, not as root', () => {
+    const out = formatSummary({
+      applied: [
+        { name: 'chalk', field: 'dependencies', from: '^4.0.0', to: '^5.0.0', workspace: null, relPath: '.' },
+        {
+          name: 'lodash',
+          field: 'dependencies',
+          from: '^4.17.0',
+          to: '^4.17.21',
+          workspace: null,
+          relPath: 'packages/api',
+        },
+      ],
+      isMonorepo: true,
+    });
+
+    assert.equal(
+      out,
+      'root\n  dependencies\n    chalk  ^4.0.0 → ^5.0.0\n' +
+        'packages/api\n  dependencies\n    lodash  ^4.17.0 → ^4.17.21\n'
+    );
+  });
 });
 
 describe('isMonorepoProject', () => {

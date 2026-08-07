@@ -369,7 +369,11 @@ export async function applyProject(project, selections, overrides = {}, removals
     if (!isRoot && slotMap.size === 0) continue;
 
     const res = await applyUpgrades(manifest, slotMap, isRoot ? overrides : {}, isRoot ? removals : []);
-    for (const a of res.applied) applied.push({ ...a, workspace: manifest.workspace });
+    // `relPath` rides along so the summary can label a workspace that declares
+    // no `name` — npm allows that and infers the name from the directory.
+    for (const a of res.applied) {
+      applied.push({ ...a, workspace: manifest.workspace, relPath: manifest.relPath });
+    }
     appliedOverrides.push(...res.overrides);
     removed.push(...res.removed);
   }

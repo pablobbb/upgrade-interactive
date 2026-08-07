@@ -56,7 +56,12 @@ export function formatSummary({ applied = [], overrides = [], removed = [], isMo
   let out = '';
   const groups = new Map(); // label -> { dependencies: [], devDependencies: [] }
   for (const change of applied) {
-    const label = change.workspace || 'root';
+    // A workspace may declare no `name` — npm accepts that and infers one from
+    // the directory. Falling straight back to 'root' would file its upgrades
+    // under a heading for a manifest they don't belong to, and the TUI's
+    // WorkspaceHeader already shows the path in that case, so the two displays
+    // would disagree within one run.
+    const label = change.workspace || (change.relPath && change.relPath !== '.' ? change.relPath : 'root');
     if (!groups.has(label)) groups.set(label, { dependencies: [], devDependencies: [] });
     groups.get(label)[change.field].push(change);
   }

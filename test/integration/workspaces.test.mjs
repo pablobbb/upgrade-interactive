@@ -61,7 +61,14 @@ describe('workspaces — end-to-end round-trip', () => {
     const res = await applyProject(project, new Map([[id, '^4.18.0']]));
 
     assert.deepEqual(res.applied, [
-      { name: 'lodash', field: 'dependencies', from: '^4.17.0', to: '^4.18.0', workspace: '@acme/a' },
+      {
+        name: 'lodash',
+        field: 'dependencies',
+        from: '^4.17.0',
+        to: '^4.18.0',
+        workspace: '@acme/a',
+        relPath: path.join('packages', 'a'),
+      },
     ]);
     assert.equal(JSON.parse(await readManifest(root, 'packages/a')).dependencies.lodash, '^4.18.0');
     assert.equal(await readManifest(root, '.'), before.root, 'root manifest untouched');
