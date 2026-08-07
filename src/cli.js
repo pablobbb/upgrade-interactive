@@ -50,6 +50,13 @@ read from the root manifest only — a workspace's own block is ignored, and you
 get a note when that changes the run. Use -w to focus on particular workspaces,
 or --no-workspaces for the root manifest alone.
 
+  $ npx upgrade-interactive -w packages/api      # by path
+  $ npx upgrade-interactive -w @acme/web         # by package name
+  $ npx upgrade-interactive -w packages/api -w @acme/web
+
+A -w value that matches no workspace is an error listing what didn't match, as is
+combining -w with --no-workspaces.
+
 Controls (inside the interactive UI)
   <up>/<down>     select a package
   <left>/<right>  select which version to apply (Current / Range / Latest)

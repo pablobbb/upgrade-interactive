@@ -549,7 +549,7 @@ describe('loadProject', () => {
     // All three manifests stay loaded (root must remain writable for overrides)...
     assert.equal(proj.manifests.length, 3);
     // ...but only workspace a contributes rows.
-    assert.deepEqual([...new Set(proj.descriptors.map((d) => d.relPath))], [path.join('packages', 'a')]);
+    assert.deepEqual([...new Set(proj.descriptors.map((d) => d.relPath))], ['packages/a']);
   });
 
   it('filters by package name as well as by path', async () => {
@@ -558,6 +558,31 @@ describe('loadProject', () => {
     const proj = await loadProject(dir, { filter: ['@acme/b'] });
 
     assert.deepEqual([...new Set(proj.descriptors.map((d) => d.workspace))], ['@acme/b']);
+  });
+
+  // A path the user typed (or their shell completed) shouldn't have to match the
+  // internal spelling character for character — on Windows `packages\a` is the
+  // natural form, and a trailing slash is what tab-completion leaves behind.
+  for (const [label, value] of [
+    ['a backslash separator', 'packages\\a'],
+    ['a trailing slash', 'packages/a/'],
+  ]) {
+    it(`accepts a path filter written with ${label}`, async () => {
+      const dir = await monorepo();
+
+      const proj = await loadProject(dir, { filter: [value] });
+
+      assert.deepEqual([...new Set(proj.descriptors.map((d) => d.relPath))], ['packages/a']);
+    });
+  }
+
+  it('quotes an unmatched filter back exactly as the user typed it', async () => {
+    const dir = await monorepo();
+
+    await assert.rejects(
+      () => loadProject(dir, { filter: ['packages\\typo'] }),
+      /No workspace matches: packages\\typo/
+    );
   });
 
   // npm treats a name declared in both fields as a mistake, but it happens, and

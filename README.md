@@ -128,12 +128,24 @@ override entry. Those rows say so and offer no pin — upgrade each workspace's
 own row instead. This holds under `--no-workspaces` too: narrowing what you edit
 doesn't change what's installed, so the pin would still be wrong.
 
-Scope with `-w <name>` (repeatable) or `--no-workspaces`. The `workspaces` glob
-supports literal paths, `*`, trailing `**`, and `!` exclusions — a subset of
-npm's patterns.
+Scope with `-w <name>` (repeatable) or `--no-workspaces`:
 
-A `-w` value that matches no workspace is an error rather than an empty list, as
-is combining `-w` with `--no-workspaces`.
+```console
+$ nui -w packages/api                 # by path
+$ nui -w @acme/web                    # by package name
+$ nui -w packages/api -w @acme/web    # repeatable
+```
+
+A `-w` value that matches no workspace is an error naming what didn't match,
+rather than an empty list — as is combining `-w` with `--no-workspaces`. Paths
+match regardless of separator or a trailing slash, so the form your shell
+completes is always accepted.
+
+The `workspaces` glob supports literal paths, `*` anywhere within a path segment
+(`packages/*`, `packages/*-api`), a trailing `**`, and `!` exclusions. That is a
+subset of npm's patterns: `?`, character classes (`[a-z]`), brace expansion
+(`{a,b}`) and a non-trailing `**` are not supported, and unlike npm a `*` here
+also matches directories whose name starts with a dot.
 
 ## Notes
 

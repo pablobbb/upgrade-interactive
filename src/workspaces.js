@@ -6,6 +6,11 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
+/** A platform-separated relative path as a POSIX one. */
+function toPosix(relPath) {
+  return relPath.split(path.sep).join('/');
+}
+
 /**
  * Read a directory's package.json. Returns { name } (name is null when the
  * manifest declares none), or null when there is no readable/valid manifest.
@@ -51,6 +56,23 @@ function normalizePatterns(workspacesField) {
   return { include, exclude };
 }
 
+/** Escape the characters that would otherwise be regex syntax. */
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Compile one pattern segment into a predicate over a directory name. `*` stands
+ * for any run of characters *within* the segment, so npm's `packages/*-api` and
+ * `apps/web-*` work, not just a bare `*`. A segment with no `*` is an exact match.
+ */
+function segmentMatcher(segment) {
+  if (segment === '*') return () => true;
+  if (!segment.includes('*')) return (name) => name === segment;
+  const re = new RegExp(`^${segment.split('*').map(escapeRegExp).join('[^/]*')}$`);
+  return (name) => re.test(name);
+}
+
 /** Absolute directories under `root` matched by any of `patterns`. */
 async function matchPatterns(root, patterns) {
   const dirs = [];
@@ -81,7 +103,7 @@ async function listSubdirs(dir) {
  * Return absolute directories under `base` matching `segments`, a path split on
  * "/". Supported (a subset of npm's minimatch):
  *   - literal segments      ("packages/foo")
- *   - a "*" segment         ("packages/*" — any single directory name)
+ *   - "*" anywhere in a segment ("packages/*", "packages/*-api", "apps/web-*")
  *   - a trailing "**"       ("packages/**" — that dir and all descendants)
  * A "**" is only meaningful as the final segment; anything after it is ignored.
  * Negation is handled a level up, in normalizePatterns/expandWorkspaces.
@@ -99,18 +121,16 @@ async function matchSegments(base, segments) {
     return out;
   }
 
-  if (head === '*') {
-    const out = [];
-    for (const name of await listSubdirs(base)) {
-      out.push(...(await matchSegments(path.join(base, name), rest)));
-    }
-    return out;
+  // One branch for literal and `*`-bearing segments alike: both descend only
+  // into subdirectories that really exist, so the exact-match case needs no
+  // special handling beyond the predicate.
+  const matches = segmentMatcher(head);
+  const out = [];
+  for (const name of await listSubdirs(base)) {
+    if (!matches(name)) continue;
+    out.push(...(await matchSegments(path.join(base, name), rest)));
   }
-
-  // Literal segment: descend only if it exists as a real subdirectory.
-  const subdirs = await listSubdirs(base);
-  if (!subdirs.includes(head)) return [];
-  return matchSegments(path.join(base, head), rest);
+  return out;
 }
 
 /**
@@ -118,6 +138,13 @@ async function matchSegments(base, segments) {
  * matched directory that actually contains a package.json. Excludes the root
  * itself, anything a `!` pattern excludes, and de-dupes directories matched by
  * more than one pattern. Sorted by relative path for stable ordering.
+ *
+ * `relPath` is always POSIX-separated, on every platform. It is an identity and
+ * display value — the key `-w` matches against, the id descriptors carry, the
+ * heading the TUI prints, the shape lockfile keys take — and never a path handed
+ * back to the filesystem (that is what `dir` is for). Normalizing once here is
+ * what makes `-w packages/api` work on Windows, where `path.relative` would
+ * otherwise yield `packages\api` and match nothing a user could reasonably type.
  */
 export async function expandWorkspaces(rootDir, workspacesField) {
   const root = path.resolve(rootDir);
@@ -130,7 +157,7 @@ export async function expandWorkspaces(rootDir, workspacesField) {
     seen.add(dir);
     const manifest = await readManifest(dir);
     if (!manifest) continue; // no package.json here — not a workspace
-    result.push({ dir, name: manifest.name, relPath: path.relative(root, dir) });
+    result.push({ dir, name: manifest.name, relPath: toPosix(path.relative(root, dir)) });
   }
   result.sort((a, b) => a.relPath.localeCompare(b.relPath));
   return result;
