@@ -9,7 +9,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
-import { formatSummary, isMonorepoProject, manifestPathsOf } from '../../src/summary.js';
+import {
+  formatSummary,
+  formatIgnoredConfigNote,
+  isMonorepoProject,
+  manifestPathsOf,
+} from '../../src/summary.js';
 
 const up = (name, field, from, to, workspace = null) => ({ name, field, from, to, workspace });
 
@@ -107,6 +112,90 @@ describe('formatSummary — monorepo output', () => {
       'root\n  dependencies\n    chalk  ^4.0.0 → ^5.0.0\n' +
         'packages/api\n  dependencies\n    lodash  ^4.17.0 → ^4.17.21\n'
     );
+  });
+});
+
+describe('formatIgnoredConfigNote', () => {
+  // A project as loadProject returns it: manifests[0] is the root, and `root` is
+  // that same object (identity is what separates root from workspace here).
+  const project = (...workspaces) => {
+    const root = { relPath: '.', json: {} };
+    return { root, manifests: [root, ...workspaces] };
+  };
+  const ws = (relPath, config) => ({
+    relPath,
+    json: config ? { 'upgrade-interactive': config } : {},
+  });
+  const ON = { install: true, audit: true, section: true };
+
+  it('says nothing when no workspace carries a config block', () => {
+    assert.equal(formatIgnoredConfigNote(project(ws('packages/api')), ON), '');
+  });
+
+  it('says nothing for a standalone project, which has only a root manifest', () => {
+    assert.equal(formatIgnoredConfigNote(project(), ON), '');
+  });
+
+  it('names the file and the key when one workspace overrides a setting', () => {
+    const p = project(ws('packages/api', { install: false }));
+
+    assert.equal(
+      formatIgnoredConfigNote(p, ON),
+      'ⓘ ignoring "upgrade-interactive" in packages/api/package.json (install) — settings come from the root package.json\n'
+    );
+  });
+
+  // The whole point of naming keys: "config is ignored" sends you to open the
+  // file to learn what you lost.
+  it('lists every differing key in flag order, not object order', () => {
+    const p = project(ws('packages/api', { section: false, install: false }));
+
+    assert.match(formatIgnoredConfigNote(p, ON), /\(install, section\)/);
+  });
+
+  it('drops the "/package.json" suffix once several manifests are listed', () => {
+    const p = project(ws('packages/api', { install: false }), ws('packages/web', { audit: false }));
+
+    assert.equal(
+      formatIgnoredConfigNote(p, ON),
+      'ⓘ ignoring "upgrade-interactive" in packages/api (install), packages/web (audit) — ' +
+        'settings come from the root package.json\n'
+    );
+  });
+
+  // Suppression: the note claims something was lost, so it must not fire when
+  // the run already resolved to the value the workspace asked for — whether that
+  // came from the root block, an env var or a flag.
+  it('stays silent when the workspace value matches what the run resolved to', () => {
+    const p = project(ws('packages/api', { install: false }));
+
+    assert.equal(formatIgnoredConfigNote(p, { ...ON, install: false }), '');
+  });
+
+  it('reports only the keys that differ, not the whole block', () => {
+    const p = project(ws('packages/api', { install: false, audit: false }));
+
+    assert.match(formatIgnoredConfigNote(p, { ...ON, audit: false }), /packages\/api\/package\.json \(install\)/);
+  });
+
+  it('ignores non-boolean values, which resolveToggle would not honor either', () => {
+    const p = project(ws('packages/api', { install: 'false', extra: 1 }));
+
+    assert.equal(formatIgnoredConfigNote(p, ON), '');
+  });
+
+  it('normalizes the path to POSIX separators', () => {
+    const p = project(ws(['packages', 'api'].join(path.sep), { install: false }));
+
+    assert.match(formatIgnoredConfigNote(p, ON), /packages\/api\/package\.json/);
+  });
+
+  // The root's own block is the one being honored — reporting it as ignored
+  // would be exactly backwards.
+  it('never reports the root manifest', () => {
+    const root = { relPath: '.', json: { 'upgrade-interactive': { install: false } } };
+
+    assert.equal(formatIgnoredConfigNote({ root, manifests: [root] }, ON), '');
   });
 });
 

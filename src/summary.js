@@ -4,6 +4,8 @@
 
 import path from 'node:path';
 
+import { TOGGLES } from './flags.js';
+
 /**
  * Does this project have manifests beyond the root? Derived from the descriptors
  * exactly as buildDisplayRows does, so a `workspaces` field that expands to
@@ -44,6 +46,51 @@ export function manifestPathsOf(project, lockfileDir) {
   const root = tree[0];
   if (!root || path.resolve(root.dir) !== path.resolve(lockfileDir)) return [''];
   return ['', ...tree.filter((w) => w.relPath !== '.').map((w) => w.relPath.split(path.sep).join('/'))];
+}
+
+/**
+ * The note naming workspace manifests whose own `upgrade-interactive` block was
+ * ignored, as a string, or '' when there is nothing to say.
+ *
+ * Config is read from the root manifest alone, and that rule is not a shortcut:
+ * every toggle it holds describes the *run*, not a package. One run performs one
+ * `npm install` (workspaces share the root lockfile), one audit (of one installed
+ * tree) and one rendering, so a per-workspace value has nothing to apply to.
+ * Resolving it from the nearest manifest instead would be worse — the run's scope
+ * no longer depends on cwd, so its settings must not either, or the same repo
+ * behaves differently depending on which directory you stand in.
+ *
+ * What the rule leaves behind is a file that used to matter and silently stopped,
+ * which is worth naming even though nothing is broken. Only keys that would
+ * actually have changed this run are reported: a workspace repeating a value the
+ * run already resolved to — from the root block, an env var or a flag — lost
+ * nothing, and reporting it would be noise.
+ *
+ * `--no-workspaces` loads a single manifest as the root, so this is silent there,
+ * exactly as it is for a standalone project.
+ */
+export function formatIgnoredConfigNote(project, resolved = {}) {
+  const ignored = [];
+  for (const manifest of project.manifests || []) {
+    if (manifest === project.root) continue;
+    const config = manifest.json && manifest.json['upgrade-interactive'];
+    if (!config || typeof config !== 'object') continue;
+    const keys = Object.keys(TOGGLES).filter(
+      (key) => typeof config[key] === 'boolean' && config[key] !== resolved[key]
+    );
+    if (keys.length === 0) continue;
+    ignored.push({ relPath: (manifest.relPath || '').split(path.sep).join('/'), keys });
+  }
+  if (ignored.length === 0) return '';
+
+  // One manifest is the common case and gets the exact file to open; naming each
+  // of several that way buries the keys, and the trailing clause already says
+  // which file these are.
+  const single = ignored.length === 1;
+  const list = ignored
+    .map((m) => `${single ? `${m.relPath}/package.json` : m.relPath} (${m.keys.join(', ')})`)
+    .join(', ');
+  return `ⓘ ignoring "upgrade-interactive" in ${list} — settings come from the root package.json\n`;
 }
 
 /**

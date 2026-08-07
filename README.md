@@ -94,7 +94,8 @@ NUI_AUDIT=0 npx upgrade-interactive
 ```
 
 Precedence, highest first: CLI flag → `NUI_INSTALL` / `NUI_AUDIT` / `NUI_SECTION`
-→ `package.json` config → default (on).
+→ `package.json` config → default (on). In a workspaces repo the config block is
+read from the root `package.json` only — see [Workspaces](#workspaces).
 
 > Auditing needs network access. Offline, the tool says so (`no network —
 > couldn't check for vulnerable packages`) instead of pretending everything is
@@ -113,6 +114,10 @@ from one row.
 `packages/api` the tool still operates on the whole repo and reads its
 `upgrade-interactive` config from the **root** `package.json`. Use
 `--no-workspaces` for the old one-manifest behavior.
+
+A workspace's own block is ignored — those settings describe the run, not a
+package. You get a note naming the file and keys whenever an ignored block would
+have changed the run.
 
 A repository with no `workspaces` field is unaffected by any of this — it loads
 exactly one `package.json` and renders no workspace headings.

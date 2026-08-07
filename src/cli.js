@@ -9,7 +9,7 @@ import path from 'node:path';
 import { App } from './components/App.js';
 import { loadProject, applyProject } from './package-file.js';
 import { resolveToggles, parseWorkspaceOptions } from './flags.js';
-import { formatSummary, isMonorepoProject, manifestPathsOf } from './summary.js';
+import { formatSummary, formatIgnoredConfigNote, isMonorepoProject, manifestPathsOf } from './summary.js';
 
 const e = React.createElement;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -45,8 +45,10 @@ Precedence: command-line flag > environment variable > package.json config > def
 
 In an npm workspaces repo (a root "workspaces" field) the root and each workspace
 are shown as their own section, and each package's range is written to its own
-manifest; "overrides" are always written to the root. Use -w to focus on
-particular workspaces, or --no-workspaces for the root manifest alone.
+manifest; "overrides" are always written to the root. The config block above is
+read from the root manifest only — a workspace's own block is ignored, and you
+get a note when that changes the run. Use -w to focus on particular workspaces,
+or --no-workspaces for the root manifest alone.
 
 Controls (inside the interactive UI)
   <up>/<down>     select a package
@@ -114,6 +116,13 @@ async function main() {
     );
     waitUntilExit().catch(() => resolve({ type: 'abort' }));
   });
+
+  // After the TUI, never before it: anything written ahead of render() scrolls
+  // above the interface and is missed, and this note's whole job is to be seen.
+  // Every exit path below runs through here, so an ignored setting is reported
+  // whether or not the run ended in changes.
+  const ignoredConfig = formatIgnoredConfigNote(project, { install, audit, section });
+  if (ignoredConfig) process.stderr.write(`\n${ignoredConfig}`);
 
   if (result.type === 'abort') {
     process.stdout.write('\nAborted. No changes were made.\n');
