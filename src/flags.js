@@ -34,3 +34,26 @@ export function resolveToggles({ args, env, config }) {
   }
   return out;
 }
+
+// Parse the workspace-scoping flags: `--no-workspaces` (root manifest only) and
+// a repeatable `-w`/`--workspace <name>` filter (`-w=x` / `--workspace=x` too).
+// Returns { workspaces: boolean, filter: string[] }.
+export function parseWorkspaceOptions(args) {
+  const workspaces = !args.includes('--no-workspaces');
+  const filter = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '-w' || a === '--workspace') {
+      const val = args[i + 1];
+      if (val && !val.startsWith('-')) {
+        filter.push(val);
+        i++;
+      }
+    } else if (a.startsWith('--workspace=')) {
+      filter.push(a.slice('--workspace='.length));
+    } else if (a.startsWith('-w=')) {
+      filter.push(a.slice('-w='.length));
+    }
+  }
+  return { workspaces, filter };
+}

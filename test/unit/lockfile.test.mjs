@@ -38,19 +38,6 @@ describe('loadInstalledVersions', () => {
     assert.deepEqual([...res.versions.get('@babel/core')], ['7.24.0']);
   });
 
-  it('derives the direct dependency set from the lockfile root entry', async () => {
-    const dir = await projectWithLock({
-      packages: {
-        '': { dependencies: { chalk: '^5.0.0' }, devDependencies: { eslint: '^9.0.0' } },
-        'node_modules/chalk': { version: '5.3.0' },
-      },
-    });
-
-    const res = await loadInstalledVersions(dir);
-
-    assert.deepEqual([...res.direct].sort(), ['chalk', 'eslint']);
-  });
-
   it('exposes the raw packages map for override analysis', async () => {
     const dir = await projectWithLock({
       packages: { '': {}, 'node_modules/x': { version: '1.0.0', dependencies: { y: '^1.0.0' } } },
@@ -71,15 +58,40 @@ describe('loadInstalledVersions', () => {
     assert.deepEqual([...res.versions.keys()], ['x']);
   });
 
-  it('returns an empty direct set when the lockfile has no root entry', async () => {
+  it('still reads versions when the lockfile has no root entry', async () => {
     const dir = await projectWithLock({
       packages: { 'node_modules/x': { version: '1.0.0' } },
     });
 
     const res = await loadInstalledVersions(dir);
 
-    assert.equal(res.direct.size, 0);
     assert.deepEqual([...res.versions.keys()], ['x']);
+  });
+
+  it('collects versions across a workspaces tree, ignoring the symlink nodes', async () => {
+    // A workspaces lockfile: root + two workspaces (plain repo paths), the
+    // symlink nodes npm adds (link: true, no version), hoisted installs, and one
+    // workspace-local (non-hoisted) install.
+    const dir = await projectWithLock({
+      packages: {
+        '': { name: 'root', dependencies: { chalk: '^5.0.0' } },
+        'packages/a': { name: '@acme/a', dependencies: { lodash: '^4.0.0' } },
+        'packages/b': { name: '@acme/b', devDependencies: { 'left-pad': '^1.0.0' } },
+        'node_modules/@acme/a': { link: true, resolved: 'packages/a' },
+        'node_modules/@acme/b': { link: true, resolved: 'packages/b' },
+        'node_modules/chalk': { version: '5.3.0' },
+        'node_modules/lodash': { version: '4.17.21' }, // hoisted to the root
+        'packages/b/node_modules/left-pad': { version: '1.3.0' }, // workspace-local
+      },
+    });
+
+    const res = await loadInstalledVersions(dir);
+
+    // Link entries carry no version, so they never pollute the version map...
+    assert.equal(res.versions.has('@acme/a'), false);
+    // ...while both hoisted and workspace-local installs are collected.
+    assert.deepEqual([...res.versions.get('lodash')], ['4.17.21']);
+    assert.deepEqual([...res.versions.get('left-pad')], ['1.3.0']);
   });
 
   it('returns null when there is no lockfile', async () => {

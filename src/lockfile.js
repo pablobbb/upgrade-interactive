@@ -14,11 +14,11 @@ function nameFromPath(pkgPath) {
 }
 
 /**
- * Return { versions: Map<name, Set<version>>, direct: Set<name>, packages }
- * for the whole installed tree, or null if there's no usable lockfile (feature
- * then degrades to range-resolved-only checks for direct deps). `packages` is
- * the raw npm lockfile `packages` map, used to see which ranges dependents
- * declare for a package (for spotting no-longer-needed overrides).
+ * Return { versions: Map<name, Set<version>>, packages } for the whole installed
+ * tree, or null if there's no usable lockfile (feature then degrades to
+ * range-resolved-only checks for direct deps). `packages` is the raw npm
+ * lockfile `packages` map, used to see which ranges dependents declare for a
+ * package (for spotting no-longer-needed overrides).
  */
 export async function loadInstalledVersions(cwd) {
   const filePath = path.join(cwd, 'package-lock.json');
@@ -48,11 +48,5 @@ export async function loadInstalledVersions(cwd) {
     versions.get(name).add(info.version);
   }
 
-  const root = packages[''] || {};
-  const direct = new Set([
-    ...Object.keys(root.dependencies || {}),
-    ...Object.keys(root.devDependencies || {}),
-  ]);
-
-  return { versions, direct, packages };
+  return { versions, packages };
 }

@@ -5,10 +5,10 @@
 
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { loadManifest, applyUpgrades } from '../../src/package-file.js';
+import { loadManifest, applyUpgrades, loadProject, applyProject } from '../../src/package-file.js';
 
 const tmpDirs = [];
 afterEach(async () => {
@@ -287,6 +287,28 @@ describe('applyUpgrades', () => {
     assert.deepEqual(res.overrides, [], 'the change is reported as an upgrade, not an override');
   });
 
+  // A name in both fields is malformed but happens. npm resolves the
+  // `dependencies` edge, so bumping devDependencies would leave the runtime
+  // dependency sitting on the vulnerable range.
+  it('bumps the dependencies entry when a direct dep is declared in both fields', async () => {
+    const dir = await project({
+      'package.json': pkg({
+        dependencies: { 'brace-expansion': '^1.1.0' },
+        devDependencies: { 'brace-expansion': '^1.1.0' },
+      }),
+    });
+    const m = await loadManifest(dir);
+
+    const res = await applyUpgrades(m, new Map(), { 'brace-expansion': '1.1.16' });
+
+    const json = await readJson(dir);
+    assert.equal(json.dependencies['brace-expansion'], '1.1.16', 'the runtime edge is pinned');
+    assert.equal(json.devDependencies['brace-expansion'], '^1.1.0', 'the dev entry is left alone');
+    assert.deepEqual(res.applied, [
+      { name: 'brace-expansion', field: 'dependencies', from: '^1.1.0', to: '1.1.16' },
+    ]);
+  });
+
   it('routes a null-parent scoped pin to a range bump while keeping nested pins as overrides', async () => {
     const dir = await project({ 'package.json': pkg({ devDependencies: { 'dependency-a': '^1.0.0' } }) });
     const m = await loadManifest(dir);
@@ -421,5 +443,378 @@ describe('applyUpgrades', () => {
     const raw = await readRaw(dir);
     assert.ok(raw.includes('\n\t"dependencies"'), 'should keep tab indentation');
     assert.equal(raw.endsWith('\n'), false, 'should not add a trailing newline');
+  });
+});
+
+// --- loadProject / applyProject (workspaces) --------------------------------
+
+// Write a package.json into `dir/rel`, creating directories as needed.
+async function writePkg(dir, rel, obj) {
+  const target = path.join(dir, rel);
+  await mkdir(target, { recursive: true });
+  await writeFile(path.join(target, 'package.json'), pkg(obj), 'utf8');
+}
+async function readJsonAt(dir, rel) {
+  return JSON.parse(await readFile(path.join(dir, rel, 'package.json'), 'utf8'));
+}
+async function readRawAt(dir, rel) {
+  return readFile(path.join(dir, rel, 'package.json'), 'utf8');
+}
+
+// A minimal monorepo: root with two workspaces under packages/.
+async function monorepo() {
+  const dir = await mkdtemp(path.join(tmpdir(), 'nui-proj-'));
+  tmpDirs.push(dir);
+  await writePkg(dir, '.', {
+    name: 'root',
+    workspaces: ['packages/*'],
+    dependencies: { chalk: '^4.0.0' },
+  });
+  await writePkg(dir, 'packages/a', { name: '@acme/a', dependencies: { chalk: '^4.0.0', lodash: '^4.17.0' } });
+  await writePkg(dir, 'packages/b', { name: '@acme/b', devDependencies: { chalk: '^4.0.0' } });
+  return dir;
+}
+
+describe('loadProject', () => {
+  it('presents a standalone package as a one-manifest project (workspace: null)', async () => {
+    const dir = await project({ 'package.json': pkg({ dependencies: { chalk: '^4.0.0' } }) });
+
+    const proj = await loadProject(dir);
+
+    assert.equal(proj.manifests.length, 1);
+    assert.equal(proj.workspaces, null);
+    assert.deepEqual(
+      proj.descriptors.map((d) => ({ name: d.name, workspace: d.workspace, id: d.id })),
+      [{ name: 'chalk', workspace: null, id: '. dependencies chalk' }]
+    );
+  });
+
+  it('loads the root first, then each workspace, keeping duplicate names as distinct rows', async () => {
+    const dir = await monorepo();
+
+    const proj = await loadProject(dir);
+
+    assert.deepEqual(proj.manifests.map((m) => m.workspace), [null, '@acme/a', '@acme/b']);
+    // chalk appears in all three manifests — three distinct descriptors, not one.
+    const chalk = proj.descriptors.filter((d) => d.name === 'chalk');
+    assert.equal(chalk.length, 3);
+    assert.deepEqual(chalk.map((d) => d.id).sort(), [
+      '. dependencies chalk',
+      `${path.join('packages', 'a')} dependencies chalk`,
+      `${path.join('packages', 'b')} devDependencies chalk`,
+    ]);
+    assert.deepEqual(new Set(proj.descriptors.map((d) => d.id)).size, proj.descriptors.length, 'ids are unique');
+  });
+
+  it('with { workspaces: false } loads only the root manifest (--no-workspaces)', async () => {
+    const dir = await monorepo();
+
+    const proj = await loadProject(dir, { workspaces: false });
+
+    assert.equal(proj.manifests.length, 1);
+    assert.equal(proj.workspaces, null);
+    assert.deepEqual(proj.descriptors.map((d) => d.name), ['chalk']); // only the root's own dep
+  });
+
+  // --no-workspaces narrows what the user edits; it does not change what is
+  // installed. The audit reads `discovered` so it can still tell a workspace
+  // from a `file:` dependency — reading the nulled `workspaces` instead would
+  // silently switch off the cross-manifest override conflict check.
+  it('still reports the real tree under { workspaces: false }', async () => {
+    const dir = await monorepo();
+
+    const proj = await loadProject(dir, { workspaces: false });
+
+    assert.equal(proj.workspaces, null, 'the display scope is narrowed');
+    assert.deepEqual(
+      proj.discovered.map((w) => w.relPath),
+      ['.', path.join('packages', 'a'), path.join('packages', 'b')],
+      'the discovered tree is untouched'
+    );
+  });
+
+  it('reports discovered as null for a genuinely standalone project', async () => {
+    const dir = await project({ 'package.json': pkg({ dependencies: { chalk: '^4.0.0' } }) });
+
+    const proj = await loadProject(dir);
+
+    assert.equal(proj.discovered, null);
+  });
+
+  it('with a filter shows only matching workspaces but keeps every manifest loaded', async () => {
+    const dir = await monorepo();
+
+    const proj = await loadProject(dir, { filter: ['packages/a'] });
+
+    // All three manifests stay loaded (root must remain writable for overrides)...
+    assert.equal(proj.manifests.length, 3);
+    // ...but only workspace a contributes rows.
+    assert.deepEqual([...new Set(proj.descriptors.map((d) => d.relPath))], [path.join('packages', 'a')]);
+  });
+
+  it('filters by package name as well as by path', async () => {
+    const dir = await monorepo();
+
+    const proj = await loadProject(dir, { filter: ['@acme/b'] });
+
+    assert.deepEqual([...new Set(proj.descriptors.map((d) => d.workspace))], ['@acme/b']);
+  });
+
+  // npm treats a name declared in both fields as a mistake, but it happens, and
+  // the id-keyed rows make the two independently selectable — so the writer must
+  // address the slot, not just the name.
+  it('keeps dependencies and devDependencies entries of the same name apart', async () => {
+    const dir = await project({
+      'package.json': pkg({
+        dependencies: { chalk: '^4.0.0' },
+        devDependencies: { chalk: '^4.0.0' },
+      }),
+    });
+
+    const proj = await loadProject(dir);
+    const dev = proj.descriptors.find((d) => d.field === 'devDependencies');
+    await applyProject(proj, new Map([[dev.id, '^5.0.0']]));
+
+    const json = await readJsonAt(dir, '.');
+    assert.equal(json.devDependencies.chalk, '^5.0.0', 'the selected row is written');
+    assert.equal(json.dependencies.chalk, '^4.0.0', 'the other field is left alone');
+  });
+
+  it('matches the root by its "." path', async () => {
+    const dir = await monorepo();
+
+    const proj = await loadProject(dir, { filter: ['.'] });
+
+    assert.deepEqual([...new Set(proj.descriptors.map((d) => d.relPath))], ['.']);
+  });
+
+  it('rejects a filter value that matches no workspace', async () => {
+    const dir = await monorepo();
+
+    await assert.rejects(
+      () => loadProject(dir, { filter: ['packages/typo'] }),
+      /No workspace matches: packages\/typo/
+    );
+  });
+
+  it('names every unmatched filter value, not just the first', async () => {
+    const dir = await monorepo();
+
+    await assert.rejects(
+      () => loadProject(dir, { filter: ['@acme/a', 'nope-one', 'nope-two'] }),
+      /No workspace matches: nope-one, nope-two/
+    );
+  });
+
+  it('rejects a filter in a project with no workspaces at all', async () => {
+    const dir = await project({ 'package.json': pkg({ dependencies: { chalk: '^4.0.0' } }) });
+
+    await assert.rejects(() => loadProject(dir, { filter: ['packages/a'] }), /No workspace matches/);
+  });
+
+  it('rejects --no-workspaces combined with a filter', async () => {
+    const dir = await monorepo();
+
+    await assert.rejects(
+      () => loadProject(dir, { workspaces: false, filter: ['packages/a'] }),
+      /--no-workspaces cannot be combined with -w/
+    );
+  });
+
+  it('skips internal cross-workspace dependencies', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'nui-proj-'));
+    tmpDirs.push(dir);
+    await writePkg(dir, '.', { name: 'root', workspaces: ['packages/*'] });
+    await writePkg(dir, 'packages/a', { name: '@acme/a', dependencies: { lodash: '^4.0.0' } });
+    // b depends on its sibling @acme/a — should not appear as an upgradable row.
+    await writePkg(dir, 'packages/b', { name: '@acme/b', dependencies: { '@acme/a': '^1.0.0', chalk: '^4.0.0' } });
+
+    const proj = await loadProject(dir);
+
+    assert.ok(!proj.descriptors.some((d) => d.name === '@acme/a'), 'sibling dep is excluded');
+    assert.deepEqual(proj.descriptors.map((d) => d.name).sort(), ['chalk', 'lodash']);
+  });
+});
+
+describe('applyProject', () => {
+  it('reproduces standalone applyUpgrades behavior byte-for-byte', async () => {
+    const original = pkg({ dependencies: { chalk: '^4.0.0', lodash: '^4.17.0' } });
+    // Two identical projects: one driven through applyUpgrades, one through applyProject.
+    const a = await project({ 'package.json': original });
+    const b = await project({ 'package.json': original });
+
+    await applyUpgrades(await loadManifest(a), new Map([['chalk', '^5.0.0']]));
+    const proj = await loadProject(b);
+    await applyProject(proj, new Map([['. dependencies chalk', '^5.0.0']]));
+
+    assert.equal(await readRaw(a), await readRaw(b), 'same bytes on disk');
+  });
+
+  // Workspace support re-keyed the whole pipeline from bare name to a composite
+  // id. These cases are the guarantee that a single-package project still lands
+  // on exactly the bytes the pre-workspaces writer produced, across every kind
+  // of edit and every formatting variant the writer preserves.
+  const standaloneCases = [
+    {
+      what: 'a devDependencies selection',
+      json: { dependencies: { chalk: '^4.0.0' }, devDependencies: { eslint: '^7.0.0' } },
+      legacy: new Map([['eslint', '^8.0.0']]),
+      project: new Map([['. devDependencies eslint', '^8.0.0']]),
+    },
+    {
+      what: 'selections in both fields at once',
+      json: { dependencies: { chalk: '^4.0.0' }, devDependencies: { eslint: '^7.0.0' } },
+      legacy: new Map([['chalk', '^5.0.0'], ['eslint', '^8.0.0']]),
+      project: new Map([['. dependencies chalk', '^5.0.0'], ['. devDependencies eslint', '^8.0.0']]),
+    },
+    {
+      what: 'a top-level override on a transitive package',
+      json: { dependencies: { chalk: '^4.0.0' } },
+      overrides: { minimist: '1.2.6' },
+    },
+    {
+      what: 'a scoped override nested under a parent',
+      json: { dependencies: { chalk: '^4.0.0' } },
+      overrides: { minimist: { scoped: [{ parentName: 'pkg-a', parentVersion: '1.0.0', version: '1.2.6' }] } },
+    },
+    {
+      what: 'an override that becomes a direct range bump',
+      json: { dependencies: { chalk: '^4.0.0' } },
+      overrides: { chalk: '4.1.2' },
+    },
+    {
+      what: 'an override removal',
+      json: { dependencies: { chalk: '^4.0.0' }, overrides: { 'left-pad': '1.3.0' } },
+      removals: ['left-pad'],
+    },
+    {
+      what: 'a removal that empties the overrides block',
+      json: { dependencies: { chalk: '^4.0.0' }, overrides: { 'left-pad': '1.3.0' } },
+      removals: ['left-pad'],
+    },
+    {
+      what: 'tab indentation',
+      json: { dependencies: { chalk: '^4.0.0' } },
+      indent: '\t',
+      legacy: new Map([['chalk', '^5.0.0']]),
+      project: new Map([['. dependencies chalk', '^5.0.0']]),
+    },
+    {
+      what: 'a file with no trailing newline',
+      json: { dependencies: { chalk: '^4.0.0' } },
+      trailingNewline: false,
+      legacy: new Map([['chalk', '^5.0.0']]),
+      project: new Map([['. dependencies chalk', '^5.0.0']]),
+    },
+    {
+      what: 'a no-op selection (same range)',
+      json: { dependencies: { chalk: '^4.0.0' } },
+      legacy: new Map([['chalk', '^4.0.0']]),
+      project: new Map([['. dependencies chalk', '^4.0.0']]),
+    },
+  ];
+
+  for (const c of standaloneCases) {
+    it(`matches applyUpgrades byte-for-byte: ${c.what}`, async () => {
+      const original = pkg(c.json, c.indent ?? 2, c.trailingNewline ?? true);
+      const a = await project({ 'package.json': original });
+      const b = await project({ 'package.json': original });
+
+      const legacyRes = await applyUpgrades(
+        await loadManifest(a),
+        c.legacy ?? new Map(),
+        c.overrides ?? {},
+        c.removals ?? []
+      );
+      const projectRes = await applyProject(
+        await loadProject(b),
+        c.project ?? new Map(),
+        c.overrides ?? {},
+        c.removals ?? []
+      );
+
+      assert.equal(await readRaw(a), await readRaw(b), 'same bytes on disk');
+      // The reported changes must match too — they drive the printed summary.
+      // applyProject additionally tags each entry with the manifest it came from
+      // (the root, here), which the single-file writer has no notion of.
+      assert.deepEqual(
+        projectRes.applied.map(({ workspace, relPath, ...rest }) => rest),
+        legacyRes.applied,
+        'same applied list'
+      );
+      assert.deepEqual(projectRes.overrides, legacyRes.overrides, 'same overrides list');
+      assert.deepEqual(projectRes.removed, legacyRes.removed, 'same removed list');
+      assert.ok(
+        projectRes.applied.every((a2) => a2.workspace === null),
+        'a standalone project reports no workspace'
+      );
+    });
+  }
+
+  it('writes each selection to only its own workspace manifest', async () => {
+    const dir = await monorepo();
+    const proj = await loadProject(dir);
+
+    // Upgrade chalk only in workspace a.
+    const res = await applyProject(proj, new Map([[`${path.join('packages', 'a')} dependencies chalk`, '^5.0.0']]));
+
+    assert.equal((await readJsonAt(dir, 'packages/a')).dependencies.chalk, '^5.0.0');
+    assert.equal((await readJsonAt(dir, '.')).dependencies.chalk, '^4.0.0', 'root untouched');
+    assert.equal((await readJsonAt(dir, 'packages/b')).devDependencies.chalk, '^4.0.0', 'workspace b untouched');
+    assert.deepEqual(res.applied, [
+      {
+        name: 'chalk',
+        field: 'dependencies',
+        from: '^4.0.0',
+        to: '^5.0.0',
+        workspace: '@acme/a',
+        relPath: path.join('packages', 'a'),
+      },
+    ]);
+  });
+
+  it('does not rewrite manifests that have no selected changes', async () => {
+    const dir = await monorepo();
+    const proj = await loadProject(dir);
+    const before = await readRawAt(dir, 'packages/b');
+
+    await applyProject(proj, new Map([[`${path.join('packages', 'a')} dependencies lodash`, '^4.18.0']]));
+
+    assert.equal(await readRawAt(dir, 'packages/b'), before, 'unchanged manifest is left byte-identical');
+  });
+
+  it('routes overrides to the root manifest only, even for a child-workspace dependency', async () => {
+    const dir = await monorepo();
+    const proj = await loadProject(dir);
+
+    // lodash is a direct dep of workspace a, not the root — the override still
+    // lands as a top-level pin on the ROOT manifest (npm honors overrides there).
+    const res = await applyProject(proj, new Map(), { lodash: '4.17.21' });
+
+    assert.deepEqual((await readJsonAt(dir, '.')).overrides, { lodash: '4.17.21' });
+    assert.equal('overrides' in (await readJsonAt(dir, 'packages/a')), false, 'no overrides in the child');
+    assert.deepEqual(res.overrides, [{ name: 'lodash', to: '4.17.21' }]);
+  });
+
+  it('preserves each manifest\'s own formatting when several change', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'nui-proj-'));
+    tmpDirs.push(dir);
+    await mkdir(path.join(dir, 'packages/a'), { recursive: true });
+    // Root uses tabs + no trailing newline; workspace uses 2 spaces + newline.
+    await writeFile(path.join(dir, 'package.json'), pkg({ name: 'root', workspaces: ['packages/*'], dependencies: { chalk: '^4.0.0' } }, '\t', false), 'utf8');
+    await writeFile(path.join(dir, 'packages/a/package.json'), pkg({ name: 'a', dependencies: { lodash: '^4.0.0' } }, 2, true), 'utf8');
+
+    const proj = await loadProject(dir);
+    await applyProject(proj, new Map([
+      ['. dependencies chalk', '^5.0.0'],
+      [`${path.join('packages', 'a')} dependencies lodash`, '^4.18.0'],
+    ]));
+
+    const rootRaw = await readRawAt(dir, '.');
+    const wsRaw = await readRawAt(dir, 'packages/a');
+    assert.ok(rootRaw.includes('\n\t"'), 'root keeps tabs');
+    assert.equal(rootRaw.endsWith('\n'), false, 'root keeps no trailing newline');
+    assert.ok(wsRaw.includes('\n  "'), 'workspace keeps 2-space indent');
+    assert.equal(wsRaw.endsWith('\n'), true, 'workspace keeps trailing newline');
   });
 });

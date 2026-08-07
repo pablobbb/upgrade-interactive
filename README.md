@@ -53,7 +53,9 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
 7. Writes your choices back to `package.json` and runs `npm install`.
 
 By default the list is grouped into **Dependencies**, **Dev dependencies**, and
-override sections. Pass `--no-section` for a single flat list.
+override sections. Pass `--no-section` for a single flat list. In an npm
+workspace repo, each workspace additionally gets its own outer section (root
+first); `--no-section` collapses only the inner field grouping.
 
 ## Controls
 
@@ -75,10 +77,13 @@ the part that changed.
 - `--install` / `--no-install` — run `npm install` after writing changes (default: on)
 - `--audit` / `--no-audit` — vulnerability check (default: on)
 - `--section` / `--no-section` — grouped sections vs. flat list (default: on)
+- `-w, --workspace <name>` — in a workspaces repo, limit to matching workspace(s);
+  repeatable, matches by package name or path (e.g. `-w packages/api -w @acme/web`)
+- `--no-workspaces` — only the root `package.json`, ignoring any `workspaces` field
 - `-h, --help`, `-v, --version`
 
-All three are on by default. To change a default permanently, use an env var or a
-`package.json` config block:
+`--install`, `--audit` and `--section` are on by default. To change a default
+permanently, use an env var or a `package.json` config block:
 
 ```json
 "upgrade-interactive": { "install": false, "audit": false, "section": true }
@@ -89,11 +94,46 @@ NUI_AUDIT=0 npx upgrade-interactive
 ```
 
 Precedence, highest first: CLI flag → `NUI_INSTALL` / `NUI_AUDIT` / `NUI_SECTION`
-→ `package.json` config → default (on).
+→ `package.json` config → default (on). In a workspaces repo the config block is
+read from the root `package.json` only — see [Workspaces](#workspaces).
 
 > Auditing needs network access. Offline, the tool says so (`no network —
 > couldn't check for vulnerable packages`) instead of pretending everything is
 > clean, and upgrades still work.
+
+## Workspaces
+
+Run it in an npm workspaces repo (a root `package.json` with a `workspaces`
+field) from anywhere in the tree. Each workspace gets its own section (root
+first), and edits are written to that workspace's own manifest. `overrides` and
+`npm install` always go to the root, which npm shares across workspaces — so a
+vulnerable package used by several workspaces is staged as an override once,
+from one row.
+
+"From anywhere in the tree" includes running inside a workspace: from
+`packages/api` the tool still operates on the whole repo and reads its
+`upgrade-interactive` config from the **root** `package.json`. Use
+`--no-workspaces` for the old one-manifest behavior.
+
+A workspace's own block is ignored — those settings describe the run, not a
+package. You get a note naming the file and keys whenever an ignored block would
+have changed the run.
+
+A repository with no `workspaces` field is unaffected by any of this — it loads
+exactly one `package.json` and renders no workspace headings.
+
+Because npm honors `overrides` only in the root manifest, a vulnerable package
+whose workspaces declare *different* ranges can't be fixed by any single
+override entry. Those rows say so and offer no pin — upgrade each workspace's
+own row instead. This holds under `--no-workspaces` too: narrowing what you edit
+doesn't change what's installed, so the pin would still be wrong.
+
+Scope with `-w <name>` (repeatable) or `--no-workspaces`. The `workspaces` glob
+supports literal paths, `*`, trailing `**`, and `!` exclusions — a subset of
+npm's patterns.
+
+A `-w` value that matches no workspace is an error rather than an empty list, as
+is combining `-w` with `--no-workspaces`.
 
 ## Notes
 
@@ -102,4 +142,3 @@ Precedence, highest first: CLI flag → `NUI_INSTALL` / `NUI_AUDIT` / `NUI_SECTI
   (git/file/link/workspace, npm aliases) are skipped entirely.
 - Only `dependencies` / `devDependencies` are scanned.
 - The list stays alphabetically sorted the whole time it's loading.
-- No monorepo/workspace support (single `package.json` only).

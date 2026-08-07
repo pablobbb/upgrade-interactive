@@ -1,6 +1,8 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { discoverWorkspaces } from './workspaces.js';
+
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies'];
 
 export async function loadManifest(cwd) {
@@ -28,13 +30,115 @@ export async function loadManifest(cwd) {
     const section = json[field];
     if (!section || typeof section !== 'object') continue;
     for (const [name, range] of Object.entries(section)) {
-      descriptors.push({ name, range, field });
+      // `key` addresses exactly one (field, name) slot. A name can legitimately
+      // appear in both dependencies and devDependencies, so it is not on its own
+      // enough to route a selection to the right slot.
+      descriptors.push({ name, range, field, key: `${field} ${name}` });
     }
   }
 
   descriptors.sort((a, b) => a.name.localeCompare(b.name));
 
   return { filePath, json, raw, indent, trailingNewline, descriptors };
+}
+
+/**
+ * Load a whole project as an ordered list of manifests: the root first, then
+ * each npm workspace (when the root declares a `workspaces` field). A standalone
+ * package with no workspaces flows through this same shape — a one-manifest
+ * project with `workspace: null` — so callers never branch on "is it a monorepo".
+ *
+ * Returns { root, manifests, descriptors, workspaces }:
+ *   - `manifests`  — per-file loadManifest results, root first, each tagged with
+ *     `workspace` (display name; null for the root) and `relPath`.
+ *   - `descriptors` — the flat, cross-workspace row list. Every declared dep is
+ *     its own descriptor (NOT deduped across workspaces): the same package in
+ *     five workspaces yields five descriptors. Each gains `workspace`, `relPath`
+ *     and a unique `id` (`${relPath} ${field} ${name}`) that maps 1:1 to exactly
+ *     one (manifest, field, name). Ordering is root's alpha-sorted deps, then
+ *     each workspace's, in project order.
+ *   - `workspaces` — the discovered package list (root first) as *scoped by the
+ *     options*: null when standalone or under `workspaces: false`. This is what
+ *     drives display and writes.
+ *   - `discovered` — the same list, but always the real tree regardless of
+ *     `workspaces: false`, or null when there genuinely are no workspaces. The
+ *     audit reads this: `--no-workspaces` narrows what the user edits, not what
+ *     is installed, and mistaking a workspace for a `file:` dependency would
+ *     silently disable the cross-manifest override conflict check.
+ *
+ * Descriptors whose `name` is itself a local workspace package (an internal
+ * sibling dependency) are skipped — they aren't upgradable from the registry.
+ *
+ * Options:
+ *   - `workspaces: false` — ignore any `workspaces` field and load only `cwd`'s
+ *     own manifest (the `--no-workspaces` escape hatch, exact legacy behavior).
+ *   - `filter: string[]` — limit the *displayed/editable* descriptors to
+ *     workspaces whose package name or relPath matches one of these (npm's `-w`).
+ *     Every manifest is still loaded (the root must stay writable for the
+ *     root-only overrides), but only matched workspaces contribute rows.
+ *
+ * Throws when the options can't select anything: a `filter` value that matches
+ * no package, or a `filter` combined with `workspaces: false`.
+ */
+export async function loadProject(cwd, { workspaces = true, filter = null } = {}) {
+  const filterSet = filter && filter.length > 0 ? new Set(filter) : null;
+  // `--no-workspaces` loads the root manifest alone, which no -w value can
+  // select — silently showing an empty list would look like "nothing to
+  // upgrade" rather than the contradiction it is.
+  if (!workspaces && filterSet) {
+    throw new Error('--no-workspaces cannot be combined with -w/--workspace');
+  }
+
+  // Discovery always runs, even under `--no-workspaces`. The flag scopes what is
+  // *shown and written*; it does not change the shape of the installed tree, and
+  // the audit needs the real shape to tell a workspace apart from a `file:`
+  // dependency. `discovered` is that truth; `workspaces` is the display-scoped
+  // view the flag nulls out.
+  const tree = await discoverWorkspaces(cwd);
+  const discovered = workspaces ? tree : null;
+  const infos = discovered || [{ dir: cwd, name: null, relPath: '.' }];
+  const workspaceNames = new Set((discovered || []).map((p) => p.name).filter(Boolean));
+  const included = (info) => !filterSet || filterSet.has(info.name) || filterSet.has(info.relPath);
+
+  const manifests = [];
+  const descriptors = [];
+  const matched = new Set();
+  for (const info of infos) {
+    const manifest = await loadManifest(info.dir);
+    manifest.workspace = info.relPath === '.' ? null : info.name;
+    manifest.relPath = info.relPath;
+    manifests.push(manifest);
+    // A filtered-out workspace stays loaded (root overrides need it) but shows
+    // no rows.
+    if (!included(info)) continue;
+    if (filterSet) {
+      if (filterSet.has(info.name)) matched.add(info.name);
+      if (filterSet.has(info.relPath)) matched.add(info.relPath);
+    }
+    for (const d of manifest.descriptors) {
+      if (workspaceNames.has(d.name)) continue; // internal sibling dep — not upgradable
+      descriptors.push({
+        name: d.name,
+        range: d.range,
+        field: d.field,
+        workspace: manifest.workspace,
+        relPath: info.relPath,
+        id: `${info.relPath} ${d.field} ${d.name}`,
+      });
+    }
+  }
+
+  // A -w value that matches no package name or path is a typo, not a request
+  // for an empty list. Report every unmatched value at once so fixing one
+  // doesn't just surface the next.
+  if (filterSet) {
+    const unmatched = [...filterSet].filter((f) => !matched.has(f));
+    if (unmatched.length > 0) {
+      throw new Error(`No workspace matches: ${unmatched.join(', ')}`);
+    }
+  }
+
+  return { root: manifests[0], manifests, descriptors, workspaces: discovered, discovered: tree };
 }
 
 // Write one override spec for `name` into the manifest `json`, pushing an
@@ -149,7 +253,10 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
   const applied = [];
 
   for (const descriptor of manifest.descriptors) {
-    const newRange = selections.get(descriptor.name);
+    // Prefer the field-qualified key so a package declared in both dependencies
+    // and devDependencies gets each slot's own selection; fall back to the bare
+    // name for callers that key by name alone.
+    const newRange = selections.get(descriptor.key) ?? selections.get(descriptor.name);
     if (!newRange || newRange === descriptor.range) continue;
 
     manifest.json[descriptor.field][descriptor.name] = newRange;
@@ -159,7 +266,16 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
   // A package that is itself a direct dependency can't take a top-level override
   // (npm rejects it), so writeOverrideSpec routes those pins to a range bump on
   // `applied` instead; the map tells it which names/fields are direct.
-  const directField = new Map(manifest.descriptors.map((d) => [d.name, d.field]));
+  //
+  // A name can appear in both fields. npm resolves the `dependencies` edge, so
+  // that is the one to bump — bumping devDependencies would leave the runtime
+  // dependency on the vulnerable range. Explicit rather than relying on the
+  // order descriptors happen to arrive in.
+  const directField = new Map();
+  for (const d of manifest.descriptors) {
+    if (directField.get(d.name) === 'dependencies') continue;
+    directField.set(d.name, d.field);
+  }
 
   const appliedOverrides = [];
   for (const [name, spec] of Object.entries(overrides || {})) {
@@ -203,6 +319,64 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
 
   const serialized = JSON.stringify(manifest.json, null, manifest.indent) + (manifest.trailingNewline ? '\n' : '');
   await writeFile(manifest.filePath, serialized, 'utf8');
+
+  return { applied, overrides: appliedOverrides, removed };
+}
+
+/**
+ * Apply project-wide selections to a project loaded by `loadProject`. Selections
+ * are keyed by descriptor `id` (not name), so a package appearing in several
+ * workspaces is written to exactly the manifest its row belongs to — no fan-out.
+ *
+ * Each manifest is written at most once, reusing the single-file `applyUpgrades`
+ * writer, so per-file formatting (indent, trailing newline) is preserved
+ * independently. `overrides` and `removals` are npm-workspace root-only: they are
+ * routed exclusively to the root manifest regardless of which workspace owns the
+ * vulnerable dependency (npm honors `overrides` only in the root manifest).
+ *
+ * Consequence: a pin for a package a *workspace* declares directly is written as
+ * a root-level entry rather than a range bump on that workspace's own manifest —
+ * which npm rejects (EOVERRIDE) when the pin falls outside the workspace's
+ * declared range. Routing such a pin to its owning manifest needs scoped specs to
+ * carry the manifest they came from; until then the audit refuses the cases it
+ * can detect (see `pinConflict` in vulnerabilities.js).
+ *
+ * Returns { applied, overrides, removed } aggregated across manifests; each
+ * `applied` entry gains `workspace` (the display name, null for the root) for the
+ * per-workspace post-submit summary.
+ */
+export async function applyProject(project, selections, overrides = {}, removals = []) {
+  // Route each id-keyed selection to its owning manifest, re-keyed by the
+  // "<field> <name>" slot the per-file writer addresses. Keying by bare name
+  // would fan one row's selection out to both fields when a package is declared
+  // in dependencies *and* devDependencies.
+  const byRelPath = new Map();
+  for (const d of project.descriptors) {
+    const range = selections.get(d.id);
+    if (range == null) continue;
+    if (!byRelPath.has(d.relPath)) byRelPath.set(d.relPath, new Map());
+    byRelPath.get(d.relPath).set(`${d.field} ${d.name}`, range);
+  }
+
+  const applied = [];
+  const appliedOverrides = [];
+  const removed = [];
+  for (const manifest of project.manifests) {
+    const isRoot = manifest === project.root;
+    const slotMap = byRelPath.get(manifest.relPath) || new Map();
+    // Nothing to write for a child manifest with no selections (overrides and
+    // removals only ever touch the root), so skip its no-op write entirely.
+    if (!isRoot && slotMap.size === 0) continue;
+
+    const res = await applyUpgrades(manifest, slotMap, isRoot ? overrides : {}, isRoot ? removals : []);
+    // `relPath` rides along so the summary can label a workspace that declares
+    // no `name` — npm allows that and infers the name from the directory.
+    for (const a of res.applied) {
+      applied.push({ ...a, workspace: manifest.workspace, relPath: manifest.relPath });
+    }
+    appliedOverrides.push(...res.overrides);
+    removed.push(...res.removed);
+  }
 
   return { applied, overrides: appliedOverrides, removed };
 }

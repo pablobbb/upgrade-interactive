@@ -40,6 +40,18 @@ export function overrideLabel(spec) {
   return null;
 }
 
+// Why `o` is refused on a flagged row, or null when it isn't. Two manifests in
+// the project declare different ranges for this package and npm honors
+// `overrides` only at the root, so no single entry can fix both — upgrading each
+// workspace's own row is the way out.
+export function pinBlockedNote(vuln) {
+  if (!vuln || !vuln.pinConflict) return null;
+  const conflicted = (vuln.instances || []).find((i) => i.conflict);
+  const ranges = conflicted && conflicted.conflictRanges ? conflicted.conflictRanges.join(' vs ') : null;
+  const detail = ranges ? ` (${ranges})` : '';
+  return `ⓘ workspaces declare different ranges${detail} — upgrade each row instead`;
+}
+
 // The ⚠ + severity + CVE link + affected/fixed-in summary shown on a flagged
 // row. `hideFixed` drops the "fixed in" suffix when the row already shows the
 // fixed version as a column (the override rows), to avoid saying it twice.
@@ -83,7 +95,16 @@ export function SectionHeader({ title }) {
   return e(Box, { marginTop: 1 }, e(Text, { bold: true, underline: true, color: 'gray' }, title));
 }
 
-export function Row({ name, active, suggestions, selectedColumn, vuln, override }) {
+// The outer, per-workspace heading. Styled distinctly from SectionHeader (the
+// inner field grouping) so the two levels read as different levels: bright and
+// unadorned versus the dim underlined field titles nested beneath it. The root
+// workspace is labelled "root"; others show "<relPath> (<package name>)".
+export function WorkspaceHeader({ relPath, workspace }) {
+  const label = relPath === '.' ? 'root' : workspace ? `${relPath} (${workspace})` : relPath;
+  return e(Box, { marginTop: 1 }, e(Text, { bold: true, color: 'magentaBright' }, `▌ ${label}`));
+}
+
+export function Row({ name, active, suggestions, selectedColumn, vuln, override, overrideNote }) {
   const main = e(
     Box,
     { flexDirection: 'row' },
@@ -95,26 +116,10 @@ export function Row({ name, active, suggestions, selectedColumn, vuln, override 
   );
   if (!vuln) return main;
   // Put the (potentially long) advisory detail on its own indented line so it
-  // stays readable instead of wrapping past the version columns.
-  return e(
-    Box,
-    { flexDirection: 'column' },
-    main,
-    e(Box, { marginLeft: 4 }, e(VulnInfo, { vuln, override }))
-  );
-}
-
-// A vulnerable package fixed by an override (transitive, or direct with no
-// upgrade available): a current → fixed column pair on top, with the advisory
-// detail on its own indented line below — the same two-line shape as Row.
-export function VulnRow({ name, active, vuln, override }) {
-  const main = e(
-    Box,
-    { flexDirection: 'row' },
-    e(Box, { width: 2, flexShrink: 0 }, e(Text, { color: 'cyanBright', bold: true }, active ? '❯ ' : '  ')),
-    e(NameCell, { name }),
-    e(FixColumn, { current: vuln.current, fixed: vuln.firstPatched })
-  );
+  // stays readable instead of wrapping past the version columns. `overrideNote`
+  // (set only on non-origin rows) explains the staged override lives elsewhere;
+  // the blocked note explains why `o` does nothing here.
+  const note = overrideNote || pinBlockedNote(vuln);
   return e(
     Box,
     { flexDirection: 'column' },
@@ -122,9 +127,37 @@ export function VulnRow({ name, active, vuln, override }) {
     e(
       Box,
       { marginLeft: 4 },
-      e(VulnInfo, { vuln, override, hideFixed: true }),
-      override ? null : e(Text, { dimColor: true }, '  press o to override')
+      e(VulnInfo, { vuln, override }),
+      note ? e(Text, { dimColor: true }, `  ${note}`) : null
     )
+  );
+}
+
+// A vulnerable package fixed by an override (transitive, or direct with no
+// upgrade available): a current → fixed column pair on top, with the advisory
+// detail on its own indented line below — the same two-line shape as Row.
+export function VulnRow({ name, active, vuln, override, overrideNote }) {
+  const main = e(
+    Box,
+    { flexDirection: 'row' },
+    e(Box, { width: 2, flexShrink: 0 }, e(Text, { color: 'cyanBright', bold: true }, active ? '❯ ' : '  ')),
+    e(NameCell, { name }),
+    e(FixColumn, { current: vuln.current, fixed: vuln.firstPatched })
+  );
+  // Hint precedence: nothing to override yet → "press o", or why we can't;
+  // staged here → the green badge alone; staged from another row → the
+  // read-only "elsewhere" note.
+  const blocked = pinBlockedNote(vuln);
+  const hint = override
+    ? overrideNote
+      ? e(Text, { dimColor: true }, `  ${overrideNote}`)
+      : null
+    : e(Text, { dimColor: true }, blocked ? `  ${blocked}` : '  press o to override');
+  return e(
+    Box,
+    { flexDirection: 'column' },
+    main,
+    e(Box, { marginLeft: 4 }, e(VulnInfo, { vuln, override, hideFixed: true }), hint)
   );
 }
 

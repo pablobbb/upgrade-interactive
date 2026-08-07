@@ -7,6 +7,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeVulnerabilities } from '../../src/vulnerabilities.js';
+import { defaultOverrideSelection, isPinBlocked } from '../../src/override-select.js';
 
 // --- Test data builders ------------------------------------------------------
 
@@ -65,15 +66,13 @@ describe('computeVulnerabilities — detection', () => {
     const v = vulns.get('lodash');
     assert.ok(v, 'lodash should be flagged');
     assert.equal(v.severity, 'high');
-    assert.equal(v.isDirect, true);
     assert.equal(v.current, '4.17.11', 'the newest still-vulnerable installed version');
     assert.equal(v.firstPatched, '4.17.21');
   });
 
-  it('marks a vulnerable transitive dependency as not direct', async () => {
+  it('flags a vulnerable transitive dependency the descriptors never mention', async () => {
     const installed = {
       versions: new Map([['minimist', new Set(['1.2.0'])]]),
-      direct: new Set(['some-cli']), // minimist is only transitive
       packages: {},
     };
     const registry = stubRegistry({
@@ -83,7 +82,10 @@ describe('computeVulnerabilities — detection', () => {
 
     const { vulns } = await computeVulnerabilities({ installed }, registry);
 
-    assert.equal(vulns.get('minimist').isDirect, false);
+    const v = vulns.get('minimist');
+    assert.ok(v, 'a package only present in the lockfile is still audited');
+    assert.equal(v.severity, 'critical');
+    assert.equal(v.firstPatched, '1.2.6');
   });
 
   it('reports the worst severity and its advisory when several match', async () => {
@@ -529,5 +531,156 @@ describe('computeVulnerabilities — removable overrides', () => {
     );
 
     assert.equal(removableOverrides.has('leftpad'), false);
+  });
+});
+
+// --- Workspaces --------------------------------------------------------------
+// The instance walk (resolveInstalledPath) must resolve a workspace's edges,
+// whether the dependency is hoisted to the root node_modules or installed local
+// to the workspace, and classify a workspace's direct dep as direct.
+describe('computeVulnerabilities — workspaces', () => {
+  const lodashRegistry = () =>
+    stubRegistry({
+      meta: { lodash: { versions: ['4.17.11', '4.17.21'], distTags: {} } },
+      advisories: { lodash: [advisory({ vulnerable_versions: '<4.17.19', severity: 'high' })] },
+    });
+  const lodashDescriptor = [{ name: 'lodash', range: '^4.17.0', field: 'dependencies' }];
+
+  it('classifies a workspace direct dependency as direct and resolves its hoisted install', async () => {
+    const packages = {
+      '': { name: 'root' },
+      'packages/a': { name: '@acme/a', version: '1.0.0', dependencies: { lodash: '^4.17.0' } },
+      'node_modules/@acme/a': { link: true, resolved: 'packages/a' }, // symlink node, no version
+      'node_modules/lodash': { version: '4.17.11' }, // hoisted to the root
+    };
+    const installed = { versions: new Map([['lodash', new Set(['4.17.11'])]]), direct: new Set(['lodash']), packages };
+
+    const { vulns } = await computeVulnerabilities({ descriptors: lodashDescriptor, installed }, lodashRegistry());
+
+    const v = vulns.get('lodash');
+    assert.ok(v, 'lodash should be flagged');
+    assert.equal(v.pinStrategy, 'global', 'one hoisted version → a single global pin');
+    assert.deepEqual(v.instances.map((i) => i.installedVersion), ['4.17.11'], "the workspace's edge resolves to the hoisted copy");
+    assert.equal(v.firstPatched, '4.17.21');
+  });
+
+  it('resolves a workspace-local (non-hoisted) install', async () => {
+    const packages = {
+      '': { name: 'root' },
+      'packages/a': { name: '@acme/a', version: '1.0.0', dependencies: { lodash: '^4.17.0' } },
+      'node_modules/@acme/a': { link: true, resolved: 'packages/a' },
+      'packages/a/node_modules/lodash': { version: '4.17.11' }, // local to the workspace, not hoisted
+    };
+    const installed = { versions: new Map([['lodash', new Set(['4.17.11'])]]), direct: new Set(['lodash']), packages };
+
+    const { vulns } = await computeVulnerabilities({ descriptors: lodashDescriptor, installed }, lodashRegistry());
+
+    const v = vulns.get('lodash');
+    assert.ok(v);
+    assert.deepEqual(v.instances.map((i) => i.installedVersion), ['4.17.11'], 'the workspace-local copy is resolved');
+  });
+
+  it('still merges manifests that agree on the declared range', async () => {
+    const packages = {
+      '': { name: 'root', dependencies: { lodash: '^4.17.0' } },
+      'packages/a': { name: '@acme/a', version: '1.0.0', dependencies: { lodash: '^4.17.0' } },
+      'node_modules/@acme/a': { link: true, resolved: 'packages/a' },
+      'node_modules/lodash': { version: '4.17.11' },
+    };
+    const installed = { versions: new Map([['lodash', new Set(['4.17.11'])]]), direct: new Set(['lodash']), packages };
+
+    const { vulns } = await computeVulnerabilities({ descriptors: lodashDescriptor, installed }, lodashRegistry());
+
+    const v = vulns.get('lodash');
+    assert.equal(v.pinConflict, false, 'agreeing manifests are not a conflict');
+    assert.equal(v.instances.length, 1, 'the root and the workspace collapse into one pin');
+    assert.deepEqual(v.instances[0].safeCandidates, ['4.17.21']);
+  });
+
+  // npm honors `overrides` only in the root manifest, so when the root and a
+  // workspace declare different ranges for the same package there is no single
+  // entry that fixes both: a pin satisfying one silently rewrites or under-fixes
+  // the other. Offer nothing rather than something wrong.
+  it('refuses to pin when manifests declare different ranges', async () => {
+    const registry = stubRegistry({
+      meta: { lodash: { versions: ['3.10.1', '4.17.11', '4.17.21'], distTags: {} } },
+      advisories: { lodash: [advisory({ vulnerable_versions: '<4.17.19', severity: 'high' })] },
+    });
+    const packages = {
+      '': { name: 'root', dependencies: { lodash: '^3.0.0' } },
+      'packages/a': { name: '@acme/a', version: '1.0.0', dependencies: { lodash: '^4.17.0' } },
+      'node_modules/@acme/a': { link: true, resolved: 'packages/a' },
+      'node_modules/lodash': { version: '3.10.1' }, // the root's copy, hoisted
+      'packages/a/node_modules/lodash': { version: '4.17.11' }, // the workspace's own
+    };
+    const installed = {
+      versions: new Map([['lodash', new Set(['3.10.1', '4.17.11'])]]),
+      direct: new Set(['lodash']),
+      packages,
+    };
+
+    const { vulns } = await computeVulnerabilities(
+      {
+        descriptors: [{ name: 'lodash', range: '^3.0.0', field: 'dependencies' }],
+        installed,
+        manifestPaths: ['', 'packages/a'],
+      },
+      registry
+    );
+
+    const v = vulns.get('lodash');
+    assert.ok(v, 'lodash is still flagged as vulnerable');
+    assert.equal(v.pinConflict, true, 'the divergent ranges are reported as a conflict');
+    const merged = v.instances.find((i) => i.conflict);
+    assert.ok(merged, 'the collapsed root/workspace instance carries the flag');
+    assert.deepEqual(merged.safeCandidates, [], 'no candidate is offered for the conflicted instance');
+    assert.equal(merged.bestSafeInRange, null);
+    assert.deepEqual(merged.conflictRanges.sort(), ['^3.0.0', '^4.17.0']);
+    assert.equal(
+      defaultOverrideSelection(v),
+      null,
+      'the default selection stages nothing, so `o` cannot write a wrong pin'
+    );
+    assert.equal(isPinBlocked(v), true);
+  });
+
+  // npm implements workspaces as `file:` links, so an ordinary local dependency
+  // ("lib": "file:./lib") produces a top-level `lib` lockfile entry with exactly
+  // a workspace's shape. Path shape therefore cannot decide what is one of our
+  // manifests — only the discovered set can. A single-package project must not
+  // be treated as a monorepo and must keep its pre-workspaces behavior.
+  it('does not report a conflict for a file: dependency in a single-package project', async () => {
+    const registry = stubRegistry({
+      meta: { lodash: { versions: ['3.10.1', '4.17.11', '4.17.21'], distTags: {} } },
+      advisories: { lodash: [advisory({ vulnerable_versions: '<4.17.19', severity: 'high' })] },
+    });
+    // Identical to the two-workspace case above, except `lib` is a plain local
+    // dependency and the project declares no workspaces.
+    const packages = {
+      '': { name: 'app', dependencies: { lodash: '^3.0.0', lib: 'file:./lib' } },
+      lib: { name: 'lib', version: '1.0.0', dependencies: { lodash: '^4.17.0' } },
+      'node_modules/lib': { link: true, resolved: 'lib' },
+      'node_modules/lodash': { version: '3.10.1' },
+      'lib/node_modules/lodash': { version: '4.17.11' },
+    };
+    const installed = {
+      versions: new Map([['lodash', new Set(['3.10.1', '4.17.11'])]]),
+      direct: new Set(['lodash']),
+      packages,
+    };
+
+    const { vulns } = await computeVulnerabilities(
+      {
+        descriptors: [{ name: 'lodash', range: '^3.0.0', field: 'dependencies' }],
+        installed,
+        manifestPaths: [''], // standalone: the root is the only manifest
+      },
+      registry
+    );
+
+    const v = vulns.get('lodash');
+    assert.ok(v, 'lodash is still flagged as vulnerable');
+    assert.equal(v.pinConflict, false, 'a local dependency is not a second manifest');
+    assert.ok(!v.instances.some((i) => i.conflict), 'no instance is flagged');
   });
 });

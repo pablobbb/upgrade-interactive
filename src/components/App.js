@@ -1,14 +1,15 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
-import { Row, VulnRow, OverrideRow, LoadingRow, SectionHeader } from './Row.js';
+import { Row, VulnRow, OverrideRow, LoadingRow, SectionHeader, WorkspaceHeader } from './Row.js';
+import { buildDisplayRows, overrideView } from './rows.js';
 import { OverridePicker, ScopedOverridePicker } from './OverridePicker.js';
 import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
 import { loadInstalledVersions } from '../lockfile.js';
 import { computeVulnerabilities } from '../vulnerabilities.js';
-import { shouldScope } from '../override-select.js';
+import { shouldScope, isPinBlocked } from '../override-select.js';
 
 const e = React.createElement;
 const CONCURRENCY = 8;
@@ -16,6 +17,9 @@ const CONCURRENCY = 8;
 // each render — otherwise the audit effect's deps change every commit and it
 // re-runs in an unbounded loop.
 const EMPTY_OVERRIDES = Object.freeze({});
+// A standalone project's only manifest is the lockfile root. Stable reference
+// for the same reason EMPTY_OVERRIDES is one — it feeds the audit effect's deps.
+const ROOT_ONLY_MANIFESTS = Object.freeze(['']);
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
@@ -25,9 +29,24 @@ function isNavigable(row) {
   return row.kind === 'dep' || row.kind === 'vuln' || row.kind === 'override';
 }
 
-async function defaultRunAudit({ cwd, descriptors, overrides }) {
+/** The package name a row stages an override for, or null if it stages none. */
+function overrideNameOf(row) {
+  if (row.kind === 'dep') return row.descriptor.name;
+  if (row.kind === 'vuln') return row.name;
+  return null;
+}
+
+// The workspace label shown for an override staged from `row`. A dep row is
+// owned by its workspace (the root manifest has no display name, so label it
+// "root"); a shared vuln-section row has no owning workspace, and a null label
+// renders as "already staged above" instead.
+function originLabelOf(row) {
+  return row.kind === 'dep' ? (row.descriptor.workspace ?? 'root') : null;
+}
+
+async function defaultRunAudit({ cwd, descriptors, overrides, manifestPaths }) {
   const installed = await loadInstalledVersions(cwd);
-  return computeVulnerabilities({ descriptors, installed, overrides });
+  return computeVulnerabilities({ descriptors, installed, overrides, manifestPaths });
 }
 
 export function App({
@@ -38,11 +57,32 @@ export function App({
   section = false,
   cwd = process.cwd(),
   overrides = EMPTY_OVERRIDES,
+  // Lockfile-style keys for this project's own manifests: [''] standalone, plus
+  // one relative path per workspace. Lets the audit tell a workspace apart from
+  // an ordinary `file:` dependency, which has the identical lockfile shape.
+  manifestPaths = ROOT_ONLY_MANIFESTS,
   runAudit = defaultRunAudit,
+  // Injectable for the same reason `runAudit` is: it's the other network call,
+  // and a test that needs to control *when* a row finishes loading (relative to
+  // the audit) can't do it with sleeps against the live registry.
+  loadSuggestions = fetchSuggestions,
 }) {
   const { exit } = useApp();
-  const [entries, setEntries] = useState(() => descriptors.map(() => null));
-  const [allLoaded, setAllLoaded] = useState(descriptors.length === 0);
+  // Normalize once so single-package callers (plain { name, range, field }
+  // descriptors) and workspace callers share one code path. Memoized on the
+  // descriptors prop so the audit/suggestion effects don't re-run every render.
+  const normDescriptors = useMemo(
+    () =>
+      descriptors.map((d) => ({
+        ...d,
+        id: d.id ?? d.name,
+        workspace: d.workspace ?? null,
+        relPath: d.relPath ?? '.',
+      })),
+    [descriptors]
+  );
+  const [entries, setEntries] = useState(() => normDescriptors.map(() => null));
+  const [allLoaded, setAllLoaded] = useState(normDescriptors.length === 0);
   const [focusedKey, setFocusedKey] = useState(null);
   const [selectedColumns, setSelectedColumns] = useState({});
   const [stagedOverrides, setStagedOverrides] = useState({});
@@ -59,14 +99,14 @@ export function App({
 
   // Load upgrade suggestions for each descriptor.
   useEffect(() => {
-    if (descriptors.length === 0) return;
+    if (normDescriptors.length === 0) return;
     let cancelled = false;
 
     mapWithConcurrency(
-      descriptors,
+      normDescriptors,
       CONCURRENCY,
       async (descriptor) => {
-        const suggestions = await fetchSuggestions(descriptor);
+        const suggestions = await loadSuggestions(descriptor);
         return suggestions ? { descriptor, suggestions } : null;
       },
       (result, _descriptor, index) => {
@@ -85,14 +125,14 @@ export function App({
     return () => {
       cancelled = true;
     };
-  }, [descriptors]);
+  }, [normDescriptors, loadSuggestions]);
 
   // Check installed + range-resolved versions against npm's advisory database.
   useEffect(() => {
     if (!audit) return;
     let cancelled = false;
 
-    Promise.resolve(runAudit({ cwd, descriptors, overrides }))
+    Promise.resolve(runAudit({ cwd, descriptors: normDescriptors, overrides, manifestPaths }))
       .then((res) => {
         if (cancelled || !mountedRef.current) return;
         setAuditState(res || { offline: false, vulns: new Map() });
@@ -105,71 +145,38 @@ export function App({
     return () => {
       cancelled = true;
     };
-  }, [audit, cwd, descriptors, overrides, runAudit]);
+  }, [audit, cwd, normDescriptors, overrides, manifestPaths, runAudit]);
 
   // ---- Build the ordered display list (headers + rows) ----------------------
   const vulns = auditState ? auditState.vulns : null;
 
-  const depItems = descriptors.map((descriptor, i) => ({ descriptor, entry: entries[i], i }));
-  const visibleDeps = allLoaded ? depItems.filter((x) => x.entry !== null) : depItems;
-
-  const depRow = (x) =>
-    x.entry === null
-      ? { kind: 'loading', key: `loading:${x.i}` }
-      : {
-          kind: 'dep',
-          key: `dep:${x.descriptor.name}`,
-          descriptor: x.descriptor,
-          entry: x.entry,
-          vuln: vulns ? vulns.get(x.descriptor.name) || null : null,
-        };
-
-  // A vuln shows inline on its dep row when that package has an upgrade row;
-  // everything else (transitive deps, or direct deps with no upgrade available)
-  // falls through to the Overrides section so it's never silently dropped.
-  const shownDepNames = new Set(visibleDeps.filter((x) => x.entry !== null).map((x) => x.descriptor.name));
+  // A vuln shows inline on its dep row when that package has an upgrade row in
+  // *any* workspace; everything else (transitive deps, or direct deps with no
+  // upgrade available) falls through to the shared Overrides section so it's
+  // never silently dropped. Keyed by name, so it generalizes across workspaces.
+  const loadedNames = normDescriptors
+    .map((d, i) => (entries[i] !== null ? d.name : null))
+    .filter((name) => name !== null);
+  const shownDepNames = new Set(loadedNames);
   const overrideVulns = vulns
     ? [...vulns.entries()].filter(([name]) => !shownDepNames.has(name))
     : [];
   const removable = auditState && auditState.removableOverrides ? auditState.removableOverrides : null;
   const removableList = removable ? [...removable.entries()] : [];
+  // Audit requested but not yet resolved — the override sections show loading
+  // placeholders until `runAudit` returns.
+  const auditPending = audit && auditState === null;
 
-  const rows = [];
-  // The old single "Overrides" section conflated two different actions, so it's
-  // split into a group of vulnerable packages you'd *add* an override for and a
-  // group of existing overrides you can *drop*. Each header is independent so an
-  // empty group doesn't leave a dangling title.
-  const pushOverrides = () => {
-    if (overrideVulns.length > 0) {
-      rows.push({ kind: 'header', key: 'h:pin', title: 'Override to a safe version' });
-      for (const [name, vuln] of overrideVulns) {
-        rows.push({ kind: 'vuln', key: `vuln:${name}`, name, vuln });
-      }
-    }
-    if (removableList.length > 0) {
-      rows.push({ kind: 'header', key: 'h:unused', title: 'Unused overrides' });
-      for (const [name, info] of removableList) {
-        rows.push({ kind: 'override', key: `ovr:${name}`, name, pin: info.pin, reason: info.reason });
-      }
-    }
-  };
-
-  if (section) {
-    const deps = visibleDeps.filter((x) => x.descriptor.field === 'dependencies');
-    const dev = visibleDeps.filter((x) => x.descriptor.field === 'devDependencies');
-    if (deps.length > 0) {
-      rows.push({ kind: 'header', key: 'h:deps', title: 'Dependencies' });
-      for (const x of deps) rows.push(depRow(x));
-    }
-    if (dev.length > 0) {
-      rows.push({ kind: 'header', key: 'h:dev', title: 'Dev dependencies' });
-      for (const x of dev) rows.push(depRow(x));
-    }
-    pushOverrides();
-  } else {
-    for (const x of visibleDeps) rows.push(depRow(x));
-    pushOverrides();
-  }
+  const rows = buildDisplayRows({
+    descriptors: normDescriptors,
+    entries,
+    allLoaded,
+    vulns,
+    section,
+    overrideVulns,
+    removableList,
+    auditPending,
+  });
 
   const navKeys = rows.filter(isNavigable).map((r) => r.key);
   const navKeyStr = navKeys.join('|');
@@ -182,19 +189,40 @@ export function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navKeyStr, focusedKey]);
 
+  // Re-home a staged override whose origin row has disappeared. A `vuln:<name>`
+  // row is dropped from the shared section as soon as that package's own
+  // suggestions load, so an override staged from it during that window would
+  // otherwise be locked forever: `o` would no-op on every remaining row while
+  // the note pointed at a row that no longer renders.
+  useEffect(() => {
+    setStagedOverrides((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [name, record] of Object.entries(prev)) {
+        if (navKeys.includes(record.originKey)) continue;
+        const home = rows.find((r) => overrideNameOf(r) === name);
+        if (!home) continue; // nothing owns it right now — leave the record alone
+        next[name] = { ...record, originKey: home.key, originLabel: originLabelOf(home) };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navKeyStr]);
+
   const cycleColumn = useCallback(
     (direction) => {
       if (!focusedRow || focusedRow.kind !== 'dep') return;
       const { suggestions } = focusedRow.entry;
-      const name = focusedRow.descriptor.name;
-      const current = selectedColumns[name] ?? 0;
+      const id = focusedRow.descriptor.id;
+      const current = selectedColumns[id] ?? 0;
       let next = current;
       for (let step = 0; step < suggestions.length; step++) {
         next = clamp(next + direction, 0, suggestions.length - 1);
         if (suggestions[next].spans.length > 0 || next === 0) break;
         if (next === current) break;
       }
-      setSelectedColumns((prev) => ({ ...prev, [name]: next }));
+      setSelectedColumns((prev) => ({ ...prev, [id]: next }));
     },
     [focusedRow, selectedColumns]
   );
@@ -205,10 +233,10 @@ export function App({
         const next = { ...prev };
         for (const entry of entries) {
           if (!entry) continue;
-          const { name } = entry.descriptor;
-          if (which === 'c') next[name] = 0;
-          else if (which === 'r') next[name] = 1;
-          else if (which === 'l') next[name] = entry.suggestions[2].value != null ? 2 : 1;
+          const { id } = entry.descriptor;
+          if (which === 'c') next[id] = 0;
+          else if (which === 'r') next[id] = 1;
+          else if (which === 'l') next[id] = entry.suggestions[2].value != null ? 2 : 1;
         }
         return next;
       });
@@ -221,17 +249,29 @@ export function App({
     if (focusedRow.kind !== 'dep' && focusedRow.kind !== 'vuln') return;
     const vuln = focusedRow.vuln;
     if (!vuln) return;
-    const name = focusedRow.kind === 'dep' ? focusedRow.descriptor.name : focusedRow.name;
+    // Nothing is expressible for this package — the row says why.
+    if (isPinBlocked(vuln)) return;
+    const name = overrideNameOf(focusedRow);
+    // Provenance: an override for this package staged from a *different* row can
+    // only be edited from that origin row. Editing from the origin (or a first
+    // stage) is allowed; `o` on any other matching row is a no-op — but only
+    // while the origin row is still on screen, so a vanished origin can never
+    // leave the override uneditable.
+    const existing = stagedOverrides[name];
+    if (existing && existing.originKey !== focusedRow.key && navKeys.includes(existing.originKey)) return;
+    const originKey = focusedRow.key;
+    const originLabel = originLabelOf(focusedRow);
     // When the package is installed at several versions across the tree, a
     // single global pin would be wrong — offer per-parent scoped pins instead,
     // as long as at least one vulnerable instance has an in-range fix.
     if (shouldScope(vuln)) {
-      setOverride({ name, mode: 'scoped', instances: vuln.instances });
+      setOverride({ name, mode: 'scoped', instances: vuln.instances, originKey, originLabel });
       return;
     }
     if (!vuln.safeVersions || vuln.safeVersions.length === 0) return;
-    setOverride({ name, mode: 'global', versions: vuln.safeVersions });
-  }, [audit, focusedRow]);
+    setOverride({ name, mode: 'global', versions: vuln.safeVersions, originKey, originLabel });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audit, focusedRow, stagedOverrides, navKeyStr]);
 
   const toggleRemoval = useCallback(() => {
     if (!audit || !focusedRow || focusedRow.kind !== 'override') return;
@@ -275,12 +315,16 @@ export function App({
         const selections = new Map();
         for (const entry of entries) {
           if (!entry) continue;
-          const col = selectedColumns[entry.descriptor.name] ?? 0;
+          const col = selectedColumns[entry.descriptor.id] ?? 0;
           const value = entry.suggestions[col]?.value ?? null;
-          if (value) selections.set(entry.descriptor.name, value);
+          if (value) selections.set(entry.descriptor.id, value);
         }
         const removals = Object.keys(stagedRemovals).filter((name) => stagedRemovals[name]);
-        onSubmit(selections, { ...stagedOverrides }, removals);
+        // Unwrap the provenance records back to the plain { name: spec } map the
+        // writer expects — origin bookkeeping is a UI-only concern.
+        const overrideSpecs = {};
+        for (const [name, record] of Object.entries(stagedOverrides)) overrideSpecs[name] = record.spec;
+        onSubmit(selections, overrideSpecs, removals);
         exit();
       }
     },
@@ -316,15 +360,20 @@ export function App({
       : null,
     windowStart > 0 ? e(Text, { dimColor: true }, `  ↑ ${windowStart} more above`) : null,
     ...visible.map((row) => {
+      if (row.kind === 'wsheader') {
+        return e(WorkspaceHeader, { key: row.key, relPath: row.relPath, workspace: row.workspace });
+      }
       if (row.kind === 'header') return e(SectionHeader, { key: row.key, title: row.title });
       if (row.kind === 'loading') return e(LoadingRow, { key: row.key });
       if (row.kind === 'vuln') {
+        const ov = overrideView(stagedOverrides, row.name, row.key);
         return e(VulnRow, {
           key: row.key,
           name: row.name,
           active: row.key === focusedKey,
           vuln: row.vuln,
-          override: stagedOverrides[row.name],
+          override: ov.spec,
+          overrideNote: ov.note,
         });
       }
       if (row.kind === 'override') {
@@ -337,7 +386,8 @@ export function App({
           staged: !!stagedRemovals[row.name],
         });
       }
-      const col = selectedColumns[row.descriptor.name] ?? 0;
+      const col = selectedColumns[row.descriptor.id] ?? 0;
+      const ov = overrideView(stagedOverrides, row.descriptor.name, row.key);
       return e(Row, {
         key: row.key,
         name: row.descriptor.name,
@@ -345,7 +395,8 @@ export function App({
         suggestions: row.entry.suggestions,
         selectedColumn: col,
         vuln: row.vuln,
-        override: stagedOverrides[row.descriptor.name],
+        override: ov.spec,
+        overrideNote: ov.note,
       });
     }),
     windowEnd < rows.length ? e(Text, { dimColor: true }, `  ↓ ${rows.length - windowEnd} more below`) : null,
@@ -354,7 +405,10 @@ export function App({
           name: override.name,
           instances: override.instances,
           onSelect: (spec) => {
-            setStagedOverrides((prev) => ({ ...prev, [override.name]: spec }));
+            setStagedOverrides((prev) => ({
+              ...prev,
+              [override.name]: { spec, originKey: override.originKey, originLabel: override.originLabel },
+            }));
             setOverride(null);
           },
           onCancel: () => setOverride(null),
@@ -364,7 +418,10 @@ export function App({
             name: override.name,
             versions: override.versions,
             onSelect: (version) => {
-              setStagedOverrides((prev) => ({ ...prev, [override.name]: version }));
+              setStagedOverrides((prev) => ({
+                ...prev,
+                [override.name]: { spec: version, originKey: override.originKey, originLabel: override.originLabel },
+              }));
               setOverride(null);
             },
             onCancel: () => setOverride(null),
