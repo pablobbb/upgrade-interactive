@@ -140,5 +140,10 @@ is combining `-w` with `--no-workspaces`.
 - **Compound ranges** (`>=1.0.0 <2.0.0`, `1.x || 2.x`, `1.0.0 - 2.0.0`) have no
   single modifier to re-apply, so they collapse to a caret. Protocol ranges
   (git/file/link/workspace, npm aliases) are skipped entirely.
+- A package you've already pinned through `overrides` isn't flagged again. The
+  audit judges the versions you actually have; the version your dependents
+  *would* fall back to without the pin is computed too, but only to decide
+  whether the pin is still needed (step 6 above) — never to call the package
+  vulnerable.
 - Only `dependencies` / `devDependencies` are scanned.
 - The list stays alphabetically sorted the whole time it's loading.
