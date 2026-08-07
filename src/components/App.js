@@ -3,7 +3,7 @@ import { Box, Text, useInput, useApp } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
 import { Row, VulnRow, OverrideRow, LoadingRow, SectionHeader, WorkspaceHeader } from './Row.js';
-import { buildDisplayRows, overrideView } from './rows.js';
+import { buildDisplayRows, overrideView, nextColumn, bulkColumn } from './rows.js';
 import { OverridePicker, ScopedOverridePicker } from './OverridePicker.js';
 import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
@@ -216,12 +216,8 @@ export function App({
       const { suggestions } = focusedRow.entry;
       const id = focusedRow.descriptor.id;
       const current = selectedColumns[id] ?? 0;
-      let next = current;
-      for (let step = 0; step < suggestions.length; step++) {
-        next = clamp(next + direction, 0, suggestions.length - 1);
-        if (suggestions[next].spans.length > 0 || next === 0) break;
-        if (next === current) break;
-      }
+      const next = nextColumn(suggestions, current, direction);
+      if (next === current) return;
       setSelectedColumns((prev) => ({ ...prev, [id]: next }));
     },
     [focusedRow, selectedColumns]
@@ -233,10 +229,7 @@ export function App({
         const next = { ...prev };
         for (const entry of entries) {
           if (!entry) continue;
-          const { id } = entry.descriptor;
-          if (which === 'c') next[id] = 0;
-          else if (which === 'r') next[id] = 1;
-          else if (which === 'l') next[id] = entry.suggestions[2].value != null ? 2 : 1;
+          next[entry.descriptor.id] = bulkColumn(entry.suggestions, which);
         }
         return next;
       });

@@ -3,7 +3,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDisplayRows, overrideView } from '../../src/components/rows.js';
+import { buildDisplayRows, overrideView, nextColumn, bulkColumn } from '../../src/components/rows.js';
 
 // A normalized descriptor, as App produces before building rows.
 const d = (name, field, relPath = '.', workspace = null) => ({
@@ -226,5 +226,62 @@ describe('overrideView (override provenance)', () => {
     // A different row referencing a shared-section override (originLabel null).
     const v = overrideView(staged, 'minimist', 'dep:packages/z dependencies minimist');
     assert.equal(v.note, 'ⓘ override already staged above — press o there to change');
+  });
+});
+
+// --- Column selection --------------------------------------------------------
+// fetchSuggestions always returns three slots and encodes "this package doesn't
+// offer that upgrade" as an empty `spans` array, never a missing slot. Because
+// it drops any package with fewer than two usable slots, exactly three shapes
+// reach the UI — all three are covered below.
+
+const col = (text) => ({ spans: text ? [{ text, color: null }] : [] });
+const ALL = [col('^1.0.0'), col('^1.4.0'), col('^2.0.0')]; // current / range / latest
+const NO_LATEST = [col('^1.0.0'), col('^1.4.0'), col('')]; // already on the newest major
+const NO_RANGE = [col('^1.0.0'), col(''), col('^2.0.0')]; // maxed inside its range
+
+describe('nextColumn', () => {
+  it('steps to the neighbouring column when the package offers it', () => {
+    assert.equal(nextColumn(ALL, 0, 1), 1);
+    assert.equal(nextColumn(ALL, 2, -1), 1);
+  });
+
+  it('skips over a column the package does not offer', () => {
+    assert.equal(nextColumn(NO_RANGE, 0, 1), 2, 'Current jumps straight to Latest');
+    assert.equal(nextColumn(NO_RANGE, 2, -1), 0, 'and back again');
+  });
+
+  it('stops at the last column that exists instead of selecting a blank one', () => {
+    assert.equal(nextColumn(NO_LATEST, 1, 1), 1, 'Range is the end of the line here');
+  });
+
+  it('stays put at both ends of a full row', () => {
+    assert.equal(nextColumn(ALL, 2, 1), 2);
+    assert.equal(nextColumn(ALL, 0, -1), 0);
+  });
+});
+
+describe('bulkColumn', () => {
+  it('selects the requested column when the package offers it', () => {
+    assert.equal(bulkColumn(ALL, 'c'), 0);
+    assert.equal(bulkColumn(ALL, 'r'), 1);
+    assert.equal(bulkColumn(ALL, 'l'), 2);
+  });
+
+  it('falls back to Range when there is no Latest', () => {
+    assert.equal(bulkColumn(NO_LATEST, 'l'), 1, 'Range is the highest upgrade on offer');
+  });
+
+  it('falls back to Current — not Latest — when there is no Range', () => {
+    assert.equal(
+      bulkColumn(NO_RANGE, 'r'),
+      0,
+      '"select every Range" must never stage a major bump on a row that had no in-range option'
+    );
+  });
+
+  it('always has Current to fall back to', () => {
+    assert.equal(bulkColumn(NO_RANGE, 'c'), 0);
+    assert.equal(bulkColumn(NO_LATEST, 'c'), 0);
   });
 });

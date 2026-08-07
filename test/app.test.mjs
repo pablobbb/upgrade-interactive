@@ -582,10 +582,89 @@ async function testScopedOverrideDisambiguation() {
   );
 }
 
+// Deterministic column shapes, so the assertions below don't depend on what the
+// registry happens to publish today. `maxed` gets no Latest column (its range
+// already reaches the newest version); `outdated` gets no Range column (it is
+// already at the top of its range, and the only upgrade is a new major). Those
+// are the two shapes where a column is missing from the end / the middle.
+const COLUMN_SHAPES = {
+  maxed: { versions: ['1.0.0', '1.4.0'], distTags: { latest: '1.4.0' } },
+  outdated: { versions: ['1.0.0', '2.0.0'], distTags: { latest: '2.0.0' } },
+};
+const shapedSuggestions = (descriptor) =>
+  fetchSuggestions(descriptor, { fetchPackageMeta: async (name) => COLUMN_SHAPES[name] });
+
+async function testArrowStopsAtLastColumn() {
+  const descriptors = [{ name: 'maxed', range: '^1.0.0', field: 'dependencies' }];
+  let submitted = null;
+  const { stdin, lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      loadSuggestions: shapedSuggestions,
+      onSubmit: (sel) => (submitted = sel),
+      onAbort: () => {},
+    })
+  );
+  await rowsLoaded(lastFrame, 'the no-Latest package to load');
+
+  stdin.write('\u001B[C'); // right -> Range
+  await wait(50);
+  stdin.write('\u001B[C'); // right again -> there is no Latest to move to
+  await wait(50);
+  stdin.write('\r');
+  await wait(100);
+  unmount();
+
+  assert(
+    submitted && submitted.get('maxed') === '^1.4.0',
+    'right-arrow past the last populated column keeps the Range selection'
+  );
+}
+
+async function testBulkRangeSkipsMissingColumn() {
+  const descriptors = [
+    { name: 'maxed', range: '^1.0.0', field: 'dependencies' },
+    { name: 'outdated', range: '^1.0.0', field: 'dependencies' },
+  ];
+  let submitted = null;
+  const { stdin, lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      loadSuggestions: shapedSuggestions,
+      onSubmit: (sel) => (submitted = sel),
+      onAbort: () => {},
+    })
+  );
+  await rowsLoaded(lastFrame, 'both packages to load');
+
+  stdin.write('r');
+  await wait(50);
+  // The marker itself is the bug: parked on an absent column it renders as a
+  // bare ● in a blank cell, which reads as "this row is staged" while carrying
+  // no version at all. Collapse the column padding to compare row by row.
+  const marked = lastFrame().replace(/\s+/g, ' ');
+  stdin.write('\r');
+  await wait(100);
+  unmount();
+
+  assert(marked.includes('outdated ● ^1.0.0'), "'r' marks Current on a row that offers no Range");
+  assert(
+    !marked.includes('outdated ○ ^1.0.0'),
+    "'r' must not leave the marker on the blank Range cell of a no-Range row"
+  );
+  assert(submitted && submitted.get('maxed') === '^1.4.0', "'r' selects Range where the package offers one");
+  assert(
+    submitted && !submitted.has('outdated'),
+    "'r' leaves a package with no Range column on Current, rather than staging its major"
+  );
+}
+
 async function main() {
   await testBasicFlow();
   await testAbort();
   await testBulkLatest();
+  await testArrowStopsAtLastColumn();
+  await testBulkRangeSkipsMissingColumn();
   await testAuditWarnings();
   await testAuditPendingLoading();
   await testAuditDisabled();

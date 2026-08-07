@@ -108,6 +108,41 @@ export function buildDisplayRows({
   return rows;
 }
 
+// A column is selectable only when it actually shows a version. Column 0
+// (Current) always does — fetchSuggestions fills it with the declared range —
+// so it is the guaranteed floor when moving left.
+function hasColumn(suggestions, index) {
+  const suggestion = suggestions[index];
+  return !!suggestion && suggestion.spans.length > 0;
+}
+
+/**
+ * The column ←/→ should move to from `current`, skipping the ones this package
+ * doesn't offer. Returns `current` unchanged when there is nothing further that
+ * way: a marker parked on an empty column looks like a selection but carries no
+ * version, so <enter> would silently drop the row and lose the real pick.
+ */
+export function nextColumn(suggestions, current, direction) {
+  let next = current + direction;
+  while (next >= 0 && next < suggestions.length && !hasColumn(suggestions, next)) next += direction;
+  if (next < 0 || next >= suggestions.length) return current;
+  return next;
+}
+
+/**
+ * The column the bulk keys (`c` / `r` / `l`) select for one package. A package
+ * that doesn't offer the requested column falls back to the nearest *lower*
+ * one, never a higher: "select every Range" must not quietly stage a major bump
+ * on the rows that had no in-range upgrade to give.
+ */
+export function bulkColumn(suggestions, which) {
+  const wanted = which === 'l' ? 2 : which === 'r' ? 1 : 0;
+  for (let i = wanted; i > 0; i--) {
+    if (hasColumn(suggestions, i)) return i;
+  }
+  return 0;
+}
+
 /**
  * Resolve what a single row should show for a staged override. `stagedOverrides`
  * is keyed by package name but carries provenance
