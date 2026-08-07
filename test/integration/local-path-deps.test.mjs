@@ -80,10 +80,16 @@ describe('local path (file:) dependencies — real npm lockfile shape', () => {
 
     assert.ok(keys.includes('lib'), `expected a top-level "lib" entry, got ${JSON.stringify(keys)}`);
     assert.equal(lock.packages['node_modules/lib'].link, true, 'the node_modules node is a link');
-    // The claim in one assertion: the shape test used before this fix
-    // ("no node_modules/ segment means it's one of our manifests") says yes for
-    // a package that is plainly not one of ours.
-    assert.ok(!'lib'.includes('node_modules/'), 'a shape test cannot reject it');
+
+    // The claim, stated against the real lockfile: the old shape test
+    // ("no node_modules/ segment ⇒ one of our manifests") accepts `lib`, which
+    // is plainly not one of ours. Same predicate the code used to run.
+    const shapeSaysManifest = keys.filter((k) => k === '' || !k.includes('node_modules/'));
+    assert.deepEqual(
+      shapeSaysManifest.sort(),
+      ['', 'lib'],
+      'the path-shape heuristic classifies the local package as a project manifest'
+    );
   });
 
   it('does not classify the local package as a project manifest', async () => {
@@ -91,28 +97,18 @@ describe('local path (file:) dependencies — real npm lockfile shape', () => {
     const res = await runNpm(dir);
     assert.ok(res.ran && res.ok, `npm install failed: ${res.output}`);
 
-    // What the CLI would compute for this project: standalone, root only.
+    // What the CLI computes for this project. Discovery is what separates `lib`
+    // from a workspace — the lockfile alone cannot, as the test above shows.
     const project = await loadProject(dir);
-    const manifestPaths = manifestPathsOf(project);
-    assert.deepEqual(manifestPaths, [''], 'discovery finds no workspaces');
+    assert.equal(project.discovered, null, 'discovery finds no workspaces');
+    assert.deepEqual(manifestPathsOf(project, dir), [''], 'the root is the only manifest');
 
-    const installed = await loadInstalledVersions(dir, manifestPaths);
-    assert.equal(installed.direct.has('left-pad'), true, "the app's own dep is direct");
-    assert.deepEqual(
-      [...installed.direct].sort(),
-      ['left-pad', 'lib'],
-      "only the app's declared deps count as direct — not the local package's"
-    );
-
-    // And with no advisories in play the audit stays quiet either way; the point
-    // is that nothing here can be flagged as a cross-workspace conflict.
-    const { vulns } = await computeVulnerabilities(
-      { descriptors: project.descriptors, installed, manifestPaths },
-      {
-        fetchPackageMeta: async () => null,
-        fetchBulkAdvisories: async () => ({ ok: true, advisories: new Map() }),
-      }
-    );
-    assert.ok(![...vulns.values()].some((v) => v.pinConflict), 'no pin conflict in a single-package project');
+    // The audit consequently sees one manifest, so no group of lockfile entries
+    // can be read as two disagreeing workspaces. `pinConflict` is asserted
+    // properly against controlled advisory data in the unit tests; here the
+    // point is only that the real lockfile yields a single-manifest project.
+    const installed = await loadInstalledVersions(dir);
+    assert.ok(installed.packages.lib, 'the local package is in the lockfile');
+    assert.ok(installed.versions.has('left-pad'), 'its installed versions are still collected');
   });
 });

@@ -126,7 +126,6 @@ function fakeAudit() {
   vulns.set('chalk', {
     advisories: [],
     severity: 'high',
-    isDirect: true,
     cve: 'CVE-2021-0001',
     url: 'https://github.com/advisories/GHSA-chalk',
     affectedRange: '<4.1.0',
@@ -137,7 +136,6 @@ function fakeAudit() {
   vulns.set('minimist', {
     advisories: [],
     severity: 'critical',
-    isDirect: false,
     cve: 'CVE-2021-44906',
     url: 'https://github.com/advisories/GHSA-xvch',
     affectedRange: '<1.2.6',
@@ -325,7 +323,6 @@ async function testOverrideOriginRehomed() {
   vulns.set('lodash', {
     advisories: [],
     severity: 'high',
-    isDirect: true,
     cve: 'CVE-2021-7777',
     url: 'https://github.com/advisories/GHSA-rehome',
     affectedRange: '<4.17.20',
@@ -438,7 +435,6 @@ async function testScopedOverrideFlow() {
   vulns.set('dependency-a', {
     advisories: [],
     severity: 'high',
-    isDirect: false,
     cve: 'CVE-2021-9999',
     url: 'https://github.com/advisories/GHSA-scoped',
     affectedRange: '>=1.0.0 <1.3.0',
@@ -514,7 +510,6 @@ async function testScopedOverrideDisambiguation() {
   vulns.set('dependency-a', {
     advisories: [],
     severity: 'high',
-    isDirect: false,
     cve: 'CVE-2021-8888',
     url: 'https://github.com/advisories/GHSA-dup',
     affectedRange: '<2.5.0',

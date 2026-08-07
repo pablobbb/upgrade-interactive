@@ -120,7 +120,8 @@ exactly one `package.json` and renders no workspace headings.
 Because npm honors `overrides` only in the root manifest, a vulnerable package
 whose workspaces declare *different* ranges can't be fixed by any single
 override entry. Those rows say so and offer no pin — upgrade each workspace's
-own row instead.
+own row instead. This holds under `--no-workspaces` too: narrowing what you edit
+doesn't change what's installed, so the pin would still be wrong.
 
 Scope with `-w <name>` (repeatable) or `--no-workspaces`. The `workspaces` glob
 supports literal paths, `*`, trailing `**`, and `!` exclusions — a subset of

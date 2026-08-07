@@ -287,6 +287,28 @@ describe('applyUpgrades', () => {
     assert.deepEqual(res.overrides, [], 'the change is reported as an upgrade, not an override');
   });
 
+  // A name in both fields is malformed but happens. npm resolves the
+  // `dependencies` edge, so bumping devDependencies would leave the runtime
+  // dependency sitting on the vulnerable range.
+  it('bumps the dependencies entry when a direct dep is declared in both fields', async () => {
+    const dir = await project({
+      'package.json': pkg({
+        dependencies: { 'brace-expansion': '^1.1.0' },
+        devDependencies: { 'brace-expansion': '^1.1.0' },
+      }),
+    });
+    const m = await loadManifest(dir);
+
+    const res = await applyUpgrades(m, new Map(), { 'brace-expansion': '1.1.16' });
+
+    const json = await readJson(dir);
+    assert.equal(json.dependencies['brace-expansion'], '1.1.16', 'the runtime edge is pinned');
+    assert.equal(json.devDependencies['brace-expansion'], '^1.1.0', 'the dev entry is left alone');
+    assert.deepEqual(res.applied, [
+      { name: 'brace-expansion', field: 'dependencies', from: '^1.1.0', to: '1.1.16' },
+    ]);
+  });
+
   it('routes a null-parent scoped pin to a range bump while keeping nested pins as overrides', async () => {
     const dir = await project({ 'package.json': pkg({ devDependencies: { 'dependency-a': '^1.0.0' } }) });
     const m = await loadManifest(dir);
@@ -492,6 +514,31 @@ describe('loadProject', () => {
     assert.equal(proj.manifests.length, 1);
     assert.equal(proj.workspaces, null);
     assert.deepEqual(proj.descriptors.map((d) => d.name), ['chalk']); // only the root's own dep
+  });
+
+  // --no-workspaces narrows what the user edits; it does not change what is
+  // installed. The audit reads `discovered` so it can still tell a workspace
+  // from a `file:` dependency — reading the nulled `workspaces` instead would
+  // silently switch off the cross-manifest override conflict check.
+  it('still reports the real tree under { workspaces: false }', async () => {
+    const dir = await monorepo();
+
+    const proj = await loadProject(dir, { workspaces: false });
+
+    assert.equal(proj.workspaces, null, 'the display scope is narrowed');
+    assert.deepEqual(
+      proj.discovered.map((w) => w.relPath),
+      ['.', path.join('packages', 'a'), path.join('packages', 'b')],
+      'the discovered tree is untouched'
+    );
+  });
+
+  it('reports discovered as null for a genuinely standalone project', async () => {
+    const dir = await project({ 'package.json': pkg({ dependencies: { chalk: '^4.0.0' } }) });
+
+    const proj = await loadProject(dir);
+
+    assert.equal(proj.discovered, null);
   });
 
   it('with a filter shows only matching workspaces but keeps every manifest loaded', async () => {

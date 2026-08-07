@@ -57,8 +57,14 @@ export async function loadManifest(cwd) {
  *     and a unique `id` (`${relPath} ${field} ${name}`) that maps 1:1 to exactly
  *     one (manifest, field, name). Ordering is root's alpha-sorted deps, then
  *     each workspace's, in project order.
- *   - `workspaces` — the discovered package list (root first) or null when
- *     standalone.
+ *   - `workspaces` — the discovered package list (root first) as *scoped by the
+ *     options*: null when standalone or under `workspaces: false`. This is what
+ *     drives display and writes.
+ *   - `discovered` — the same list, but always the real tree regardless of
+ *     `workspaces: false`, or null when there genuinely are no workspaces. The
+ *     audit reads this: `--no-workspaces` narrows what the user edits, not what
+ *     is installed, and mistaking a workspace for a `file:` dependency would
+ *     silently disable the cross-manifest override conflict check.
  *
  * Descriptors whose `name` is itself a local workspace package (an internal
  * sibling dependency) are skipped — they aren't upgradable from the registry.
@@ -83,7 +89,13 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
     throw new Error('--no-workspaces cannot be combined with -w/--workspace');
   }
 
-  const discovered = workspaces ? await discoverWorkspaces(cwd) : null;
+  // Discovery always runs, even under `--no-workspaces`. The flag scopes what is
+  // *shown and written*; it does not change the shape of the installed tree, and
+  // the audit needs the real shape to tell a workspace apart from a `file:`
+  // dependency. `discovered` is that truth; `workspaces` is the display-scoped
+  // view the flag nulls out.
+  const tree = await discoverWorkspaces(cwd);
+  const discovered = workspaces ? tree : null;
   const infos = discovered || [{ dir: cwd, name: null, relPath: '.' }];
   const workspaceNames = new Set((discovered || []).map((p) => p.name).filter(Boolean));
   const included = (info) => !filterSet || filterSet.has(info.name) || filterSet.has(info.relPath);
@@ -126,7 +138,7 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
     }
   }
 
-  return { root: manifests[0], manifests, descriptors, workspaces: discovered };
+  return { root: manifests[0], manifests, descriptors, workspaces: discovered, discovered: tree };
 }
 
 // Write one override spec for `name` into the manifest `json`, pushing an
@@ -254,7 +266,16 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
   // A package that is itself a direct dependency can't take a top-level override
   // (npm rejects it), so writeOverrideSpec routes those pins to a range bump on
   // `applied` instead; the map tells it which names/fields are direct.
-  const directField = new Map(manifest.descriptors.map((d) => [d.name, d.field]));
+  //
+  // A name can appear in both fields. npm resolves the `dependencies` edge, so
+  // that is the one to bump — bumping devDependencies would leave the runtime
+  // dependency on the vulnerable range. Explicit rather than relying on the
+  // order descriptors happen to arrive in.
+  const directField = new Map();
+  for (const d of manifest.descriptors) {
+    if (directField.get(d.name) === 'dependencies') continue;
+    directField.set(d.name, d.field);
+  }
 
   const appliedOverrides = [];
   for (const [name, spec] of Object.entries(overrides || {})) {

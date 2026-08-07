@@ -96,7 +96,7 @@ async function main() {
   // Audit against the project root: npm workspaces share the root lockfile, so
   // this also makes runs from inside a workspace subdirectory resolve correctly.
   const rootDir = path.dirname(project.root.filePath);
-  const manifestPaths = manifestPathsOf(project);
+  const manifestPaths = manifestPathsOf(project, rootDir);
 
   const result = await new Promise((resolve) => {
     const { waitUntilExit } = render(

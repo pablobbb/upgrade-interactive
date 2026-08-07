@@ -23,13 +23,27 @@ export function isMonorepoProject(project) {
  * dependency: npm implements workspaces as file: links, so both appear in the
  * lockfile as a top-level relative-path entry and no path-shape test can
  * separate them.
+ *
+ * Reads `project.discovered`, not `project.workspaces`, so `--no-workspaces`
+ * still gets the true tree — that flag scopes what the user edits, not what is
+ * installed, and scoping it here would silently disable the cross-manifest
+ * conflict check.
+ *
+ * `lockfileDir` is the directory whose package-lock.json will be read, and is
+ * required: the keys are relative to *that* directory, so a discovery rooted
+ * anywhere else (running under `--no-workspaces` from inside a workspace, where
+ * the root manifest is that workspace's own) describes a different tree and must
+ * not be used. Omitting it throws rather than defaulting, because the wrong
+ * answer here is silent — it re-enables the very bug this argument prevents.
  */
-export function manifestPathsOf(project) {
-  const workspaces = project.workspaces || [];
-  return [
-    '',
-    ...workspaces.filter((w) => w.relPath !== '.').map((w) => w.relPath.split(path.sep).join('/')),
-  ];
+export function manifestPathsOf(project, lockfileDir) {
+  if (typeof lockfileDir !== 'string') {
+    throw new TypeError('manifestPathsOf requires the directory the lockfile is read from');
+  }
+  const tree = project.discovered || [];
+  const root = tree[0];
+  if (!root || path.resolve(root.dir) !== path.resolve(lockfileDir)) return [''];
+  return ['', ...tree.filter((w) => w.relPath !== '.').map((w) => w.relPath.split(path.sep).join('/'))];
 }
 
 /**

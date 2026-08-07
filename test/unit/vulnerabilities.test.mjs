@@ -66,15 +66,13 @@ describe('computeVulnerabilities — detection', () => {
     const v = vulns.get('lodash');
     assert.ok(v, 'lodash should be flagged');
     assert.equal(v.severity, 'high');
-    assert.equal(v.isDirect, true);
     assert.equal(v.current, '4.17.11', 'the newest still-vulnerable installed version');
     assert.equal(v.firstPatched, '4.17.21');
   });
 
-  it('marks a vulnerable transitive dependency as not direct', async () => {
+  it('flags a vulnerable transitive dependency the descriptors never mention', async () => {
     const installed = {
       versions: new Map([['minimist', new Set(['1.2.0'])]]),
-      direct: new Set(['some-cli']), // minimist is only transitive
       packages: {},
     };
     const registry = stubRegistry({
@@ -84,7 +82,10 @@ describe('computeVulnerabilities — detection', () => {
 
     const { vulns } = await computeVulnerabilities({ installed }, registry);
 
-    assert.equal(vulns.get('minimist').isDirect, false);
+    const v = vulns.get('minimist');
+    assert.ok(v, 'a package only present in the lockfile is still audited');
+    assert.equal(v.severity, 'critical');
+    assert.equal(v.firstPatched, '1.2.6');
   });
 
   it('reports the worst severity and its advisory when several match', async () => {
@@ -558,7 +559,6 @@ describe('computeVulnerabilities — workspaces', () => {
 
     const v = vulns.get('lodash');
     assert.ok(v, 'lodash should be flagged');
-    assert.equal(v.isDirect, true, "a workspace's direct dep is classified direct");
     assert.equal(v.pinStrategy, 'global', 'one hoisted version → a single global pin');
     assert.deepEqual(v.instances.map((i) => i.installedVersion), ['4.17.11'], "the workspace's edge resolves to the hoisted copy");
     assert.equal(v.firstPatched, '4.17.21');

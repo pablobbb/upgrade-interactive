@@ -105,25 +105,43 @@ describe('isMonorepoProject', () => {
 });
 
 describe('manifestPathsOf', () => {
+  const ROOT = path.join(path.sep, 'repo');
+  const tree = [
+    { dir: ROOT, relPath: '.', name: 'root' },
+    { dir: path.join(ROOT, 'packages', 'a'), relPath: path.join('packages', 'a'), name: '@acme/a' },
+    { dir: path.join(ROOT, 'packages', 'b'), relPath: path.join('packages', 'b'), name: '@acme/b' },
+  ];
+
   it('is the lockfile root alone for a standalone project', () => {
-    assert.deepEqual(manifestPathsOf({ workspaces: null }), ['']);
+    assert.deepEqual(manifestPathsOf({ discovered: null }, ROOT), ['']);
   });
 
   it('lists the root plus each workspace, dropping the root entry', () => {
-    const project = {
-      workspaces: [
-        { relPath: '.', name: 'root' },
-        { relPath: path.join('packages', 'a'), name: '@acme/a' },
-        { relPath: path.join('packages', 'b'), name: '@acme/b' },
-      ],
-    };
-
-    assert.deepEqual(manifestPathsOf(project), ['', 'packages/a', 'packages/b']);
+    assert.deepEqual(manifestPathsOf({ discovered: tree }, ROOT), ['', 'packages/a', 'packages/b']);
   });
 
   it('normalizes to POSIX separators — lockfile keys never use backslashes', () => {
-    const project = { workspaces: [{ relPath: ['packages', 'a'].join(path.sep) }] };
+    const project = { discovered: [{ dir: ROOT, relPath: '.' }, { dir: ROOT, relPath: ['packages', 'a'].join(path.sep) }] };
 
-    assert.deepEqual(manifestPathsOf(project), ['', 'packages/a']);
+    assert.deepEqual(manifestPathsOf(project, ROOT), ['', 'packages/a']);
+  });
+
+  // --no-workspaces nulls `workspaces` (what is displayed and written) but not
+  // `discovered` (what is installed). Reading the former would tell the audit
+  // there is one manifest and silently switch off the cross-manifest override
+  // conflict check for the very repo that needs it.
+  it('reads the real tree even when the display scope is narrowed', () => {
+    const project = { workspaces: null, discovered: tree };
+
+    assert.deepEqual(manifestPathsOf(project, ROOT), ['', 'packages/a', 'packages/b']);
+  });
+
+  // Under --no-workspaces from inside a workspace, the lockfile being read is
+  // that workspace's own directory; paths relative to the monorepo root would
+  // describe a different tree.
+  it('ignores a tree rooted somewhere other than the lockfile directory', () => {
+    const project = { workspaces: null, discovered: tree };
+
+    assert.deepEqual(manifestPathsOf(project, path.join(ROOT, 'packages', 'a')), ['']);
   });
 });

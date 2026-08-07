@@ -45,7 +45,7 @@ function originLabelOf(row) {
 }
 
 async function defaultRunAudit({ cwd, descriptors, overrides, manifestPaths }) {
-  const installed = await loadInstalledVersions(cwd, manifestPaths);
+  const installed = await loadInstalledVersions(cwd);
   return computeVulnerabilities({ descriptors, installed, overrides, manifestPaths });
 }
 

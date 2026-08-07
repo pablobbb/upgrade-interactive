@@ -11,6 +11,10 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadProject, applyProject } from '../../src/package-file.js';
+import { loadInstalledVersions } from '../../src/lockfile.js';
+import { computeVulnerabilities } from '../../src/vulnerabilities.js';
+import { manifestPathsOf } from '../../src/summary.js';
+import { defaultOverrideSelection } from '../../src/override-select.js';
 
 const tmpDirs = [];
 afterEach(async () => {
@@ -92,5 +96,61 @@ describe('workspaces — end-to-end round-trip', () => {
 
     assert.deepEqual([...new Set(project.descriptors.map((d) => d.workspace))], ['@acme/b']);
     assert.equal(project.manifests.length, 3, 'all manifests stay loaded for root-only overrides');
+  });
+
+  // --no-workspaces narrows what the user edits; the installed tree is the same
+  // either way. If the audit took its manifest set from the narrowed view it
+  // would see one manifest, stop recognising the root/workspace disagreement,
+  // and offer a pin that silently rewrites the root to a version only the
+  // workspace can accept. Drives the whole chain the CLI does, with a stubbed
+  // registry so it stays offline.
+  it('still refuses an unpinnable override under --no-workspaces', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'nui-ws-int-'));
+    tmpDirs.push(root);
+    const write = async (rel, obj) => {
+      await mkdir(path.join(root, rel), { recursive: true });
+      await writeFile(path.join(root, rel, 'package.json'), JSON.stringify(obj, null, 2) + '\n', 'utf8');
+    };
+    // The root and the workspace declare ranges no single version satisfies.
+    await write('.', { name: 'root', workspaces: ['packages/*'], dependencies: { lodash: '^3.0.0' } });
+    await write('packages/a', { name: '@acme/a', dependencies: { lodash: '^4.17.0' } });
+    await writeFile(
+      path.join(root, 'package-lock.json'),
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          '': { name: 'root', dependencies: { lodash: '^3.0.0' } },
+          'packages/a': { name: '@acme/a', version: '1.0.0', dependencies: { lodash: '^4.17.0' } },
+          'node_modules/@acme/a': { link: true, resolved: 'packages/a' },
+          'node_modules/lodash': { version: '3.10.1' },
+          'packages/a/node_modules/lodash': { version: '4.17.11' },
+        },
+      }),
+      'utf8'
+    );
+
+    const registry = {
+      fetchPackageMeta: async () => ({ versions: ['3.10.1', '4.17.11', '4.17.21'], distTags: {} }),
+      fetchBulkAdvisories: async () => ({
+        ok: true,
+        advisories: new Map([['lodash', [{ vulnerable_versions: '<4.17.19', severity: 'high', url: 'u' }]]]),
+      }),
+    };
+
+    for (const options of [{}, { workspaces: false }]) {
+      const label = options.workspaces === false ? '--no-workspaces' : 'default';
+      const project = await loadProject(root, options);
+      const rootDir = path.dirname(project.root.filePath);
+      const installed = await loadInstalledVersions(rootDir);
+      const { vulns } = await computeVulnerabilities(
+        { descriptors: project.descriptors, installed, manifestPaths: manifestPathsOf(project, rootDir) },
+        registry
+      );
+
+      const v = vulns.get('lodash');
+      assert.ok(v, `${label}: lodash is flagged`);
+      assert.equal(v.pinConflict, true, `${label}: the disagreement is still detected`);
+      assert.equal(defaultOverrideSelection(v), null, `${label}: nothing is staged`);
+    }
   });
 });

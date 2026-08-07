@@ -283,9 +283,10 @@ function collectRemovableOverrides(overrideInfo, ok, advisories) {
  * check every relevant version against npm's advisory database.
  *
  * @returns {Promise<{ offline, vulns, removableOverrides }>}
- *   Each vuln entry: { advisories, severity, isDirect, cve, url, affectedRange,
- *   firstPatched, safeVersions }. `removableOverrides` maps an existing
- *   `overrides` package name -> { pin, reason: 'dead' | 'redundant' }.
+ *   Each vuln entry: { advisories, severity, cve, url, affectedRange,
+ *   firstPatched, safeVersions, instances, pinStrategy, pinConflict }.
+ *   `removableOverrides` maps an existing `overrides` package name ->
+ *   { pin, reason: 'dead' | 'redundant' }.
  */
 export async function computeVulnerabilities(
   { descriptors = [], installed = null, overrides = {}, manifestPaths = null } = {},
@@ -374,9 +375,6 @@ export async function computeVulnerabilities(
 
   const { ok, advisories } = await getAdvisories(versionsByName);
 
-  const directSet = new Set(descriptors.map((d) => d.name));
-  if (installed && installed.direct) for (const n of installed.direct) directSet.add(n);
-
   const vulnNames = [...advisories.keys()].filter((name) => {
     const versions = versionsByName[name] ? [...versionsByName[name]] : [];
     return versions.some((v) => matchesAny(v, advisories.get(name)));
@@ -444,7 +442,6 @@ export async function computeVulnerabilities(
     vulns.set(name, {
       advisories: matching,
       severity,
-      isDirect: directSet.has(name),
       cve: advisoryCve(primary),
       url: advisoryUrl(primary),
       affectedRange: (primary && primary.vulnerable_versions) || '',
