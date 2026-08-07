@@ -2,9 +2,14 @@
 
 Interactive dependency upgrader for npm projects (Ink/React TUI), inspired by
 `yarn upgrade-interactive`, with vulnerability warnings and npm `overrides`
-support. Source lives in `src/`, unit tests in `test/unit/` (`npm test`),
+support. Source lives in `src/`, unit tests in `test/unit/` (`npm run test:unit`),
 integration tests in `test/integration/` plus the TUI smoke test
-`test/app.test.mjs` (`npm run test:integration`).
+`test/app.test.mjs` (`npm run test:integration`). `npm test` runs both.
+
+`test/app.test.mjs` drives the real TUI, and parts of it hit the live registry.
+Never gate an assertion on a fixed `wait(ms)` there — poll with `waitForFrame` /
+`rowsLoaded`, and inject `loadSuggestions` / `runAudit` when the *ordering* of
+those two is what's under test.
 
 ## Keep the README in sync — every change
 

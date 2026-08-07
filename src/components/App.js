@@ -62,6 +62,10 @@ export function App({
   // an ordinary `file:` dependency, which has the identical lockfile shape.
   manifestPaths = ROOT_ONLY_MANIFESTS,
   runAudit = defaultRunAudit,
+  // Injectable for the same reason `runAudit` is: it's the other network call,
+  // and a test that needs to control *when* a row finishes loading (relative to
+  // the audit) can't do it with sleeps against the live registry.
+  loadSuggestions = fetchSuggestions,
 }) {
   const { exit } = useApp();
   // Normalize once so single-package callers (plain { name, range, field }
@@ -102,7 +106,7 @@ export function App({
       normDescriptors,
       CONCURRENCY,
       async (descriptor) => {
-        const suggestions = await fetchSuggestions(descriptor);
+        const suggestions = await loadSuggestions(descriptor);
         return suggestions ? { descriptor, suggestions } : null;
       },
       (result, _descriptor, index) => {
@@ -121,7 +125,7 @@ export function App({
     return () => {
       cancelled = true;
     };
-  }, [normDescriptors]);
+  }, [normDescriptors, loadSuggestions]);
 
   // Check installed + range-resolved versions against npm's advisory database.
   useEffect(() => {

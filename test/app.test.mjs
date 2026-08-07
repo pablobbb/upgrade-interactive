@@ -4,9 +4,32 @@
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { App } from '../src/components/App.js';
+import { fetchSuggestions } from '../src/semver-suggest.js';
 
 const e = React.createElement;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Poll until `predicate(lastFrame())` holds. The suggestion fetches hit the real
+// registry, so a fixed sleep is a bet on latency: too short and the assertion
+// races the network (this file's historical flakiness), too long and every run
+// pays for the worst case. Returns as soon as the frame is ready.
+async function waitForFrame(lastFrame, predicate, { timeout = 15000, label = '' } = {}) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const frame = lastFrame();
+    if (frame && predicate(frame)) return frame;
+    if (Date.now() > deadline) {
+      console.error(`TIMEOUT after ${timeout}ms waiting for ${label || 'frame condition'}`);
+      return lastFrame();
+    }
+    await wait(50);
+  }
+}
+
+// The rows are loaded once no Loading… placeholder remains. Used wherever a test
+// previously slept ~3s hoping the registry had answered.
+const rowsLoaded = (lastFrame, label) =>
+  waitForFrame(lastFrame, (f) => !f.includes('Loading...'), { label: label || 'rows to load' });
 
 let failures = 0;
 function assert(condition, message) {
@@ -36,7 +59,7 @@ async function testBasicFlow() {
     })
   );
 
-  await wait(4000);
+  await rowsLoaded(lastFrame, 'the dep list to finish loading');
   assert(!lastFrame().includes('left-pad'), 'package with no available upgrade is dropped from the list');
 
   stdin.write('\u001B[B'); // down -> eslint
@@ -58,7 +81,7 @@ async function testAbort() {
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
   let submitted = 'untouched';
   let aborted = false;
-  const { stdin, unmount } = render(
+  const { stdin, lastFrame, unmount } = render(
     e(App, {
       descriptors,
       onSubmit: (sel) => {
@@ -69,7 +92,7 @@ async function testAbort() {
       },
     })
   );
-  await wait(2500);
+  await rowsLoaded(lastFrame, 'the dep list to finish loading');
   stdin.write('\u0003'); // ctrl+c
   await wait(50);
   unmount();
@@ -84,10 +107,10 @@ async function testBulkLatest() {
     { name: 'eslint', range: '^7.0.0', field: 'devDependencies' },
   ];
   let submitted = null;
-  const { stdin, unmount } = render(
+  const { stdin, lastFrame, unmount } = render(
     e(App, { descriptors, onSubmit: (sel) => (submitted = sel), onAbort: () => {} })
   );
-  await wait(3000);
+  await rowsLoaded(lastFrame, 'both packages to load');
   stdin.write('l');
   await wait(50);
   stdin.write('\r');
@@ -140,7 +163,7 @@ async function testAuditWarnings() {
       onAbort: () => {},
     })
   );
-  await wait(3500);
+  await rowsLoaded(lastFrame, 'both packages to load');
   const frame = lastFrame();
   // Collapse wrapping: the plain-text URL fallback can wrap a long advisory
   // line (a real terminal hides the URL inside the OSC 8 escape, so it doesn't).
@@ -185,7 +208,7 @@ async function testAuditPendingLoading() {
     })
   );
 
-  await wait(3000); // suggestions load; audit still gated
+  await waitForFrame(lastFrame, (f) => (f.match(/Loading\.\.\./g) || []).length <= 2, { label: 'the dep row to load' });
   const pending = lastFrame();
   assert(
     pending.includes('Override to a safe version') && pending.includes('Unused overrides'),
@@ -224,7 +247,7 @@ async function testAuditDisabled() {
       onAbort: () => {},
     })
   );
-  await wait(3000);
+  await rowsLoaded(lastFrame, 'chalk to load');
   const frame = lastFrame();
   unmount();
 
@@ -244,7 +267,7 @@ async function testOfflineNotice() {
       onAbort: () => {},
     })
   );
-  await wait(3000);
+  await rowsLoaded(lastFrame, 'chalk to load');
   const frame = lastFrame();
   unmount();
 
@@ -269,7 +292,7 @@ async function testOverrideFlow() {
     })
   );
 
-  await wait(3500);
+  await rowsLoaded(lastFrame, 'chalk to load');
   stdin.write('o'); // open the override picker on the focused chalk row
   await wait(80);
   assert(lastFrame().includes('Override') && lastFrame().includes('4.1.2'), "'o' opens the override picker with safe versions");
@@ -285,16 +308,17 @@ async function testOverrideFlow() {
   assert(overrides && overrides.chalk === '5.0.0', 'selecting a version stages an overrides entry that is passed to onSubmit');
 }
 
-// The audit resolves on the microtask queue while the package's suggestions are
-// still in flight over the network, so it has no dep row yet and shows up in the
-// shared "Override to a safe version" section instead. Staging from that row and
-// then letting the suggestions land used to strand the override: the vuln row is
-// filtered out for good once the entry loads, and the provenance guard then made
-// `o` a no-op on every remaining row.
+// A package whose audit result arrives before its own suggestions has no dep row
+// yet, so it shows up in the shared "Override to a safe version" section
+// instead. Staging from that row and then letting the suggestions land used to
+// strand the override: the vuln row is filtered out for good once the entry
+// loads, and the provenance guard then made `o` a no-op on every remaining row.
 //
-// Uses a package no other test touches — registry.js caches package metadata by
-// name, so a warm cache would resolve the dep row before the first keypress and
-// quietly turn this into a test of the ordinary same-row flow.
+// The ordering *is* the test, so it holds the suggestion fetch open explicitly
+// rather than betting that the registry is slower than the audit. Racing the
+// live registry made this the flakiest test in the file — and, when the metadata
+// cache happened to be warm, silently turned it into a test of the ordinary
+// same-row flow.
 async function testOverrideOriginRehomed() {
   const descriptors = [{ name: 'lodash', range: '^4.17.0', field: 'dependencies' }];
   const vulns = new Map();
@@ -310,6 +334,9 @@ async function testOverrideOriginRehomed() {
     safeVersions: ['4.17.20', '4.17.21'],
   });
 
+  let releaseSuggestions;
+  const suggestionGate = new Promise((r) => (releaseSuggestions = r));
+
   let overrides = null;
   const { stdin, lastFrame, unmount } = render(
     e(App, {
@@ -317,6 +344,17 @@ async function testOverrideOriginRehomed() {
       audit: true,
       section: true,
       runAudit: async () => ({ offline: false, vulns }),
+      // Real suggestion logic, stubbed registry metadata — only the network and
+      // its timing are removed, not the behavior under test.
+      loadSuggestions: async (descriptor) => {
+        await suggestionGate;
+        return fetchSuggestions(descriptor, {
+          fetchPackageMeta: async () => ({
+            versions: ['4.17.15', '4.17.21', '5.0.0'],
+            distTags: { latest: '5.0.0' },
+          }),
+        });
+      },
       onSubmit: (sel, ovr) => {
         overrides = ovr;
       },
@@ -324,7 +362,7 @@ async function testOverrideOriginRehomed() {
     })
   );
 
-  await wait(100); // audit resolved, the suggestions have not
+  await wait(80); // audit resolved; suggestions held open
   const pending = lastFrame();
   assert(
     pending.includes('Loading...') && pending.includes('Override to a safe version'),
@@ -336,7 +374,8 @@ async function testOverrideOriginRehomed() {
   stdin.write('\r'); // take the first safe version (4.17.20)
   await wait(50);
 
-  await wait(3500); // suggestions land; the vuln row is replaced by a dep row
+  releaseSuggestions(); // the vuln row is now replaced by a dep row
+  await wait(150);
   const loaded = lastFrame().replace(/\s+/g, ' ');
   assert(!loaded.includes('already staged above'), 'the note pointing at the vanished origin row is gone');
 
@@ -377,7 +416,7 @@ async function testRemovableOverride() {
     })
   );
 
-  await wait(3500);
+  await rowsLoaded(lastFrame, 'chalk to load');
   const frame = lastFrame();
   assert(frame.includes('left-pad') && frame.includes('not needed'), 'a no-longer-needed override is listed under Overrides');
 
@@ -445,7 +484,7 @@ async function testScopedOverrideFlow() {
     })
   );
 
-  await wait(3500);
+  await rowsLoaded(lastFrame, 'chalk to load');
   stdin.write('[B'); // down from chalk -> the dependency-a override row
   await wait(50);
   stdin.write('o'); // open the scoped picker
@@ -523,7 +562,7 @@ async function testScopedOverrideDisambiguation() {
     })
   );
 
-  await wait(3500);
+  await rowsLoaded(lastFrame, 'chalk to load');
   stdin.write('[B'); // down to the dependency-a override row
   await wait(50);
   stdin.write('o'); // open the scoped picker
