@@ -534,6 +534,82 @@ describe('computeVulnerabilities — removable overrides', () => {
   });
 });
 
+// --- Overrides vs. the vulnerability list ------------------------------------
+// The versions an override's dependents would fall back to are a *probe*: they
+// tell us whether the pin still earns its keep. They are not versions the
+// project has, so they must never flag a package as vulnerable — while still
+// reaching the advisory lookup, which is the only way to judge the fallback.
+describe('computeVulnerabilities — an existing override is not re-flagged', () => {
+  it('does not flag a package the override already pins to a safe version', async () => {
+    const installed = {
+      versions: new Map([['unhead', new Set(['2.1.13'])]]),
+      direct: new Set(),
+      packages: {
+        '': { dependencies: { '@vueuse/head': '^2.0.0' } },
+        'node_modules/@vueuse/head': { version: '2.0.0', dependencies: { unhead: '^1.11.0' } },
+        'node_modules/unhead': { version: '2.1.13' },
+      },
+    };
+    const registry = stubRegistry({
+      meta: { unhead: { versions: ['1.11.20', '2.1.13'], distTags: {} } },
+      advisories: { unhead: [advisory({ vulnerable_versions: '<=2.1.10', severity: 'moderate' })] },
+    });
+
+    const { vulns, removableOverrides } = await computeVulnerabilities(
+      { overrides: { unhead: '2.1.13' }, installed },
+      registry
+    );
+
+    assert.equal(vulns.has('unhead'), false, 'the installed version is safe — the pin is working');
+    assert.equal(
+      removableOverrides.has('unhead'),
+      false,
+      'and dropping the pin would fall back to 1.11.20, so it is not removable either'
+    );
+  });
+
+  it("asks the advisory service about an override's fallback versions", async () => {
+    const installed = treeWith({
+      packages: { '': {}, 'node_modules/consumer': { version: '1.0.0', dependencies: { lodash: '^4.17.0' } } },
+    });
+    const registry = stubRegistry({ meta: { lodash: { versions: ['4.17.11', '4.17.15'], distTags: {} } } });
+    const inner = registry.fetchBulkAdvisories;
+    let queried = null;
+    registry.fetchBulkAdvisories = async (versionsByName) => {
+      queried = versionsByName;
+      return inner(versionsByName);
+    };
+
+    await computeVulnerabilities({ overrides: { lodash: '4.17.21' }, installed }, registry);
+
+    assert.deepEqual(
+      [...(queried.lodash ?? [])],
+      ['4.17.15'],
+      'lodash is installed nowhere, but the version its dependent would fall back to still needs checking'
+    );
+  });
+
+  it('still resolves an override verdict when the only versions to check are its fallbacks', async () => {
+    const installed = {
+      versions: new Map(),
+      direct: new Set(),
+      packages: { '': {}, 'node_modules/consumer': { version: '1.0.0', dependencies: { lodash: '^4.17.0' } } },
+    };
+    const registry = stubRegistry({
+      meta: { lodash: { versions: ['4.17.11', '4.17.21'], distTags: {} } },
+      advisories: { lodash: [advisory({ vulnerable_versions: '<4.17.19' })] },
+    });
+
+    const { vulns, removableOverrides } = await computeVulnerabilities(
+      { overrides: { lodash: '4.17.21' }, installed },
+      registry
+    );
+
+    assert.deepEqual(removableOverrides.get('lodash'), { pin: '4.17.21', reason: 'redundant' });
+    assert.equal(vulns.has('lodash'), false, 'a fallback version is not something the project has');
+  });
+});
+
 // --- Workspaces --------------------------------------------------------------
 // The instance walk (resolveInstalledPath) must resolve a workspace's edges,
 // whether the dependency is hoisted to the root node_modules or installed local
