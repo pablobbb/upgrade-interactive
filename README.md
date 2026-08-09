@@ -46,7 +46,8 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
    (`parent › package`) so already-safe copies are left alone. If the package is
    one of your **direct** dependencies, it bumps that dependency's range instead
    — npm rejects a top-level override that conflicts with a direct dependency
-   (`EOVERRIDE`).
+   (`EOVERRIDE`). The picker scrolls, so a package with a long list of safe
+   versions (or a long list of dependents) stays reachable in any terminal.
 6. **Flags overrides that are no longer needed** (nothing depends on them, or
    your deps now resolve safely without them). Press `x` to remove one — it only
    ever removes the one you select.

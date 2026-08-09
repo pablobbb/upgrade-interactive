@@ -582,6 +582,73 @@ async function testScopedOverrideDisambiguation() {
   );
 }
 
+// A vulnerable package with far more safe versions than the overlay can show at
+// once — the shape that used to render straight past the bottom of the terminal.
+function manyCandidatesAudit() {
+  const safeVersions = Array.from({ length: 30 }, (_, i) => `1.${i + 10}.0`);
+  const vulns = new Map();
+  vulns.set('chalk', {
+    advisories: [],
+    severity: 'high',
+    cve: 'CVE-2021-0001',
+    url: 'https://github.com/advisories/GHSA-chalk',
+    affectedRange: '<1.10.0',
+    current: '1.0.0',
+    firstPatched: safeVersions[0],
+    safeVersions,
+  });
+  return { offline: false, vulns, safeVersions };
+}
+
+async function testOverridePickerScrolls() {
+  const { safeVersions, ...audit } = manyCandidatesAudit();
+  const last = safeVersions[safeVersions.length - 1];
+  const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
+  let overrides = null;
+  const { stdin, lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      audit: true,
+      section: true,
+      runAudit: async () => audit,
+      onSubmit: (sel, ovr) => (overrides = ovr),
+      onAbort: () => {},
+    })
+  );
+
+  await rowsLoaded(lastFrame, 'chalk to load');
+  stdin.write('o');
+  await waitForFrame(lastFrame, (f) => f.includes('to a safe version:'), { label: 'the picker to open' });
+
+  const opened = lastFrame();
+  assert(opened.includes('more below'), 'a candidate list taller than the overlay says how many are hidden');
+  assert(!opened.includes(last), 'the far end of the list starts out off-window');
+
+  // Walk to the bottom: the window must follow the cursor, not stay put. Press
+  // and poll rather than sending a fixed count — a keypress landing mid-render
+  // can be dropped, and ↓ clamps at the end, so extra presses are harmless.
+  // Watch the *cursor*, not mere visibility: the window reveals the tail a few
+  // keystrokes before the cursor gets there.
+  const cursorOnLast = `❯ ${last}`;
+  const deadline = Date.now() + 15000;
+  while (!lastFrame().includes(cursorOnLast) && Date.now() < deadline) {
+    stdin.write('\u001B[B');
+    await wait(20);
+  }
+  const scrolled = lastFrame();
+
+  assert(scrolled.includes(cursorOnLast), 'scrolling down puts the last candidate under the cursor');
+  assert(scrolled.includes('more above'), 'and reports the candidates now scrolled off the top');
+
+  stdin.write('\r'); // apply the version the window scrolled to
+  await wait(50);
+  stdin.write('\r'); // submit
+  await wait(100);
+  unmount();
+
+  assert(overrides && overrides.chalk === last, 'the version selected at the bottom of the list is the one staged');
+}
+
 async function main() {
   await testBasicFlow();
   await testAbort();
@@ -591,6 +658,7 @@ async function main() {
   await testAuditDisabled();
   await testOfflineNotice();
   await testOverrideFlow();
+  await testOverridePickerScrolls();
   await testScopedOverrideFlow();
   await testScopedOverrideDisambiguation();
   await testOverrideOriginRehomed();

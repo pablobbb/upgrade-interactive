@@ -1,8 +1,28 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { isPinnableInstance, defaultScopedChoiceIndex } from '../override-select.js';
+import { windowSlice } from './rows.js';
 
 const e = React.createElement;
+
+// How many candidate lines an overlay shows at once. `safeVersions` is every
+// published version at or above the current one, so a long-lived package can
+// easily produce dozens — without a window they render past the bottom of the
+// terminal, unreachable.
+export const PICKER_MAX_ROWS = 8;
+// The read-only tail of the scoped picker (already-safe / no-fix dependents) is
+// context, not something to navigate, so it gets a hard cap and a count.
+const OTHERS_MAX_ROWS = 3;
+// Worst-case total lines an open overlay occupies: its rows, both scroll hints,
+// the read-only tail, the border, title and key footer. App subtracts this from
+// the main list's budget so the overlay isn't pushed off the bottom.
+export const PICKER_MAX_HEIGHT = PICKER_MAX_ROWS + OTHERS_MAX_ROWS + 7;
+
+// The "↑ N more above" / "↓ N more below" hints, matching the main list's.
+function ScrollHint({ count, direction }) {
+  if (count <= 0) return null;
+  return e(Text, { dimColor: true }, `  ${direction === 'up' ? '↑' : '↓'} ${count} more ${direction === 'up' ? 'above' : 'below'}`);
+}
 
 /**
  * A small overlay for choosing which safe version to pin a vulnerable package
@@ -29,17 +49,22 @@ export function OverridePicker({ name, versions, onSelect, onCancel }) {
     }
   });
 
+  const { visible, above, below } = windowSlice(versions, index, PICKER_MAX_ROWS);
+
   return e(
     Box,
     { flexDirection: 'column', marginTop: 1, borderStyle: 'round', paddingX: 1 },
     e(Text, { bold: true }, 'Override ', e(Text, { color: 'cyanBright' }, name), ' to a safe version:'),
-    ...versions.map((v, i) =>
-      e(
+    e(ScrollHint, { count: above, direction: 'up' }),
+    ...visible.map((v, offset) => {
+      const i = above + offset;
+      return e(
         Box,
         { key: v },
         e(Text, { color: i === index ? 'greenBright' : undefined }, i === index ? '❯ ' : '  ', v)
-      )
-    ),
+      );
+    }),
+    e(ScrollHint, { count: below, direction: 'down' }),
     e(Box, { marginTop: 1 }, e(Text, { dimColor: true }, '↑/↓ choose · <enter> apply · <esc> cancel'))
   );
 }
@@ -100,12 +125,18 @@ export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
     return i.parentName;
   };
 
+  const { visible, above, below } = windowSlice(pinnable, row, PICKER_MAX_ROWS);
+  const shownOthers = others.slice(0, OTHERS_MAX_ROWS);
+  const hiddenOthers = others.length - shownOthers.length;
+
   return e(
     Box,
     { flexDirection: 'column', marginTop: 1, borderStyle: 'round', paddingX: 1 },
     e(Text, { bold: true }, 'Pin ', e(Text, { color: 'cyanBright' }, name), ' per dependent:'),
-    ...pinnable.map((i, idx) =>
-      e(
+    e(ScrollHint, { count: above, direction: 'up' }),
+    ...visible.map((i, offset) => {
+      const idx = above + offset;
+      return e(
         Box,
         { key: `${i.parentPath}` },
         e(
@@ -116,9 +147,10 @@ export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
           e(Text, { bold: true }, i.safeCandidates[choices[idx]]),
           i.safeCandidates.length > 1 ? e(Text, { dimColor: true }, ' (←/→)') : null
         )
-      )
-    ),
-    ...others.map((i) =>
+      );
+    }),
+    e(ScrollHint, { count: below, direction: 'down' }),
+    ...shownOthers.map((i) =>
       e(
         Box,
         { key: `${i.parentPath}` },
@@ -130,6 +162,9 @@ export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
         )
       )
     ),
+    hiddenOthers > 0
+      ? e(Box, null, e(Text, { dimColor: true }, `  … and ${hiddenOthers} more left as is`))
+      : null,
     e(
       Box,
       { marginTop: 1 },
