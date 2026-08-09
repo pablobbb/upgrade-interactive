@@ -31,6 +31,18 @@ function matchesAny(version, advisories) {
   return advisories.some((a) => satisfiesAdvisory(version, a));
 }
 
+/** Union two { name: Set<version> } maps into a fresh one. */
+function mergeVersionSets(a, b) {
+  const merged = {};
+  for (const source of [a, b]) {
+    for (const [name, set] of Object.entries(source)) {
+      if (!merged[name]) merged[name] = new Set();
+      for (const v of set) merged[name].add(v);
+    }
+  }
+  return merged;
+}
+
 /** Highest valid semver in a list, or null. */
 function maxVersion(list) {
   let max = null;
@@ -300,12 +312,26 @@ export async function computeVulnerabilities(
   const getMeta = deps.fetchPackageMeta || fetchPackageMeta;
   const getAdvisories = deps.fetchBulkAdvisories || fetchBulkAdvisories;
 
+  // Two version sets with different jobs. `versionsByName` is what the project
+  // actually has — the installed tree, plus whatever each direct range resolves
+  // to — and it alone decides which packages get flagged. `probeVersions` holds
+  // the counterfactual "what would install if this override were removed"
+  // versions, which exist only to judge whether an existing override still earns
+  // its keep. Both are queried for advisories; only the first can flag.
+  //
+  // Keeping them apart is the point: a package you have correctly pinned to a
+  // safe version is not vulnerable, however bad the version its dependents would
+  // fall back to. Merged, it would resurface in "Override to a safe version"
+  // labelled with a version installed nowhere in the tree.
   const versionsByName = {};
-  const add = (name, version) => {
+  const probeVersions = {};
+  const adder = (bucket) => (name, version) => {
     if (!version) return;
-    if (!versionsByName[name]) versionsByName[name] = new Set();
-    versionsByName[name].add(version);
+    if (!bucket[name]) bucket[name] = new Set();
+    bucket[name].add(version);
   };
+  const add = adder(versionsByName);
+  const addProbe = adder(probeVersions);
 
   // Installed versions across the whole tree (direct + transitive).
   if (installed && installed.versions) {
@@ -359,11 +385,16 @@ export async function computeVulnerabilities(
       if (best) candidates.push(best);
       else resolvable = false;
     }
-    for (const c of candidates) add(name, c);
+    for (const c of candidates) addProbe(name, c);
     overrideInfo.set(name, { pin, ranges, candidates, resolvable });
   });
 
-  if (Object.keys(versionsByName).length === 0) {
+  // The advisory query spans both sets — an override's fallback versions still
+  // need checking when nothing real is left to flag, which is exactly the case
+  // for a project whose only finding is an override that has outlived its need.
+  const queryVersions = mergeVersionSets(versionsByName, probeVersions);
+
+  if (Object.keys(queryVersions).length === 0) {
     // Nothing to check for vulnerabilities, but a 'dead' override needs no
     // advisory data — still surface it instead of silently dropping it.
     return {
@@ -373,7 +404,7 @@ export async function computeVulnerabilities(
     };
   }
 
-  const { ok, advisories } = await getAdvisories(versionsByName);
+  const { ok, advisories } = await getAdvisories(queryVersions);
 
   const vulnNames = [...advisories.keys()].filter((name) => {
     const versions = versionsByName[name] ? [...versionsByName[name]] : [];

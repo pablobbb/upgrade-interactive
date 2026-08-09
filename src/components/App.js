@@ -3,8 +3,8 @@ import { Box, Text, useInput, useApp } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
 import { Row, VulnRow, OverrideRow, LoadingRow, SectionHeader, WorkspaceHeader } from './Row.js';
-import { buildDisplayRows, overrideView, nextColumn, bulkColumn } from './rows.js';
-import { OverridePicker, ScopedOverridePicker } from './OverridePicker.js';
+import { buildDisplayRows, overrideView, nextColumn, bulkColumn, windowSlice } from './rows.js';
+import { OverridePicker, ScopedOverridePicker, PICKER_MAX_HEIGHT } from './OverridePicker.js';
 import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
 import { loadInstalledVersions } from '../lockfile.js';
@@ -337,11 +337,14 @@ export function App({
   }
 
   const termRows = (process.stdout && process.stdout.rows) || 24;
-  const maxRows = Math.max(5, termRows - 12);
+  // An open picker renders *below* the list, so a full-height list would push it
+  // off the bottom of the terminal. Give the overlay its budget back while it's
+  // up; the list keeps a few rows of context either way.
+  const maxRows = override
+    ? Math.max(3, termRows - 12 - PICKER_MAX_HEIGHT)
+    : Math.max(5, termRows - 12);
   const focusedIndex = Math.max(0, rows.findIndex((r) => r.key === focusedKey));
-  let windowStart = clamp(focusedIndex - Math.floor(maxRows / 2), 0, Math.max(0, rows.length - maxRows));
-  const windowEnd = Math.min(rows.length, windowStart + maxRows);
-  const visible = rows.slice(windowStart, windowEnd);
+  const { visible, above, below } = windowSlice(rows, focusedIndex, maxRows);
 
   return e(
     Box,
@@ -351,7 +354,7 @@ export function App({
     audit && auditState && auditState.offline
       ? e(Text, { color: 'yellow' }, "  ℹ no network — couldn't check for vulnerable packages")
       : null,
-    windowStart > 0 ? e(Text, { dimColor: true }, `  ↑ ${windowStart} more above`) : null,
+    above > 0 ? e(Text, { dimColor: true }, `  ↑ ${above} more above`) : null,
     ...visible.map((row) => {
       if (row.kind === 'wsheader') {
         return e(WorkspaceHeader, { key: row.key, relPath: row.relPath, workspace: row.workspace });
@@ -392,7 +395,7 @@ export function App({
         overrideNote: ov.note,
       });
     }),
-    windowEnd < rows.length ? e(Text, { dimColor: true }, `  ↓ ${rows.length - windowEnd} more below`) : null,
+    below > 0 ? e(Text, { dimColor: true }, `  ↓ ${below} more below`) : null,
     override && override.mode === 'scoped'
       ? e(ScopedOverridePicker, {
           name: override.name,

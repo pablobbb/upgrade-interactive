@@ -144,6 +144,20 @@ export function bulkColumn(suggestions, which) {
 }
 
 /**
+ * The slice of `items` to show around `focusedIndex` when only `maxRows` fit,
+ * plus how many are hidden on each side so the caller can render the "↑ N more
+ * above" / "↓ N more below" hints. The focused item stays centered until the
+ * list runs out at either end. Shared by the main list and the override
+ * overlays so both scroll — and describe their scrolling — identically.
+ */
+export function windowSlice(items, focusedIndex, maxRows) {
+  const lastStart = Math.max(0, items.length - maxRows);
+  const start = Math.max(0, Math.min(Math.max(0, focusedIndex) - Math.floor(maxRows / 2), lastStart));
+  const end = Math.min(items.length, start + maxRows);
+  return { visible: items.slice(start, end), above: start, below: items.length - end };
+}
+
+/**
  * Resolve what a single row should show for a staged override. `stagedOverrides`
  * is keyed by package name but carries provenance
  * ({ spec, originKey, originLabel }), so a package appearing in several

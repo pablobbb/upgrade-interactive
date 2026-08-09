@@ -222,10 +222,13 @@ describe('isMonorepoProject', () => {
 
 describe('manifestPathsOf', () => {
   const ROOT = path.join(path.sep, 'repo');
+  // `relPath` arrives already POSIX from expandWorkspaces (asserted there), so
+  // these fixtures spell it the way discovery really produces it on every
+  // platform, rather than rebuilding it with path.join.
   const tree = [
     { dir: ROOT, relPath: '.', name: 'root' },
-    { dir: path.join(ROOT, 'packages', 'a'), relPath: path.join('packages', 'a'), name: '@acme/a' },
-    { dir: path.join(ROOT, 'packages', 'b'), relPath: path.join('packages', 'b'), name: '@acme/b' },
+    { dir: path.join(ROOT, 'packages', 'a'), relPath: 'packages/a', name: '@acme/a' },
+    { dir: path.join(ROOT, 'packages', 'b'), relPath: 'packages/b', name: '@acme/b' },
   ];
 
   it('is the lockfile root alone for a standalone project', () => {
@@ -234,12 +237,6 @@ describe('manifestPathsOf', () => {
 
   it('lists the root plus each workspace, dropping the root entry', () => {
     assert.deepEqual(manifestPathsOf({ discovered: tree }, ROOT), ['', 'packages/a', 'packages/b']);
-  });
-
-  it('normalizes to POSIX separators — lockfile keys never use backslashes', () => {
-    const project = { discovered: [{ dir: ROOT, relPath: '.' }, { dir: ROOT, relPath: ['packages', 'a'].join(path.sep) }] };
-
-    assert.deepEqual(manifestPathsOf(project, ROOT), ['', 'packages/a']);
   });
 
   // --no-workspaces nulls `workspaces` (what is displayed and written) but not

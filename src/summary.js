@@ -18,8 +18,9 @@ export function isMonorepoProject(project) {
 
 /**
  * Lockfile-style keys for the project's own manifests: "" for the root, plus one
- * per workspace. `relPath` comes from path.relative and so uses the platform
- * separator, while lockfile keys are always POSIX — normalize.
+ * per workspace. Lockfile keys are always POSIX, and so is `relPath` — see
+ * `expandWorkspaces`, which normalizes it once at the source — so it is used
+ * as-is.
  *
  * The audit needs this to tell a workspace apart from an ordinary `file:`
  * dependency: npm implements workspaces as file: links, so both appear in the
@@ -45,7 +46,7 @@ export function manifestPathsOf(project, lockfileDir) {
   const tree = project.discovered || [];
   const root = tree[0];
   if (!root || path.resolve(root.dir) !== path.resolve(lockfileDir)) return [''];
-  return ['', ...tree.filter((w) => w.relPath !== '.').map((w) => w.relPath.split(path.sep).join('/'))];
+  return ['', ...tree.filter((w) => w.relPath !== '.').map((w) => w.relPath)];
 }
 
 /**
@@ -79,7 +80,7 @@ export function formatIgnoredConfigNote(project, resolved = {}) {
       (key) => typeof config[key] === 'boolean' && config[key] !== resolved[key]
     );
     if (keys.length === 0) continue;
-    ignored.push({ relPath: (manifest.relPath || '').split(path.sep).join('/'), keys });
+    ignored.push({ relPath: manifest.relPath || '', keys });
   }
   if (ignored.length === 0) return '';
 

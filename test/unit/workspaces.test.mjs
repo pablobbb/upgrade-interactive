@@ -37,8 +37,23 @@ describe('expandWorkspaces', () => {
 
     const ws = await expandWorkspaces(root, ['packages/*']);
 
-    assert.deepEqual(ws.map((w) => w.relPath), [path.join('packages', 'a'), path.join('packages', 'b')]);
+    assert.deepEqual(ws.map((w) => w.relPath), ['packages/a', 'packages/b']);
     assert.deepEqual(ws.map((w) => w.name), ['@acme/a', '@acme/b']);
+  });
+
+  // relPath is an identity/display value, never a path handed to the filesystem,
+  // and `-w packages/api` has to select a workspace on Windows too. Asserting the
+  // POSIX form literally is what pins that down — path.join here would make the
+  // assertion agree with any separator and test nothing.
+  it('reports relPath POSIX-separated regardless of platform', async () => {
+    const root = await scaffold({
+      'packages/group': { name: 'group' },
+      'packages/group/deep': { name: 'deep' },
+    });
+
+    const ws = await expandWorkspaces(root, ['packages/**']);
+
+    assert.deepEqual(ws.map((w) => w.relPath), ['packages/group', 'packages/group/deep']);
   });
 
   it('accepts the object form { packages: [...] }', async () => {
@@ -59,7 +74,56 @@ describe('expandWorkspaces', () => {
 
     const ws = await expandWorkspaces(root, ['apps/web']);
 
-    assert.deepEqual(ws.map((w) => w.relPath), [path.join('apps', 'web')]);
+    assert.deepEqual(ws.map((w) => w.relPath), ['apps/web']);
+  });
+
+  // npm honors a `*` anywhere inside a segment. Treating such a pattern as a
+  // literal directory name matched nothing and said nothing about it, so a repo
+  // globbing `packages/*-api` silently ran as if it had no workspaces at all.
+  it('expands a "*" that is only part of a segment', async () => {
+    const root = await scaffold({
+      'packages/store-api': { name: 'store-api' },
+      'packages/user-api': { name: 'user-api' },
+      'packages/web': { name: 'web' },
+    });
+
+    const ws = await expandWorkspaces(root, ['packages/*-api']);
+
+    assert.deepEqual(ws.map((w) => w.name), ['store-api', 'user-api']);
+  });
+
+  it('expands a "*" in prefix position and anchors the rest of the segment', async () => {
+    const root = await scaffold({
+      'apps/web-admin': { name: 'web-admin' },
+      'apps/web-store': { name: 'web-store' },
+      'apps/admin-web': { name: 'admin-web' }, // "web-" is a prefix, not a substring
+    });
+
+    const ws = await expandWorkspaces(root, ['apps/web-*']);
+
+    assert.deepEqual(ws.map((w) => w.name), ['web-admin', 'web-store']);
+  });
+
+  it('treats regex metacharacters in a segment as literal text', async () => {
+    const root = await scaffold({
+      'packages/a.b': { name: 'dotted' },
+      'packages/axb': { name: 'any-char' }, // "." must not match "x"
+    });
+
+    const ws = await expandWorkspaces(root, ['packages/a.b']);
+
+    assert.deepEqual(ws.map((w) => w.name), ['dotted']);
+  });
+
+  it('applies a partial-segment "*" to "!" exclusions too', async () => {
+    const root = await scaffold({
+      'packages/a': { name: 'a' },
+      'packages/b-test': { name: 'b-test' },
+    });
+
+    const ws = await expandWorkspaces(root, ['packages/*', '!packages/*-test']);
+
+    assert.deepEqual(ws.map((w) => w.name), ['a']);
   });
 
   it('expands a trailing "**" to the directory and all descendants', async () => {
@@ -82,7 +146,7 @@ describe('expandWorkspaces', () => {
 
     const ws = await expandWorkspaces(root, ['packages/*']);
 
-    assert.deepEqual(ws.map((w) => w.relPath), [path.join('packages', 'a')]);
+    assert.deepEqual(ws.map((w) => w.relPath), ['packages/a']);
   });
 
   it('never descends into node_modules', async () => {
@@ -234,8 +298,8 @@ describe('discoverWorkspaces', () => {
       list.map((p) => ({ name: p.name, relPath: p.relPath })),
       [
         { name: 'root', relPath: '.' },
-        { name: '@acme/a', relPath: path.join('packages', 'a') },
-        { name: '@acme/b', relPath: path.join('packages', 'b') },
+        { name: '@acme/a', relPath: 'packages/a' },
+        { name: '@acme/b', relPath: 'packages/b' },
       ]
     );
   });

@@ -3,7 +3,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDisplayRows, overrideView, nextColumn, bulkColumn } from '../../src/components/rows.js';
+import { buildDisplayRows, overrideView, nextColumn, bulkColumn, windowSlice } from '../../src/components/rows.js';
 
 // A normalized descriptor, as App produces before building rows.
 const d = (name, field, relPath = '.', workspace = null) => ({
@@ -283,5 +283,40 @@ describe('bulkColumn', () => {
   it('always has Current to fall back to', () => {
     assert.equal(bulkColumn(NO_RANGE, 'c'), 0);
     assert.equal(bulkColumn(NO_LATEST, 'c'), 0);
+  });
+});
+
+// --- Scroll window -----------------------------------------------------------
+// Shared by the main list and both override overlays, so a bug here shows up as
+// unreachable rows in whichever one is taller than the terminal.
+
+describe('windowSlice', () => {
+  const items = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+
+  it('returns everything when the list is shorter than the window', () => {
+    assert.deepEqual(windowSlice(['a', 'b'], 0, 5), { visible: ['a', 'b'], above: 0, below: 0 });
+  });
+
+  it('centers the focused item once the list is longer than the window', () => {
+    assert.deepEqual(windowSlice(items, 3, 3), { visible: ['c', 'd', 'e'], above: 2, below: 2 });
+  });
+
+  it('anchors to the top rather than scrolling past the first item', () => {
+    assert.deepEqual(windowSlice(items, 0, 3), { visible: ['a', 'b', 'c'], above: 0, below: 4 });
+  });
+
+  it('anchors to the bottom rather than scrolling past the last item', () => {
+    assert.deepEqual(windowSlice(items, 6, 3), { visible: ['e', 'f', 'g'], above: 4, below: 0 });
+  });
+
+  it('keeps the focused item inside the slice at every position', () => {
+    for (let i = 0; i < items.length; i++) {
+      const { visible, above } = windowSlice(items, i, 3);
+      assert.equal(visible[i - above], items[i], `focus ${i} must be visible`);
+    }
+  });
+
+  it('reports no hidden items for an exact fit', () => {
+    assert.deepEqual(windowSlice(items, 0, 7), { visible: items, above: 0, below: 0 });
   });
 });

@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.0.1 — 2026-08-08
+
+### Fixed
+
+- **`workspaces` patterns with a `*` inside a path segment now expand.**
+  `packages/*-api` or `apps/web-*` were treated as literal directory names, so
+  they matched nothing — and because a `workspaces` field that expands to no
+  workspaces is indistinguishable from not having one, the tool silently ran as
+  a single-manifest project instead of saying so. A bare `packages/*` was
+  unaffected.
+- **`-w <path>` now matches on Windows.** The filter was compared against
+  `path.relative`'s output, which uses `\` there, so the documented
+  `-w packages/api` exited with `No workspace matches`. Workspace paths are now
+  POSIX-separated everywhere they are used as an identity or shown on screen,
+  and a `-w` value is matched regardless of separator or a trailing slash.
+
+### Notes
+
+- The `--help` text now carries `-w` examples for both the path and the
+  package-name form, matching the README.
+
 ## 2.0.0 — 2026-08-07
 
 npm workspaces support. **The version is a major because the default set of files

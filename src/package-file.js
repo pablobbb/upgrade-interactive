@@ -5,6 +5,16 @@ import { discoverWorkspaces } from './workspaces.js';
 
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies'];
 
+/**
+ * A `-w` value in the form `relPath` is stored in: backslashes folded to `/` and
+ * any trailing slash dropped. Package names pass through untouched — a scoped
+ * name's `/` is not a separator, and nothing else here alters one.
+ */
+function normalizeFilter(value) {
+  const posix = value.split('\\').join('/');
+  return posix.length > 1 ? posix.replace(/\/+$/, '') : posix;
+}
+
 export async function loadManifest(cwd) {
   const filePath = path.join(cwd, 'package.json');
   let raw;
@@ -76,12 +86,19 @@ export async function loadManifest(cwd) {
  *     workspaces whose package name or relPath matches one of these (npm's `-w`).
  *     Every manifest is still loaded (the root must stay writable for the
  *     root-only overrides), but only matched workspaces contribute rows.
+ *     A path value is compared separator- and trailing-slash-insensitively, so
+ *     `packages/api`, `packages\api` and `packages/api/` all select the same
+ *     workspace — a user typing a path their shell just completed shouldn't have
+ *     to know which form the tool stores internally.
  *
  * Throws when the options can't select anything: a `filter` value that matches
  * no package, or a `filter` combined with `workspaces: false`.
  */
 export async function loadProject(cwd, { workspaces = true, filter = null } = {}) {
-  const filterSet = filter && filter.length > 0 ? new Set(filter) : null;
+  // Keyed by the normalized form, valued by what the user actually typed, so the
+  // "no workspace matches" error can quote their input back rather than a
+  // rewritten version of it.
+  const filterSet = filter && filter.length > 0 ? new Map(filter.map((f) => [normalizeFilter(f), f])) : null;
   // `--no-workspaces` loads the root manifest alone, which no -w value can
   // select — silently showing an empty list would look like "nothing to
   // upgrade" rather than the contradiction it is.
@@ -98,6 +115,8 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
   const discovered = workspaces ? tree : null;
   const infos = discovered || [{ dir: cwd, name: null, relPath: '.' }];
   const workspaceNames = new Set((discovered || []).map((p) => p.name).filter(Boolean));
+  // `relPath` is already POSIX (see expandWorkspaces) and a package name never
+  // needs normalizing, so only the user's side of the comparison was rewritten.
   const included = (info) => !filterSet || filterSet.has(info.name) || filterSet.has(info.relPath);
 
   const manifests = [];
@@ -130,9 +149,9 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
 
   // A -w value that matches no package name or path is a typo, not a request
   // for an empty list. Report every unmatched value at once so fixing one
-  // doesn't just surface the next.
+  // doesn't just surface the next, and report it as the user typed it.
   if (filterSet) {
-    const unmatched = [...filterSet].filter((f) => !matched.has(f));
+    const unmatched = [...filterSet].filter(([key]) => !matched.has(key)).map(([, typed]) => typed);
     if (unmatched.length > 0) {
       throw new Error(`No workspace matches: ${unmatched.join(', ')}`);
     }
