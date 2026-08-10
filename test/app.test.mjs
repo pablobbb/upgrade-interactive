@@ -2,12 +2,30 @@
 // keypresses via ink-testing-library. Hits the real npm registry, so it
 // needs network access. Run with: node test/app.test.mjs
 import React from 'react';
-import { render } from 'ink-testing-library';
+import { render as inkRender } from 'ink-testing-library';
 import { App } from '../src/components/App.js';
 import { fetchSuggestions } from '../src/semver-suggest.js';
 
 const e = React.createElement;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Whether ink colorizes depends on the terminal the suite was launched from: a
+// VS Code terminal (TERM=xterm-256color) gets SGR escapes woven between the
+// package name and its marker, a pipe or CI gets none. Assertions here are
+// about text, so strip the escapes at the one place a frame enters the tests
+// rather than teaching 50-odd substring checks about color. The app still
+// renders colored — only what we read back is normalized.
+const SGR = /\u001B\[[0-9;]*m/g;
+function render(tree) {
+  const instance = inkRender(tree);
+  return {
+    ...instance,
+    lastFrame: () => {
+      const frame = instance.lastFrame();
+      return typeof frame === 'string' ? frame.replace(SGR, '') : frame;
+    },
+  };
+}
 
 // Poll until `predicate(lastFrame())` holds. The suggestion fetches hit the real
 // registry, so a fixed sleep is a bet on latency: too short and the assertion
