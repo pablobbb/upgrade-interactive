@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.1.0 — 2026-08-09
+
+### Added
+
+- **The override pickers scroll.** Both overlays rendered every row
+  unconditionally. The candidate list is every published version at or above the
+  current one, so a long-lived package pushed its versions past the bottom of the
+  screen with no way to reach them; the scoped picker had the same problem across
+  its list of dependents. Both now window like the main list and report what is
+  hidden above and below. An open overlay also gives its height back to the list
+  behind it — on a 30-row terminal, opening a picker used to take the frame from
+  28 lines to 64, scrolling its own title off the screen.
+
+### Fixed
+
+- **`←` / `→` no longer park the marker on a column the package doesn't offer.**
+  From Range on a row with no Latest, `→` moved the marker into the empty cell;
+  on `Enter` the row was then dropped, silently losing the Range pick. The arrows
+  now stop at the last column that exists.
+- **Bulk `r` no longer stages a major on a row that offers no Range.** It set the
+  Range column unconditionally. The bulk keys now fall back *downwards* — `l`
+  takes Range when there is no Latest, and `r` leaves a package on Current rather
+  than staging a major it never offered.
+- **A package an override already pins to a safe version is no longer flagged
+  again.** The versions its dependents would fall back to if the pin were removed
+  were being fed into the same set that decides which packages are vulnerable, so
+  a correctly-pinned package reappeared under "Override to a safe version",
+  labelled with a version installed nowhere in the tree. Those fallback versions
+  are still computed, but only to decide whether the pin is still needed.
+
 ## 2.0.1 — 2026-08-08
 
 ### Fixed
