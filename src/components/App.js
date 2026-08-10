@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Box, Text, useInput, useApp } from 'ink';
+import { Box, Text, useInput, useApp, useStdout } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
 import { Row, VulnRow, OverrideRow, LoadingRow, SectionHeader, WorkspaceHeader } from './Row.js';
@@ -68,6 +68,12 @@ export function App({
   loadSuggestions = fetchSuggestions,
 }) {
   const { exit } = useApp();
+  // The output ink is actually rendering to, not the process-wide one: under the
+  // test renderer they are different objects, and reading the real terminal
+  // there made the rendered frame depend on the size of the window the suite
+  // happened to be launched from. Hoisted above the early returns below — it is
+  // a hook, so it cannot be called at its point of use.
+  const { stdout } = useStdout();
   // Normalize once so single-package callers (plain { name, range, field }
   // descriptors) and workspace callers share one code path. Memoized on the
   // descriptors prop so the audit/suggestion effects don't re-run every render.
@@ -336,7 +342,7 @@ export function App({
     );
   }
 
-  const termRows = (process.stdout && process.stdout.rows) || 24;
+  const termRows = (stdout && stdout.rows) || 24;
   // An open picker renders *below* the list, so a full-height list would push it
   // off the bottom of the terminal. Give the overlay its budget back while it's
   // up; the list keeps a few rows of context either way.
