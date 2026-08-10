@@ -70,6 +70,13 @@ first); `--no-section` collapses only the inner field grouping.
 | `Enter`            | Apply upgrades and run `npm install`                 |
 | `Esc`   | Abort — nothing is written                            |
 
+Not every package offers all three columns — a package already at the top of its
+range has no Range, one whose range already reaches the newest version has no
+Latest. `←` / `→` skip the columns a package doesn't offer and stop at the last
+one it does, so the marker never sits on an empty cell. `c` / `r` / `l` fall back
+the same way, always *downwards*: `l` takes Range when there's no Latest, and `r`
+leaves a package on Current rather than staging a major it never offered.
+
 Version numbers are colorized by bump size (minor vs. major), highlighting only
 the part that changed.
 

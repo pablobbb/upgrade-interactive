@@ -2,12 +2,30 @@
 // keypresses via ink-testing-library. Hits the real npm registry, so it
 // needs network access. Run with: node test/app.test.mjs
 import React from 'react';
-import { render } from 'ink-testing-library';
+import { render as inkRender } from 'ink-testing-library';
 import { App } from '../src/components/App.js';
 import { fetchSuggestions } from '../src/semver-suggest.js';
 
 const e = React.createElement;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Whether ink colorizes depends on the terminal the suite was launched from: a
+// VS Code terminal (TERM=xterm-256color) gets SGR escapes woven between the
+// package name and its marker, a pipe or CI gets none. Assertions here are
+// about text, so strip the escapes at the one place a frame enters the tests
+// rather than teaching 50-odd substring checks about color. The app still
+// renders colored — only what we read back is normalized.
+const SGR = /\u001B\[[0-9;]*m/g;
+function render(tree) {
+  const instance = inkRender(tree);
+  return {
+    ...instance,
+    lastFrame: () => {
+      const frame = instance.lastFrame();
+      return typeof frame === 'string' ? frame.replace(SGR, '') : frame;
+    },
+  };
+}
 
 // Poll until `predicate(lastFrame())` holds. The suggestion fetches hit the real
 // registry, so a fixed sleep is a bet on latency: too short and the assertion
@@ -582,6 +600,82 @@ async function testScopedOverrideDisambiguation() {
   );
 }
 
+// Deterministic column shapes, so the assertions below don't depend on what the
+// registry happens to publish today. `maxed` gets no Latest column (its range
+// already reaches the newest version); `outdated` gets no Range column (it is
+// already at the top of its range, and the only upgrade is a new major). Those
+// are the two shapes where a column is missing from the end / the middle.
+const COLUMN_SHAPES = {
+  maxed: { versions: ['1.0.0', '1.4.0'], distTags: { latest: '1.4.0' } },
+  outdated: { versions: ['1.0.0', '2.0.0'], distTags: { latest: '2.0.0' } },
+};
+const shapedSuggestions = (descriptor) =>
+  fetchSuggestions(descriptor, { fetchPackageMeta: async (name) => COLUMN_SHAPES[name] });
+
+async function testArrowStopsAtLastColumn() {
+  const descriptors = [{ name: 'maxed', range: '^1.0.0', field: 'dependencies' }];
+  let submitted = null;
+  const { stdin, lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      loadSuggestions: shapedSuggestions,
+      onSubmit: (sel) => (submitted = sel),
+      onAbort: () => {},
+    })
+  );
+  await rowsLoaded(lastFrame, 'the no-Latest package to load');
+
+  stdin.write('\u001B[C'); // right -> Range
+  await wait(50);
+  stdin.write('\u001B[C'); // right again -> there is no Latest to move to
+  await wait(50);
+  stdin.write('\r');
+  await wait(100);
+  unmount();
+
+  assert(
+    submitted && submitted.get('maxed') === '^1.4.0',
+    'right-arrow past the last populated column keeps the Range selection'
+  );
+}
+
+async function testBulkRangeSkipsMissingColumn() {
+  const descriptors = [
+    { name: 'maxed', range: '^1.0.0', field: 'dependencies' },
+    { name: 'outdated', range: '^1.0.0', field: 'dependencies' },
+  ];
+  let submitted = null;
+  const { stdin, lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      loadSuggestions: shapedSuggestions,
+      onSubmit: (sel) => (submitted = sel),
+      onAbort: () => {},
+    })
+  );
+  await rowsLoaded(lastFrame, 'both packages to load');
+
+  stdin.write('r');
+  await wait(50);
+  // The marker itself is the bug: parked on an absent column it renders as a
+  // bare ● in a blank cell, which reads as "this row is staged" while carrying
+  // no version at all. Collapse the column padding to compare row by row.
+  const marked = lastFrame().replace(/\s+/g, ' ');
+  stdin.write('\r');
+  await wait(100);
+  unmount();
+
+  assert(marked.includes('outdated ● ^1.0.0'), "'r' marks Current on a row that offers no Range");
+  assert(
+    !marked.includes('outdated ○ ^1.0.0'),
+    "'r' must not leave the marker on the blank Range cell of a no-Range row"
+  );
+  assert(submitted && submitted.get('maxed') === '^1.4.0', "'r' selects Range where the package offers one");
+  assert(
+    submitted && !submitted.has('outdated'),
+    "'r' leaves a package with no Range column on Current, rather than staging its major"
+  );
+}
 // A vulnerable package with far more safe versions than the overlay can show at
 // once — the shape that used to render straight past the bottom of the terminal.
 function manyCandidatesAudit() {
@@ -653,6 +747,8 @@ async function main() {
   await testBasicFlow();
   await testAbort();
   await testBulkLatest();
+  await testArrowStopsAtLastColumn();
+  await testBulkRangeSkipsMissingColumn();
   await testAuditWarnings();
   await testAuditPendingLoading();
   await testAuditDisabled();

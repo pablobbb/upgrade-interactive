@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Box, Text, useInput, useApp } from 'ink';
+import { Box, Text, useInput, useApp, useStdout } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
 import { Row, VulnRow, OverrideRow, LoadingRow, SectionHeader, WorkspaceHeader } from './Row.js';
-import { buildDisplayRows, overrideView, windowSlice } from './rows.js';
+import { buildDisplayRows, overrideView, nextColumn, bulkColumn, windowSlice } from './rows.js';
 import { OverridePicker, ScopedOverridePicker, PICKER_MAX_HEIGHT } from './OverridePicker.js';
 import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
@@ -68,6 +68,12 @@ export function App({
   loadSuggestions = fetchSuggestions,
 }) {
   const { exit } = useApp();
+  // The output ink is actually rendering to, not the process-wide one: under the
+  // test renderer they are different objects, and reading the real terminal
+  // there made the rendered frame depend on the size of the window the suite
+  // happened to be launched from. Hoisted above the early returns below — it is
+  // a hook, so it cannot be called at its point of use.
+  const { stdout } = useStdout();
   // Normalize once so single-package callers (plain { name, range, field }
   // descriptors) and workspace callers share one code path. Memoized on the
   // descriptors prop so the audit/suggestion effects don't re-run every render.
@@ -216,12 +222,8 @@ export function App({
       const { suggestions } = focusedRow.entry;
       const id = focusedRow.descriptor.id;
       const current = selectedColumns[id] ?? 0;
-      let next = current;
-      for (let step = 0; step < suggestions.length; step++) {
-        next = clamp(next + direction, 0, suggestions.length - 1);
-        if (suggestions[next].spans.length > 0 || next === 0) break;
-        if (next === current) break;
-      }
+      const next = nextColumn(suggestions, current, direction);
+      if (next === current) return;
       setSelectedColumns((prev) => ({ ...prev, [id]: next }));
     },
     [focusedRow, selectedColumns]
@@ -233,10 +235,7 @@ export function App({
         const next = { ...prev };
         for (const entry of entries) {
           if (!entry) continue;
-          const { id } = entry.descriptor;
-          if (which === 'c') next[id] = 0;
-          else if (which === 'r') next[id] = 1;
-          else if (which === 'l') next[id] = entry.suggestions[2].value != null ? 2 : 1;
+          next[entry.descriptor.id] = bulkColumn(entry.suggestions, which);
         }
         return next;
       });
@@ -343,7 +342,7 @@ export function App({
     );
   }
 
-  const termRows = (process.stdout && process.stdout.rows) || 24;
+  const termRows = (stdout && stdout.rows) || 24;
   // An open picker renders *below* the list, so a full-height list would push it
   // off the bottom of the terminal. Give the overlay its budget back while it's
   // up; the list keeps a few rows of context either way.
