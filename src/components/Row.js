@@ -1,6 +1,9 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { hyperlink } from '../links.js';
+import {
+  WARN, CHECK, INFO, CURSOR, MARKER_ON, MARKER_OFF, WORKSPACE_BAR, CHILD, BECOMES, SEPARATOR,
+} from '../icons.js';
 import { SEVERITY } from '../vulnerabilities.js';
 
 const e = React.createElement;
@@ -20,8 +23,8 @@ function Column({ suggestion, selected }) {
     Box,
     { width: 17, flexShrink: 0 },
     hasContent
-      ? e(Text, null, selected ? '● ' : '○ ', e(Spans, { spans: suggestion.spans, inverse: selected }))
-      : e(Text, { dimColor: true }, selected ? '●' : '')
+      ? e(Text, null, `${selected ? MARKER_ON : MARKER_OFF} `, e(Spans, { spans: suggestion.spans, inverse: selected }))
+      : e(Text, { dimColor: true }, selected ? MARKER_ON : '')
   );
 }
 
@@ -29,13 +32,15 @@ function Column({ suggestion, selected }) {
 // global pin, or a per-parent / count summary for scoped pins.
 export function overrideLabel(spec) {
   if (!spec) return null;
-  if (typeof spec === 'string') return `→ override ${spec}`;
+  if (typeof spec === 'string') return `${BECOMES} override ${spec}`;
   if (Array.isArray(spec.scoped) && spec.scoped.length > 0) {
     if (spec.scoped.length === 1) {
       const p = spec.scoped[0];
-      return p.parentName ? `→ pin ${p.parentName} › ${p.version}` : `→ override ${p.version}`;
+      return p.parentName
+        ? `${BECOMES} pin ${p.parentName} ${CHILD} ${p.version}`
+        : `${BECOMES} override ${p.version}`;
     }
-    return `→ ${spec.scoped.length} scoped pins`;
+    return `${BECOMES} ${spec.scoped.length} scoped pins`;
   }
   return null;
 }
@@ -49,16 +54,16 @@ export function pinBlockedNote(vuln) {
   const conflicted = (vuln.instances || []).find((i) => i.conflict);
   const ranges = conflicted && conflicted.conflictRanges ? conflicted.conflictRanges.join(' vs ') : null;
   const detail = ranges ? ` (${ranges})` : '';
-  return `ⓘ workspaces declare different ranges${detail} — upgrade each row instead`;
+  return `${INFO} workspaces declare different ranges${detail} — upgrade each row instead`;
 }
 
-// The ⚠ + severity + CVE link + affected/fixed-in summary shown on a flagged
+// The warning icon + severity + CVE link + affected/fixed-in summary shown on a flagged
 // row. `hideFixed` drops the "fixed in" suffix when the row already shows the
 // fixed version as a column (the override rows), to avoid saying it twice.
 function VulnInfo({ vuln, override, hideFixed }) {
   const sev = SEVERITY[vuln.severity] || SEVERITY.low;
-  let text = `⚠ ${sev.label} ${hyperlink(vuln.cve, vuln.url)} — affects ${vuln.affectedRange}`;
-  if (!hideFixed && vuln.firstPatched) text += ` · fixed in ${vuln.firstPatched}`;
+  let text = `${WARN} ${sev.label} ${hyperlink(vuln.cve, vuln.url)} — affects ${vuln.affectedRange}`;
+  if (!hideFixed && vuln.firstPatched) text += ` ${SEPARATOR} fixed in ${vuln.firstPatched}`;
   const label = overrideLabel(override);
   return e(
     Box,
@@ -68,7 +73,7 @@ function VulnInfo({ vuln, override, hideFixed }) {
   );
 }
 
-// The current → fixed version pair for a row that has no upgrade columns of its
+// The current-to-fixed version pair for a row that has no upgrade columns of its
 // own (the override section). Echoes the deps table's columnar layout so the
 // two sections scan the same way; a missing side renders as a dim "?".
 function FixColumn({ current, fixed }) {
@@ -76,7 +81,7 @@ function FixColumn({ current, fixed }) {
     Box,
     { width: 20, flexShrink: 0 },
     current ? e(Text, { color: 'red' }, current) : e(Text, { dimColor: true }, '?'),
-    e(Text, { dimColor: true }, ' → '),
+    e(Text, { dimColor: true }, ` ${BECOMES} `),
     fixed ? e(Text, { color: 'green' }, fixed) : e(Text, { dimColor: true }, '?')
   );
 }
@@ -101,14 +106,14 @@ export function SectionHeader({ title }) {
 // workspace is labelled "root"; others show "<relPath> (<package name>)".
 export function WorkspaceHeader({ relPath, workspace }) {
   const label = relPath === '.' ? 'root' : workspace ? `${relPath} (${workspace})` : relPath;
-  return e(Box, { marginTop: 1 }, e(Text, { bold: true, color: 'magentaBright' }, `▌ ${label}`));
+  return e(Box, { marginTop: 1 }, e(Text, { bold: true, color: 'magentaBright' }, `${WORKSPACE_BAR} ${label}`));
 }
 
 export function Row({ name, active, suggestions, selectedColumn, vuln, override, overrideNote }) {
   const main = e(
     Box,
     { flexDirection: 'row' },
-    e(Box, { width: 2, flexShrink: 0 }, e(Text, { color: 'cyanBright', bold: true }, active ? '❯ ' : '  ')),
+    e(Box, { width: 2, flexShrink: 0 }, e(Text, { color: 'cyanBright', bold: true }, active ? `${CURSOR} ` : '  ')),
     e(NameCell, { name }),
     e(Column, { suggestion: suggestions[0], selected: selectedColumn === 0 }),
     e(Column, { suggestion: suggestions[1], selected: selectedColumn === 1 }),
@@ -140,7 +145,7 @@ export function VulnRow({ name, active, vuln, override, overrideNote }) {
   const main = e(
     Box,
     { flexDirection: 'row' },
-    e(Box, { width: 2, flexShrink: 0 }, e(Text, { color: 'cyanBright', bold: true }, active ? '❯ ' : '  ')),
+    e(Box, { width: 2, flexShrink: 0 }, e(Text, { color: 'cyanBright', bold: true }, active ? `${CURSOR} ` : '  ')),
     e(NameCell, { name }),
     e(FixColumn, { current: vuln.current, fixed: vuln.firstPatched })
   );
@@ -168,17 +173,17 @@ export function OverrideRow({ name, active, pin, reason, staged }) {
   return e(
     Box,
     { flexDirection: 'row' },
-    e(Box, { width: 2, flexShrink: 0 }, e(Text, { color: 'cyanBright', bold: true }, active ? '❯ ' : '  ')),
+    e(Box, { width: 2, flexShrink: 0 }, e(Text, { color: 'cyanBright', bold: true }, active ? `${CURSOR} ` : '  ')),
     e(NameCell, { name }),
     e(
       Box,
       { marginLeft: 1 },
       staged
-        ? e(Text, { color: 'greenBright', bold: true }, `✔ removing override ${pin}`)
+        ? e(Text, { color: 'greenBright', bold: true }, `${CHECK} removing override ${pin}`)
         : e(
             Text,
             { color: 'gray' },
-            `ⓘ override ${pin} not needed (${why}) `,
+            `${INFO} override ${pin} not needed (${why}) `,
             e(Text, { dimColor: true }, '— press x to remove')
           )
     )

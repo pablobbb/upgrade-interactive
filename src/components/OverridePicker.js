@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { isPinnableInstance, defaultScopedChoiceIndex } from '../override-select.js';
 import { windowSlice } from './rows.js';
+import { CURSOR, CHILD, BECOMES, SEPARATOR, UP, DOWN, LEFT, RIGHT } from '../icons.js';
 
 const e = React.createElement;
 
@@ -21,7 +22,7 @@ export const PICKER_MAX_HEIGHT = PICKER_MAX_ROWS + OTHERS_MAX_ROWS + 7;
 // The "↑ N more above" / "↓ N more below" hints, matching the main list's.
 function ScrollHint({ count, direction }) {
   if (count <= 0) return null;
-  return e(Text, { dimColor: true }, `  ${direction === 'up' ? '↑' : '↓'} ${count} more ${direction === 'up' ? 'above' : 'below'}`);
+  return e(Text, { dimColor: true }, `  ${direction === 'up' ? UP : DOWN} ${count} more ${direction === 'up' ? 'above' : 'below'}`);
 }
 
 /**
@@ -61,11 +62,15 @@ export function OverridePicker({ name, versions, onSelect, onCancel }) {
       return e(
         Box,
         { key: v },
-        e(Text, { color: i === index ? 'greenBright' : undefined }, i === index ? '❯ ' : '  ', v)
+        e(Text, { color: i === index ? 'greenBright' : undefined }, i === index ? `${CURSOR} ` : '  ', v)
       );
     }),
     e(ScrollHint, { count: below, direction: 'down' }),
-    e(Box, { marginTop: 1 }, e(Text, { dimColor: true }, '↑/↓ choose · <enter> apply · <esc> cancel'))
+    e(
+      Box,
+      { marginTop: 1 },
+      e(Text, { dimColor: true }, `${UP}/${DOWN} choose ${SEPARATOR} <enter> apply ${SEPARATOR} <esc> cancel`)
+    )
   );
 }
 
@@ -142,10 +147,10 @@ export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
         e(
           Text,
           { color: idx === row ? 'greenBright' : undefined },
-          idx === row ? '❯ ' : '  ',
-          `${parentLabel(i)} › ${i.installedVersion} → `,
+          idx === row ? `${CURSOR} ` : '  ',
+          `${parentLabel(i)} ${CHILD} ${i.installedVersion} ${BECOMES} `,
           e(Text, { bold: true }, i.safeCandidates[choices[idx]]),
-          i.safeCandidates.length > 1 ? e(Text, { dimColor: true }, ' (←/→)') : null
+          i.safeCandidates.length > 1 ? e(Text, { dimColor: true }, ` (${LEFT}/${RIGHT})`) : null
         )
       );
     }),
@@ -157,7 +162,7 @@ export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
         e(
           Text,
           { dimColor: true },
-          `  ${parentLabel(i)} › ${i.installedVersion} `,
+          `  ${parentLabel(i)} ${CHILD} ${i.installedVersion} `,
           i.vulnerable ? '— no in-range fix, left as is' : '— already safe, left as is'
         )
       )
@@ -168,7 +173,11 @@ export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
     e(
       Box,
       { marginTop: 1 },
-      e(Text, { dimColor: true }, '↑/↓ dependent · ←/→ version · <enter> apply · <esc> cancel')
+      e(
+        Text,
+        { dimColor: true },
+        `${UP}/${DOWN} dependent ${SEPARATOR} ${LEFT}/${RIGHT} version ${SEPARATOR} <enter> apply ${SEPARATOR} <esc> cancel`
+      )
     )
   );
 }

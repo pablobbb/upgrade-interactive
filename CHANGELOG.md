@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Status icons no longer overlap the text next to them.** Ink advances one
+  column for a Basic-Multilingual-Plane emoji, so on a terminal whose font
+  substitutes emoji for `⚠`, `✔` and `ℹ` — drawing them two columns wide — each
+  bled into the cell beside it and the row read as stretched. Terminals that
+  honour those characters' default text presentation drew them narrow and showed
+  no problem, which is why the fault appeared on some machines and not others.
+
+### Changed
+
+- **The status icons are now plain text symbols — `▲`, `✓` and `ⓘ`.** Emoji can
+  be laid out correctly by pinning them with a `U+FE0F` variation selector, but
+  the result is a fixed-colour glyph that ignores the row's colour and outweighs
+  the text it annotates. The text symbols are one column, measured correctly, and
+  take the `color` prop, so a warning is red or yellow with its severity instead
+  of a constant yellow lozenge.
+- **Every glyph the TUI draws is defined in `src/icons.js`** — the cursor,
+  column markers, arrows and separators as well as the status icons, each named
+  for its role rather than repeated as a literal across components.
+  `test/unit/icons.test.mjs` asserts the whole set is single-code-point,
+  one-column and non-emoji, so the class of bug above cannot come back unnoticed.
+
 ## 2.1.0 — 2026-08-09
 
 ### Added

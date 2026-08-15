@@ -10,6 +10,7 @@ import { mapWithConcurrency } from '../registry.js';
 import { loadInstalledVersions } from '../lockfile.js';
 import { computeVulnerabilities } from '../vulnerabilities.js';
 import { shouldScope, isPinBlocked } from '../override-select.js';
+import { INFO, UP, DOWN } from '../icons.js';
 
 const e = React.createElement;
 const CONCURRENCY = 8;
@@ -358,9 +359,9 @@ export function App({
     e(Prompt, { audit }),
     e(Header, null),
     audit && auditState && auditState.offline
-      ? e(Text, { color: 'yellow' }, "  ℹ no network — couldn't check for vulnerable packages")
+      ? e(Text, { color: 'yellow' }, `  ${INFO} no network — couldn't check for vulnerable packages`)
       : null,
-    above > 0 ? e(Text, { dimColor: true }, `  ↑ ${above} more above`) : null,
+    above > 0 ? e(Text, { dimColor: true }, `  ${UP} ${above} more above`) : null,
     ...visible.map((row) => {
       if (row.kind === 'wsheader') {
         return e(WorkspaceHeader, { key: row.key, relPath: row.relPath, workspace: row.workspace });
@@ -401,7 +402,7 @@ export function App({
         overrideNote: ov.note,
       });
     }),
-    below > 0 ? e(Text, { dimColor: true }, `  ↓ ${below} more below`) : null,
+    below > 0 ? e(Text, { dimColor: true }, `  ${DOWN} ${below} more below`) : null,
     override && override.mode === 'scoped'
       ? e(ScopedOverridePicker, {
           name: override.name,
