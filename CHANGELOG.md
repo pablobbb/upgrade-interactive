@@ -10,6 +10,12 @@
   bled into the cell beside it and the row read as stretched. Terminals that
   honour those characters' default text presentation drew them narrow and showed
   no problem, which is why the fault appeared on some machines and not others.
+- **The `Current` / `Range` / `Latest` headings line up with the versions under
+  them.** The heading row reserved 50 columns before its first cell where a row
+  spends 49 reaching its first version, so every label sat one column to the
+  right of its data. The extra column also made the header 101 columns wide
+  against a row's 98, so on a 100-column terminal the header alone was shrunk to
+  fit and the gaps between headings went uneven as well.
 
 ### Changed
 
