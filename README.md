@@ -38,7 +38,7 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
    Packages with nothing new to offer are left out of the list.
 3. Lets you pick, per package, **Current** / **Range** / **Latest**.
 4. **Checks for known vulnerabilities** (on by default) across direct *and*
-   transitive dependencies. Flagged rows show a ⚠ icon, severity, and a
+   transitive dependencies. Flagged rows show a ▲ icon, severity, and a
    clickable CVE link, with the affected range and first fixed version inline.
 5. Press `o` on a vulnerable package to **pin a safe version via npm
    `overrides`**. A single-version package gets one global pin; a package

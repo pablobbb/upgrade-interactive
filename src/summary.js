@@ -5,6 +5,7 @@
 import path from 'node:path';
 
 import { TOGGLES } from './flags.js';
+import { INFO, CHILD, BECOMES } from './icons.js';
 
 /**
  * Does this project have manifests beyond the root? Derived from the descriptors
@@ -91,7 +92,7 @@ export function formatIgnoredConfigNote(project, resolved = {}) {
   const list = ignored
     .map((m) => `${single ? `${m.relPath}/package.json` : m.relPath} (${m.keys.join(', ')})`)
     .join(', ');
-  return `ⓘ ignoring "upgrade-interactive" in ${list} — settings come from the root package.json\n`;
+  return `${INFO} ignoring "upgrade-interactive" in ${list} — settings come from the root package.json\n`;
 }
 
 /**
@@ -120,7 +121,7 @@ export function formatSummary({ applied = [], overrides = [], removed = [], isMo
       if (byField[field].length === 0) continue;
       out += `${pad}${field}\n`;
       for (const change of byField[field]) {
-        out += `${pad}  ${change.name}  ${change.from} → ${change.to}\n`;
+        out += `${pad}  ${change.name}  ${change.from} ${BECOMES} ${change.to}\n`;
       }
     }
   }
@@ -128,8 +129,8 @@ export function formatSummary({ applied = [], overrides = [], removed = [], isMo
   if (overrides.length > 0 || removed.length > 0) {
     out += 'overrides\n';
     for (const change of overrides) {
-      const target = change.parent ? `${change.parent} › ${change.name}` : change.name;
-      out += `  ${target}  → ${change.to}\n`;
+      const target = change.parent ? `${change.parent} ${CHILD} ${change.name}` : change.name;
+      out += `  ${target}  ${BECOMES} ${change.to}\n`;
     }
     for (const change of removed) {
       out += `  ${change.name}  removed\n`;

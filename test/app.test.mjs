@@ -186,7 +186,7 @@ async function testAuditWarnings() {
   const flat = frame.replace(/\s+/g, ' ');
   unmount();
 
-  assert(frame.includes('⚠'), 'a vulnerable row shows a warning icon');
+  assert(frame.includes('▲'), 'a vulnerable row shows a warning icon');
   assert(frame.includes('high'), 'severity label is rendered for a direct vuln');
   assert(frame.includes('critical'), 'severity label is rendered for a transitive vuln');
   assert(frame.includes('CVE-2021-0001'), 'the CVE id is shown');
@@ -267,7 +267,7 @@ async function testAuditDisabled() {
   const frame = lastFrame();
   unmount();
 
-  assert(!frame.includes('⚠'), 'no warnings shown when audit is disabled');
+  assert(!frame.includes('▲'), 'no warnings shown when audit is disabled');
   assert(!frame.includes('Override to a safe version'), 'no override section when audit is disabled');
 }
 

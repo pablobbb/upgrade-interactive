@@ -8,6 +8,8 @@
 // (one workspace, the root) renders no workspace headers, so its layout is
 // byte-identical to the pre-workspaces behavior.
 
+import { INFO } from '../icons.js';
+
 /**
  * @param descriptors  normalized descriptors ({ name, field, id, workspace, relPath, ... })
  * @param entries      suggestion results aligned to `descriptors` by index (null = still loading)
@@ -176,7 +178,7 @@ export function overrideView(stagedOverrides, name, rowKey) {
   if (!record) return { spec: undefined, note: null };
   if (record.originKey === rowKey) return { spec: record.spec, note: null };
   const note = record.originLabel
-    ? `ⓘ override staged under ${record.originLabel} — press o there to change`
-    : 'ⓘ override already staged above — press o there to change';
+    ? `${INFO} override staged under ${record.originLabel} — press o there to change`
+    : `${INFO} override already staged above — press o there to change`;
   return { spec: record.spec, note };
 }
