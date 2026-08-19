@@ -165,5 +165,8 @@ also matches directories whose name starts with a dot.
   *would* fall back to without the pin is computed too, but only to decide
   whether the pin is still needed (step 6 above) — never to call the package
   vulnerable.
+- Pinning a package **and** pinning something under it share one entry:
+  npm's `"."` key holds the package's own pin next to its scoped children —
+  `"vite": { ".": "7.3.6", "picomatch": "4.0.5" }`.
 - Only `dependencies` / `devDependencies` are scanned.
 - The list stays alphabetically sorted the whole time it's loading.
