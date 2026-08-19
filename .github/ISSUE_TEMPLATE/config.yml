@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or idea
+    url: https://github.com/pablobbb/upgrade-interactive/discussions
+    about: For usage questions and feature ideas, open a discussion instead.
