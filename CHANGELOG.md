@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- **A scoped pin and a top-level pin on the same package no longer overwrite
+  each other.** Pinning `picomatch` under `vite` and pinning `vite` itself both
+  write to `overrides.vite`, and the second pass replaced the first's work
+  whenever the scoped pin was written first — which is the order the audit
+  displays them in. The package's own pin now goes under npm's `"."` key beside
+  its scoped children, so both survive. Removing an unused override that has
+  since gained a scoped child drops only the override itself, for the same
+  reason.
+- **The post-run summary can no longer report an override the file does not
+  have.** It was built from what the writer intended rather than from the
+  result, so a lost write was reported as applied. The two are now reconciled
+  before `package.json` is written, and a mismatch fails the run instead of
+  being reported as a success.
 - **Status icons no longer overlap the text next to them.** Ink advances one
   column for a Basic-Multilingual-Plane emoji, so on a terminal whose font
   substitutes emoji for `⚠`, `✔` and `ℹ` — drawing them two columns wide — each
