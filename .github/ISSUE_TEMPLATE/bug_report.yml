@@ -1,0 +1,102 @@
+name: Bug report
+description: Something the tool wrote, showed, or resolved was wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing. **Everything here is pasteable text — please don't
+        attach a lockfile unless we ask.**
+
+        A dependency graph exposes internal package names and private registry
+        URLs, so redact freely. The `overrides` block plus the affected package
+        is almost always enough to reproduce.
+
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `nui --version`, `node -v`, `npm -v`.
+      placeholder: |
+        nui   2.1.0
+        node  v24.16.0
+        npm   11.13.0
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected
+      description: >
+        Which column or override did you select, and what did you expect to
+        happen instead?
+      placeholder: |
+        Pressed `o` on picomatch, accepted the scoped pins, then `o` on vite and
+        picked 7.3.6. Expected both pins in package.json; the vite › picomatch
+        one is missing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tool-output
+    attributes:
+      label: Tool output for the affected rows
+      description: >
+        The relevant lines from the tool's screen and its post-submit summary —
+        not the whole session. Trim to the packages involved.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: overrides-before
+    attributes:
+      label: "`overrides` before"
+      description: >
+        The `overrides` block from package.json before the run, plus the
+        declared range of any affected direct dependency. Write `none` if there
+        was no overrides block.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: overrides-after
+    attributes:
+      label: "`overrides` after"
+      description: The same block after the run — what the tool actually wrote.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: project-shape
+    attributes:
+      label: Project shape (optional)
+      description: >
+        Framework, monorepo or single package, anything unusual about the tree.
+        Config often decides behavior — a workspace root and a standalone
+        package take different code paths.
+    validations:
+      required: false
+
+  - type: textarea
+    id: full-capture
+    attributes:
+      label: Full capture (optional)
+      description: |
+        Only if the above doesn't reproduce it. `scripts/capture-run.sh` in this
+        repo snapshots a whole run — lockfiles, `npm audit --json` either side,
+        the build result — into one directory you can zip and attach:
+
+        ```
+        ./capture-run.sh pre
+        nui | tee /tmp/nui-session.txt
+        ./capture-run.sh post --session /tmp/nui-session.txt
+        ```
+
+        Redact anything you need to before attaching.
+    validations:
+      required: false

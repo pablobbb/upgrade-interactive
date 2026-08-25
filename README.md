@@ -170,3 +170,8 @@ also matches directories whose name starts with a dot.
   `"vite": { ".": "7.3.6", "picomatch": "4.0.5" }`.
 - Only `dependencies` / `devDependencies` are scanned.
 - The list stays alphabetically sorted the whole time it's loading.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the test conventions, and how
+to capture a run against a real project with `scripts/capture-run.sh`.
