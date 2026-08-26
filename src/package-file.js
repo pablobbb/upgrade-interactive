@@ -209,11 +209,34 @@ function writeOverrideSpec(json, name, spec, out, directField, applied) {
     return json.overrides;
   };
 
+  // Record one written override for the summary. Two pins can resolve to the
+  // same slot (same key, same name) when they can't be told apart — the last
+  // write wins in the file, so it has to win here too, or the summary would
+  // list a version that no longer exists in the manifest.
+  const record = (entry) => {
+    const at = out.findIndex((o) => o.name === entry.name && (o.parent ?? null) === (entry.parent ?? null));
+    if (at === -1) out.push(entry);
+    else out[at] = entry;
+  };
+
+  // A top-level pin and a scoped pin can land on the same key: pinning `vite`
+  // itself writes `overrides.vite`, while pinning `picomatch` under `vite`
+  // writes `overrides.vite.picomatch`. Assigning the string unconditionally
+  // would drop the child pin whenever the scoped pass ran first — and the audit
+  // display order (the child's advisory first) is exactly that order. The
+  // self-pin goes under "." instead, which is the same shape the opposite order
+  // already produces via the string→object promotion below.
   const pinTopLevel = (version) => {
     const root = overridesRoot();
-    if (root[name] === version) return;
-    root[name] = version;
-    out.push({ name, to: version });
+    const existing = root[name];
+    if (existing && typeof existing === 'object') {
+      if (existing['.'] === version) return;
+      existing['.'] = version;
+    } else {
+      if (existing === version) return;
+      root[name] = version;
+    }
+    record({ name, to: version });
   };
 
   if (typeof spec === 'string') {
@@ -251,7 +274,31 @@ function writeOverrideSpec(json, name, spec, out, directField, applied) {
     else if (!bucket || typeof bucket !== 'object') bucket = root[key] = {};
     if (bucket[name] === pin.version) continue;
     bucket[name] = pin.version;
-    out.push({ name, to: pin.version, parent: key });
+    record({ name, to: pin.version, parent: key });
+  }
+}
+
+// The post-run summary is built from what the writer *intended* to apply, so an
+// override lost between staging and serialization would be reported as applied
+// while the file says otherwise — the summary would be describing intent, not
+// outcome. This reconciles the two against the finished object. It runs before
+// the write, so a failure leaves package.json untouched; nothing here should
+// ever fire, which is exactly why it must be loud rather than silent.
+function assertOverridesLanded(json, appliedOverrides) {
+  const root = json.overrides;
+  for (const entry of appliedOverrides) {
+    const bucket = entry.parent ? root && root[entry.parent] : root;
+    const value = bucket && typeof bucket === 'object' ? bucket[entry.name] : undefined;
+    // A top-level pin reads back as a string, or from "." when a scoped pin
+    // shares the key.
+    const actual = value && typeof value === 'object' ? value['.'] : value;
+    if (actual === entry.to) continue;
+    const where = entry.parent ? `${entry.parent} › ${entry.name}` : entry.name;
+    const found = actual === undefined ? 'is missing from' : `is ${actual} in`;
+    throw new Error(
+      `Internal error: override ${where} → ${entry.to} ${found} the resulting package.json. ` +
+        'Nothing was written. Please report this with your package.json overrides block.'
+    );
   }
 }
 
@@ -315,8 +362,19 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
     const addedTopLevel = new Set(appliedOverrides.filter((o) => !o.parent).map((o) => o.name));
     for (const name of removals) {
       if (addedTopLevel.has(name)) continue;
-      if (manifest.json.overrides[name] == null) continue;
-      delete manifest.json.overrides[name];
+      const current = manifest.json.overrides[name];
+      if (current == null) continue;
+      // The key may hold an object because a scoped pin staged in this same run
+      // nested a child under it, promoting the old string pin to `{'.': pin}`.
+      // The removal targets that self-pin, so drop the "." slot alone —
+      // deleting the whole key would take the child pin with it.
+      if (typeof current === 'object') {
+        if (!('.' in current)) continue;
+        delete current['.'];
+        if (Object.keys(current).length === 0) delete manifest.json.overrides[name];
+      } else {
+        delete manifest.json.overrides[name];
+      }
       removed.push({ name });
     }
   }
@@ -335,6 +393,8 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
   if (applied.length === 0 && appliedOverrides.length === 0 && removed.length === 0) {
     return { applied, overrides: appliedOverrides, removed };
   }
+
+  assertOverridesLanded(manifest.json, appliedOverrides);
 
   const serialized = JSON.stringify(manifest.json, null, manifest.indent) + (manifest.trailingNewline ? '\n' : '');
   await writeFile(manifest.filePath, serialized, 'utf8');

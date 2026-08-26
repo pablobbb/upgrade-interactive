@@ -256,6 +256,98 @@ describe('applyUpgrades', () => {
     });
   });
 
+  // A scoped pin under parent P and a top-level pin on P itself both address
+  // `overrides.P`. Whichever pass runs second used to decide whether the other's
+  // write survived, so both orders are tested and must agree.
+  const splitKeyPins = {
+    scopedFirst: {
+      picomatch: { scoped: [{ parentName: 'vite', version: '4.0.5' }] },
+      vite: '7.3.6',
+    },
+    topLevelFirst: {
+      vite: '7.3.6',
+      picomatch: { scoped: [{ parentName: 'vite', version: '4.0.5' }] },
+    },
+  };
+
+  for (const [order, overrides] of Object.entries(splitKeyPins)) {
+    it(`keeps both a child pin and a self pin on the same parent key (${order})`, async () => {
+      const dir = await project({ 'package.json': pkg({ dependencies: { a: '1.0.0' } }) });
+      const m = await loadManifest(dir);
+
+      const res = await applyUpgrades(m, new Map(), overrides);
+
+      assert.deepEqual(
+        (await readJson(dir)).overrides,
+        { vite: { '.': '7.3.6', picomatch: '4.0.5' } },
+        'the self pin goes under "." so neither write clobbers the other'
+      );
+      // Same two records regardless of which pass ran first, and every one of
+      // them is in the file above — the summary describes the outcome.
+      assert.deepEqual(
+        [...res.overrides].sort((x, y) => x.name.localeCompare(y.name)),
+        [
+          { name: 'picomatch', to: '4.0.5', parent: 'vite' },
+          { name: 'vite', to: '7.3.6' },
+        ]
+      );
+    });
+  }
+
+  it('reports one override per slot when two indistinguishable pins collide', async () => {
+    // Same key, same name, no parent version to tell the copies apart: the file
+    // can only hold the last write, so the summary must not claim the first.
+    const dir = await project({ 'package.json': pkg({}) });
+    const m = await loadManifest(dir);
+
+    const res = await applyUpgrades(m, new Map(), {
+      'dependency-a': {
+        scoped: [
+          { parentName: 'pkg-a', parentVersion: null, version: '1.3.0' },
+          { parentName: 'pkg-a', parentVersion: null, version: '2.5.0' },
+        ],
+      },
+    });
+
+    assert.deepEqual((await readJson(dir)).overrides, { 'pkg-a': { 'dependency-a': '2.5.0' } });
+    assert.deepEqual(res.overrides, [{ name: 'dependency-a', to: '2.5.0', parent: 'pkg-a' }]);
+  });
+
+  it('removes only the self pin when a scoped child was nested under the same key', async () => {
+    // The user dropped the unused `pkg-a` pin and staged a scoped pin under
+    // `pkg-a` in the same pass. Deleting the whole key would take the new child
+    // pin with it.
+    const dir = await project({ 'package.json': pkg({ overrides: { 'pkg-a': '1.5.0' } }) });
+    const m = await loadManifest(dir);
+
+    const res = await applyUpgrades(
+      m,
+      new Map(),
+      { 'dependency-a': { scoped: [{ parentName: 'pkg-a', version: '1.3.0' }] } },
+      ['pkg-a']
+    );
+
+    assert.deepEqual((await readJson(dir)).overrides, { 'pkg-a': { 'dependency-a': '1.3.0' } });
+    assert.deepEqual(res.removed, [{ name: 'pkg-a' }]);
+    assert.deepEqual(res.overrides, [{ name: 'dependency-a', to: '1.3.0', parent: 'pkg-a' }]);
+  });
+
+  it('refuses to write when a staged override did not land in the manifest', async () => {
+    // Backstop for the whole class of bug above: a write that silently goes
+    // nowhere must not be reported as applied. The swallowing proxy stands in
+    // for a future writer bug — no real input reaches this state.
+    const original = pkg({ dependencies: { a: '1.0.0' } });
+    const dir = await project({ 'package.json': original });
+    const m = await loadManifest(dir);
+    m.json.overrides = new Proxy({}, { set: () => true });
+
+    await assert.rejects(
+      () => applyUpgrades(m, new Map(), { minimist: '1.2.6' }),
+      /Internal error: override minimist → 1\.2\.6 is missing from/
+    );
+    assert.equal(await readRaw(dir), original, 'nothing is written when the check fails');
+  });
+
   it('writes a null-parent pin as a top-level override when the package is not a direct dep', async () => {
     // Fallback path: a null parent normally means the root project (a direct
     // dependency), but if the name isn't actually in dependencies there is no
