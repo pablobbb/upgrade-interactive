@@ -17,6 +17,11 @@ import { Row } from '../../src/components/Row.js';
 const e = React.createElement;
 const suggestion = (text) => ({ spans: [{ text }] });
 
+// Ink colorizes when the suite is launched from a color-capable terminal and not
+// when it is piped, so raw frames carry SGR escapes that inflate .length and
+// shift .indexOf. These assertions are about display columns, so strip them.
+const SGR = /\u001B\[[0-9;]*m/g;
+
 // Deliberately distinct so indexOf can't match one column's text inside
 // another's (`4.17.21` is a substring of `^4.17.21`).
 const VERSIONS = ['1.1.1', '^2.2.2', '3.3.3'];
@@ -36,7 +41,7 @@ function frameLines() {
       })
     )
   );
-  const lines = lastFrame().split('\n');
+  const lines = lastFrame().replace(SGR, '').split('\n');
   return {
     header: lines.find((l) => l.includes('Current')),
     row: lines.find((l) => l.includes('lodash')),
