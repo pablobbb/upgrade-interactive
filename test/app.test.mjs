@@ -412,6 +412,85 @@ async function testOverrideOriginRehomed() {
   assert(overrides && overrides.lodash === '4.17.21', 'the re-homed override is editable and submits the new version');
 }
 
+// An override the tree never applied. Shown only for workspace projects: npm
+// re-resolves a changed override on the next install in a standalone project but
+// not in a workspace (docs/spike-reresolve-2026-08-26.md), so a standalone user
+// would be told to act on something --install is about to fix.
+function unappliedAudit() {
+  return {
+    offline: false,
+    vulns: new Map(),
+    removableOverrides: new Map(),
+    unappliedOverrides: new Map([
+      [
+        "jsdom",
+        {
+          mandates: [
+            {
+              name: "undici",
+              mandated: "7.29.0",
+              found: [
+                {
+                  parentName: "jsdom",
+                  parentVersion: "29.1.1",
+                  path: "node_modules/undici",
+                  installedVersion: "7.28.0",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    ]),
+  };
+}
+
+async function testUnappliedOverrideShownInWorkspace() {
+  const descriptors = [{ name: "chalk", range: "^4.0.0", field: "dependencies" }];
+  const { lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      audit: true,
+      section: true,
+      manifestPaths: ["", "packages/app"], // a workspace project
+      runAudit: async () => unappliedAudit(),
+      onSubmit: () => {},
+      onAbort: () => {},
+    })
+  );
+
+  await rowsLoaded(lastFrame, "chalk to load");
+  await waitForFrame(lastFrame, (f) => f.includes('not in effect'), {
+    label: 'the unapplied-override section to appear',
+  });
+  const frame = lastFrame();
+  unmount();
+
+  assert(frame.includes("undici"), "the unapplied override names the pinned package");
+  assert(frame.includes("7.29.0") && frame.includes("7.28.0"), "it shows both the mandated and installed versions");
+}
+
+async function testUnappliedOverrideHiddenWhenStandalone() {
+  const descriptors = [{ name: "chalk", range: "^4.0.0", field: "dependencies" }];
+  const { lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      audit: true,
+      section: true,
+      // default manifestPaths = root only, i.e. a standalone project
+      runAudit: async () => unappliedAudit(),
+      onSubmit: () => {},
+      onAbort: () => {},
+    })
+  );
+
+  await rowsLoaded(lastFrame, "chalk to load");
+  const frame = lastFrame();
+  unmount();
+
+  assert(!frame.includes("not in effect"), "a standalone project shows no unapplied-override section");
+}
+
 async function testRemovableOverride() {
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
   const removableOverrides = new Map([['left-pad', { pin: '1.3.0', reason: 'dead' }]]);
@@ -759,6 +838,8 @@ async function main() {
   await testScopedOverrideDisambiguation();
   await testOverrideOriginRehomed();
   await testRemovableOverride();
+  await testUnappliedOverrideShownInWorkspace();
+  await testUnappliedOverrideHiddenWhenStandalone();
 
   if (failures > 0) {
     console.error(`\n${failures} test(s) failed.`);

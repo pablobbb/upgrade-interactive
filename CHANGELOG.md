@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Added
+
+- **Overrides that aren't in effect are now detected and reported.** npm applies
+  `overrides` at resolution time, so a pin added after its lockfile entry was
+  resolved can sit in `package.json` doing nothing — the installed version still
+  satisfies its dependent's range, and npm never revisits it. The audit read the
+  un-overridden version, flagged it, and then wrote nothing when the user
+  accepted the fix, because the pin was already there. That combination reported
+  "no effective changes" to someone who had just accepted a security fix and was
+  still vulnerable.
+
+  Such overrides now appear read-only under **Overrides not in effect**, showing
+  the pin against what the lockfile actually has, and accepting an
+  already-present pin now says so explicitly instead of reporting nothing. They
+  are also never offered for removal any more: the "is this override still
+  needed?" analysis reads the installed tree, and for an unapplied override that
+  tree reflects a resolution the pin had no part in — so both `dead` and
+  `redundant` were unsound verdicts.
+
+  Only workspace projects are warned. Measured against npm 11.13.0
+  (`docs/spike-reresolve-2026-08-26.md`): a standalone project applies the new
+  mandate on its next `npm install`, so the existing `--install` step already
+  covers it. A workspace project reports `up to date` and keeps the old version,
+  and neither `npm update <pkg>` nor `npm audit fix` fixes that — both resolve to
+  the newest version in range and ignore what the override mandates. The tool
+  reports the state rather than acting, because the only reliable fix
+  (`rm -rf node_modules package-lock.json && npm install`) re-resolves every
+  dependency in the project.
+
+  Known gap: version-scoped override keys (`"brace-expansion@2"`) are not parsed
+  yet, so an unapplied pin written that way is not detected. Tracked separately.
+
 ### Fixed
 
 - **A scoped pin and a top-level pin on the same package no longer overwrite

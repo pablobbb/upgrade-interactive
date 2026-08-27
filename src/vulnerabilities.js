@@ -114,6 +114,130 @@ function resolveInstalledPath(packages, parentPath, name) {
   return null;
 }
 
+// npm override keys are either a bare package name or a version-qualified
+// "name@range". Only the bare form is understood here: a selector needs
+// range-intersection logic, and guessing at one risks calling a live pin
+// unapplied. `null` means "can't say", which every caller treats as "not
+// unapplied" — the conservative direction.
+function bareOverrideKeyName(key) {
+  // Index 0 is a scope ("@scope/pkg"), not a selector separator.
+  return key.lastIndexOf('@') > 0 ? null : key;
+}
+
+// Split a *parent* override key, which the writer already emits qualified
+// ("vite@5.0.0") when one parent needs two different pins.
+function splitParentKey(key) {
+  const at = key.lastIndexOf('@');
+  if (at <= 0) return { name: key, version: null };
+  return { name: key.slice(0, at), version: key.slice(at + 1) };
+}
+
+/**
+ * Overrides the manifest mandates that the installed tree does not reflect.
+ *
+ * npm applies `overrides` during resolution, so an override added *after* its
+ * lockfile entry was resolved can sit in package.json with no effect: the entry
+ * still satisfies its parent's declared range, and npm does not revisit it. The
+ * audit then reads the un-overridden version out of the lockfile and flags it,
+ * while the pin the user would write is already present — so accepting the fix
+ * writes nothing and the tool reports "no changes". Detecting the contradiction
+ * is what lets us say so instead.
+ *
+ * Verified against npm 11.13.0 (docs/spike-reresolve-2026-08-26.md): this state
+ * only persists in *workspace* projects. A standalone project applies the new
+ * mandate on its next `npm install`, so callers scope the warning accordingly.
+ *
+ * Returns Map<topLevelOverrideKey, { mandates: [{ name, mandated, found }] }>,
+ * keyed so `collectRemovableOverrides` can gate on it directly. `found` lists
+ * the offending edges: { parentName, parentVersion, path, installedVersion }.
+ */
+function unappliedOverrides(packages, overrides) {
+  const out = new Map();
+  if (!packages || !overrides || typeof overrides !== 'object') return out;
+
+  // One pass over the tree, because the naive form rescans `packages` per
+  // override key — O(overrides × tree) on exactly the projects big enough to
+  // have both. Skips the "" root, and any entry with no `version` of its own:
+  // a workspace link is versionless, and comparing `undefined` to a mandate
+  // would invent a finding for every workspace in the project.
+  const pathsByName = new Map();
+  for (const [pkgPath, info] of Object.entries(packages)) {
+    if (!pkgPath || !info || typeof info !== 'object' || !info.version || info.link) continue;
+    const name = nameFromLockPath(pkgPath);
+    if (!name) continue;
+    if (!pathsByName.has(name)) pathsByName.set(name, []);
+    pathsByName.get(name).push(pkgPath);
+  }
+
+  const add = (key, name, mandated, found) => {
+    if (found.length === 0) return;
+    if (!out.has(key)) out.set(key, { mandates: [] });
+    out.get(key).mandates.push({ name, mandated, found });
+  };
+
+  // A top-level pin governs every copy of the package.
+  const checkTopLevel = (key, name, pin) => {
+    const found = [];
+    for (const pkgPath of pathsByName.get(name) || []) {
+      const installedVersion = packages[pkgPath].version;
+      if (installedVersion !== pin) {
+        found.push({ parentName: null, parentVersion: null, path: pkgPath, installedVersion });
+      }
+    }
+    add(key, name, pin, found);
+  };
+
+  // A scoped pin governs only the edges leaving that parent. The parent key is
+  // also the entry's identity, so it doubles as the map key.
+  const checkScoped = (parentKey, name, pin) => {
+    const parent = splitParentKey(parentKey);
+    const found = [];
+    for (const parentPath of pathsByName.get(parent.name) || []) {
+      const info = packages[parentPath];
+      if (parent.version && info.version !== parent.version) continue;
+      if (declaredRangeFor(info, name) == null) continue;
+      const resolved = resolveInstalledPath(packages, parentPath, name);
+      if (!resolved) continue;
+      const installedVersion = packages[resolved].version;
+      if (installedVersion !== pin) {
+        found.push({
+          parentName: parent.name,
+          parentVersion: info.version,
+          path: resolved,
+          installedVersion,
+        });
+      }
+    }
+    add(parentKey, name, pin, found);
+  };
+
+  for (const [key, value] of Object.entries(overrides)) {
+    if (typeof value === 'string') {
+      // "$pkg" defers to the project's own declared range; there is no version
+      // to compare against.
+      if (value.startsWith('$')) continue;
+      const name = bareOverrideKeyName(key);
+      if (name) checkTopLevel(key, name, value);
+      continue;
+    }
+    if (!value || typeof value !== 'object') continue;
+    for (const [childName, pin] of Object.entries(value)) {
+      if (typeof pin !== 'string' || pin.startsWith('$')) continue;
+      if (childName === '.') {
+        // A self-pin sharing its key with nested children — same reach as a
+        // top-level pin.
+        const name = bareOverrideKeyName(key);
+        if (name) checkTopLevel(key, name, pin);
+        continue;
+      }
+      const name = bareOverrideKeyName(childName);
+      if (name) checkScoped(key, name, pin);
+    }
+  }
+
+  return out;
+}
+
 // Build the per-parent picture of where a vulnerable package is installed:
 // every dependent, the version its edge resolves to, whether that version is
 // vulnerable, and the safe versions its declared range could accept without a
@@ -275,9 +399,15 @@ function advisoryUrl(advisory) {
 // (`ok`) and resolve every version its dependents would fall back to. We never
 // flag when we couldn't check or resolve, to avoid suggesting the removal of an
 // override that's still protecting the tree.
-function collectRemovableOverrides(overrideInfo, ok, advisories) {
+function collectRemovableOverrides(overrideInfo, ok, advisories, unapplied) {
   const removable = new Map();
   for (const [name, info] of overrideInfo) {
+    // An override the tree never applied can't be judged by looking at the tree.
+    // Both verdicts below ask "what would happen without this override?" and
+    // read the answer off the installed versions — but those versions are what
+    // resolution produced *ignoring* this pin, so 'dead' and 'redundant' are
+    // both unsound here. Never offer to delete a pin whose effect we can't see.
+    if (unapplied && unapplied.has(name)) continue;
     if (info.reason === 'dead') {
       removable.set(name, { pin: info.pin, reason: 'dead' });
       continue;
@@ -294,11 +424,13 @@ function collectRemovableOverrides(overrideInfo, ok, advisories) {
  * Given the direct descriptors and the installed tree (from the lockfile),
  * check every relevant version against npm's advisory database.
  *
- * @returns {Promise<{ offline, vulns, removableOverrides }>}
+ * @returns {Promise<{ offline, vulns, removableOverrides, unappliedOverrides }>}
  *   Each vuln entry: { advisories, severity, cve, url, affectedRange,
  *   firstPatched, safeVersions, instances, pinStrategy, pinConflict }.
  *   `removableOverrides` maps an existing `overrides` package name ->
  *   { pin, reason: 'dead' | 'redundant' }.
+ *   `unappliedOverrides` maps an `overrides` key -> { mandates } for pins the
+ *   installed tree does not reflect (see `unappliedOverrides` above).
  */
 export async function computeVulnerabilities(
   { descriptors = [], installed = null, overrides = {}, manifestPaths = null } = {},
@@ -350,6 +482,12 @@ export async function computeVulnerabilities(
     if (best) add(d.name, best);
   });
 
+  // Which overrides the tree never applied. Computed before the removability
+  // pass because it gates it: an unapplied pin must never be offered for
+  // deletion. Cheap and offline — it reads the lockfile the caller already
+  // loaded, with no registry involvement.
+  const unapplied = unappliedOverrides(installed && installed.packages, overrides);
+
   // For each existing top-level override, work out what version(s) would be
   // installed *without* it, so we can tell whether it's still doing anything.
   const overrideEntries = Object.entries(overrides || {}).filter(
@@ -400,7 +538,8 @@ export async function computeVulnerabilities(
     return {
       offline: false,
       vulns: new Map(),
-      removableOverrides: collectRemovableOverrides(overrideInfo, false, new Map()),
+      removableOverrides: collectRemovableOverrides(overrideInfo, false, new Map(), unapplied),
+      unappliedOverrides: unapplied,
     };
   }
 
@@ -491,5 +630,10 @@ export async function computeVulnerabilities(
     });
   });
 
-  return { offline: !ok, vulns, removableOverrides: collectRemovableOverrides(overrideInfo, ok, advisories) };
+  return {
+    offline: !ok,
+    vulns,
+    removableOverrides: collectRemovableOverrides(overrideInfo, ok, advisories, unapplied),
+    unappliedOverrides: unapplied,
+  };
 }

@@ -101,7 +101,13 @@ export function formatIgnoredConfigNote(project, resolved = {}) {
  * a single (root) group and `isMonorepo` false, so it renders exactly the
  * pre-workspaces output: no workspace heading, field headers flush-left.
  */
-export function formatSummary({ applied = [], overrides = [], removed = [], isMonorepo = false } = {}) {
+export function formatSummary({
+  applied = [],
+  overrides = [],
+  removed = [],
+  alreadyPresent = [],
+  isMonorepo = false,
+} = {}) {
   let out = '';
   const groups = new Map(); // label -> { dependencies: [], devDependencies: [] }
   for (const change of applied) {
@@ -134,6 +140,18 @@ export function formatSummary({ applied = [], overrides = [], removed = [], isMo
     }
     for (const change of removed) {
       out += `  ${change.name}  removed\n`;
+    }
+  }
+
+  // Pins the user accepted that were already in the manifest. Nothing was
+  // written, which is right — but saying nothing at all reads as "you were
+  // already fine", when the reason the audit flagged the package is that the
+  // installed tree doesn't match the pin. Name them instead.
+  if (alreadyPresent.length > 0) {
+    out += 'overrides already present (nothing written)\n';
+    for (const change of alreadyPresent) {
+      const target = change.parent ? `${change.parent} ${CHILD} ${change.name}` : change.name;
+      out += `  ${target}  ${BECOMES} ${change.to}\n`;
     }
   }
   return out;
