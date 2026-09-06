@@ -1,0 +1,18 @@
+{
+  "minimatch": {
+    "mandates": [
+      {
+        "name": "brace-expansion",
+        "mandated": "1.1.16",
+        "found": [
+          {
+            "parentName": "minimatch",
+            "parentVersion": "3.1.5",
+            "path": "node_modules/brace-expansion",
+            "installedVersion": "1.1.11"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -74,15 +74,16 @@ export function removalsFromRemovable(removableOverrides) {
 }
 
 // Run load -> audit against a staged working copy, returning the loaded manifest,
-// the computed vulns, and the removable existing overrides, so callers can build
-// + apply both additions and removals.
+// the computed vulns, the removable existing overrides, and the overrides the
+// installed tree never applied, so callers can build + apply both additions and
+// removals and assert on what npm's own resolution left un-honoured.
 export async function auditFixture(work, snapshot) {
   const manifest = await loadManifest(work);
   // Every fixture is a single-package project, so the root is the only manifest
   // — the same value cli.js computes via manifestPathsOf for a standalone run.
   const manifestPaths = [''];
   const installed = await loadInstalledVersions(work);
-  const { vulns, removableOverrides } = await computeVulnerabilities(
+  const { vulns, removableOverrides, unappliedOverrides } = await computeVulnerabilities(
     {
       descriptors: manifest.descriptors,
       installed,
@@ -91,5 +92,5 @@ export async function auditFixture(work, snapshot) {
     },
     stubFromSnapshot(snapshot)
   );
-  return { manifest, installed, vulns, removableOverrides };
+  return { manifest, installed, vulns, removableOverrides, unappliedOverrides };
 }

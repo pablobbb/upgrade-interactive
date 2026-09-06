@@ -10,6 +10,12 @@
 //
 // This is the OFFLINE half: it asserts the overrides we *write*. The network
 // half (test/integration/roundtrip.test.mjs) asserts npm *accepts* them.
+//
+// A fixture may also carry `expected-unapplied.json` (the overrides the installed
+// tree never applied) and `expected-already-present.json` (pins the writer found
+// already in the manifest, so it wrote nothing). Those two are what distinguish
+// "nothing to do" from "pinned, but not in effect"; see the unapplied-override-*
+// fixtures' NOTES.md.
 
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,14 +58,14 @@ describe('real-world fixtures — full pipeline to written overrides', async () 
 
       const work = await stageFixture(fixtureDir);
       tmpDirs.push(work);
-      const { manifest, vulns, removableOverrides } = await auditFixture(work, snapshot);
+      const { manifest, vulns, removableOverrides, unappliedOverrides } = await auditFixture(work, snapshot);
 
       // Apply both halves of what the tool would do: add the pins for vulnerable
       // packages, drop the existing overrides flagged removable. A fixture that
       // only adds has no removals, and one that only removes has no vulns.
       const overrides = overridesFromVulns(vulns);
       const removals = removalsFromRemovable(removableOverrides);
-      await applyUpgrades(manifest, new Map(), overrides, removals);
+      const result = await applyUpgrades(manifest, new Map(), overrides, removals);
 
       const manifestJson = await readJson(path.join(work, 'package.json'));
       const written = manifestJson.overrides || {};
@@ -74,6 +80,43 @@ describe('real-world fixtures — full pipeline to written overrides', async () 
         for (const [dep, range] of Object.entries(expectedDeps)) {
           assert.equal(merged[dep], range, `${name}: ${dep} should be bumped to ${range}`);
         }
+      }
+
+      // Overrides the installed tree never applied: the pin is in the manifest,
+      // but resolution happened before it was added, so the lockfile still holds
+      // the old version. A fixture without the file asserts nothing is unapplied,
+      // which keeps the existing fixtures honest as this path grows.
+      const unappliedFile = path.join(fixtureDir, 'expected-unapplied.json');
+      const unapplied = Object.fromEntries(unappliedOverrides || new Map());
+      if (await exists(unappliedFile)) {
+        assert.deepEqual(
+          unapplied,
+          await readJson(unappliedFile),
+          `${name}: unapplied overrides should match expected-unapplied.json`
+        );
+        // An unapplied override is never offered for removal: both 'dead' and
+        // 'redundant' read the installed versions, and those are what resolution
+        // produced while ignoring the pin.
+        for (const key of Object.keys(unapplied)) {
+          assert.ok(
+            !removals.includes(key),
+            `${name}: ${key} is not in effect and must not be offered for removal`
+          );
+        }
+      } else {
+        assert.deepEqual(unapplied, {}, `${name}: expected no unapplied overrides`);
+      }
+
+      // Pins the writer found already in the manifest, so it wrote nothing. This
+      // is what lets the summary say 'already present' rather than reporting no
+      // effective changes to someone who just accepted a security fix.
+      const presentFile = path.join(fixtureDir, 'expected-already-present.json');
+      if (await exists(presentFile)) {
+        assert.deepEqual(
+          result.alreadyPresent,
+          await readJson(presentFile),
+          `${name}: already-present pins should match expected-already-present.json`
+        );
       }
     });
   }

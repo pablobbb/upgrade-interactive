@@ -43,6 +43,30 @@ scoped pin and a top-level pin on the same package are written by separate
 passes, and a shipped release lost one to the other because no test ever staged
 the two together in both directions.
 
+### Fixtures
+
+`test/fixtures/*` holds real manifest + lockfile pairs, driven through the whole
+load → audit → write pipeline by `test/unit/fixtures.test.mjs` (offline, asserting
+what we write) and `test/integration/roundtrip.test.mjs` (network, asserting npm
+accepts it). The registry is frozen per fixture in `registry.snapshot.json`, so
+the lockfile stays real while the test stays deterministic.
+
+**A fixture's `lock.json` must be npm's own output**, never hand-edited. That is
+the entire point: these catch divergence between our model of npm's shapes and
+what npm actually produces, and a hand-written lockfile can only confirm our
+model back to us. To stage a state npm won't produce in one step, drive npm
+through the sequence that produces it — the unapplied-override fixtures resolve
+*with* one pin and then change the pin without re-resolving, which is how the
+state arises in the wild.
+
+Each fixture carries a `NOTES.md` saying how it was built and what outcome it
+pins. Beyond `expected-overrides.json`, a fixture may add
+`expected-dependencies.json`, `expected-unapplied.json`,
+`expected-already-present.json` (all offline) and `expected-reresolved.json`
+(what npm's re-resolution produced). Each is optional — except that a fixture
+with no `expected-unapplied.json` asserts nothing is unapplied, which keeps the
+older fixtures honest as that path grows.
+
 ## Real-world runs
 
 The test suite covers synthetic trees. It does not cover what npm actually does
