@@ -167,7 +167,7 @@ async function main() {
     // project: an accepted pin that was already there means the installed tree
     // never picked it up. npm only re-resolves a changed override on the next
     // install in a *standalone* project — in a workspace it reports "up to date"
-    // and leaves the old version (docs/spike-reresolve-2026-08-26.md), so those
+    // and leaves the old version (docs/2026-08-26-spike-reresolve.md), so those
     // users need to be told what actually clears it.
     if (alreadyPresent && alreadyPresent.length > 0) {
       process.stdout.write(

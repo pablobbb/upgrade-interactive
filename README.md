@@ -191,7 +191,7 @@ also matches directories whose name starts with a dot.
     The only reliable fix is a clean slate:
     `rm -rf node_modules package-lock.json && npm install`.
 
-  Measured against npm 11.13.0; see `docs/spike-reresolve-2026-08-26.md` for the
+  Measured against npm 11.13.0; see `docs/2026-08-26-spike-reresolve.md` for the
   full comparison. Because that fix re-resolves *every* dependency, the tool
   reports the state and leaves the decision to you rather than running it.
 - Accepting a pin that's **already** in `package.json` writes nothing, and the

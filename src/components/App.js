@@ -174,7 +174,7 @@ export function App({
   //
   // Shown only for workspace projects. npm re-resolves a changed override on the
   // next `npm install` in a standalone project but not in a workspace — measured,
-  // not assumed (docs/spike-reresolve-2026-08-26.md) — so warning a standalone
+  // not assumed (docs/2026-08-26-spike-reresolve.md) — so warning a standalone
   // user would be telling them to act on something the tool's own `--install`
   // step is about to fix.
   const isWorkspaceProject = (manifestPaths?.length ?? 1) > 1;

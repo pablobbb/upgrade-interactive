@@ -32,3 +32,25 @@ This applies to every task, not just "feature work". Concretely:
   skipping the README check.
 
 Do not end a task with the README describing behavior the code no longer has.
+
+## Naming docs in `docs/`
+
+`docs/` holds point-in-time records — spikes, field reports — each true of the
+versions it measured and never revised afterwards. Name them
+`YYYY-MM-DD-<kind>-<subject>.md`, date first, so the directory sorts into a
+chronological log as they accumulate:
+
+```
+docs/2026-08-11-field-report.md
+docs/2026-08-26-spike-reresolve.md
+```
+
+The date is when the work was *measured*, not when the file was last touched.
+State the tool versions involved (`npm 11.13.0`) in the doc itself — a reader
+needs both to know whether a finding still holds.
+
+These docs are cited from code comments, the README and `CHANGELOG.md`, and
+`CHANGELOG.md` ships in the npm tarball (`files`), so a published path cannot be
+corrected. Renaming one means updating every reference in the same commit; check
+with `grep -rn '<old-name>' --include='*.js' --include='*.mjs' --include='*.md' .`
+and do it before tagging a release, never after.

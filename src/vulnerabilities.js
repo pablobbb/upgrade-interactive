@@ -143,7 +143,7 @@ function splitParentKey(key) {
  * writes nothing and the tool reports "no changes". Detecting the contradiction
  * is what lets us say so instead.
  *
- * Verified against npm 11.13.0 (docs/spike-reresolve-2026-08-26.md): this state
+ * Verified against npm 11.13.0 (docs/2026-08-26-spike-reresolve.md): this state
  * only persists in *workspace* projects. A standalone project applies the new
  * mandate on its next `npm install`, so callers scope the warning accordingly.
  *

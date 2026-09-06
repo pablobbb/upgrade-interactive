@@ -18,7 +18,7 @@
 // unapplied-override fixtures pin the premise the feature rests on: in a
 // *standalone* project npm applies a changed override on the next install, so
 // `--install` already fixes it and the tool stays quiet, while a workspace project
-// silently keeps the old version. Measured in docs/spike-reresolve-2026-08-26.md;
+// silently keeps the old version. Measured in docs/2026-08-26-spike-reresolve.md;
 // this keeps the standalone half honest if a future npm changes it. npm reports
 // "up to date" even as it rewrites the version, so the exit code cannot see this.
 

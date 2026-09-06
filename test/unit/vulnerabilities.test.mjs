@@ -765,7 +765,7 @@ describe('computeVulnerabilities — workspaces', () => {
 //
 // An override npm never applied: the pin is in package.json, but resolution
 // happened before it was added, so the lockfile still holds the old version.
-// See docs/spike-reresolve-2026-08-26.md for the measured npm behavior.
+// See docs/2026-08-26-spike-reresolve.md for the measured npm behavior.
 
 describe('computeVulnerabilities — unapplied overrides', () => {
   // jsdom's undici edge: declared ^7.25.0, resolved 7.28.0, mandated 7.29.0.

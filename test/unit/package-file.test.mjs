@@ -938,7 +938,7 @@ describe('applyProject', () => {
 
 // A pin the user accepted that was already in the manifest. Writing nothing is
 // correct; reporting nothing is what makes the tool answer "no changes" to
-// someone who just accepted a fix. See docs/spike-reresolve-2026-08-26.md.
+// someone who just accepted a fix. See docs/2026-08-26-spike-reresolve.md.
 describe('applyUpgrades — overrides already present', () => {
   it('reports a scoped pin that was already in the manifest instead of dropping it', async () => {
     const dir = await project({

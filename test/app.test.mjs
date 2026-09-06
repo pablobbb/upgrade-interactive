@@ -414,7 +414,7 @@ async function testOverrideOriginRehomed() {
 
 // An override the tree never applied. Shown only for workspace projects: npm
 // re-resolves a changed override on the next install in a standalone project but
-// not in a workspace (docs/spike-reresolve-2026-08-26.md), so a standalone user
+// not in a workspace (docs/2026-08-26-spike-reresolve.md), so a standalone user
 // would be told to act on something --install is about to fix.
 function unappliedAudit() {
   return {

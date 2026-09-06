@@ -22,7 +22,7 @@
   `redundant` were unsound verdicts.
 
   Only workspace projects are warned. Measured against npm 11.13.0
-  (`docs/spike-reresolve-2026-08-26.md`): a standalone project applies the new
+  (`docs/2026-08-26-spike-reresolve.md`): a standalone project applies the new
   mandate on its next `npm install`, so the existing `--install` step already
   covers it. A workspace project reports `up to date` and keeps the old version,
   and neither `npm update <pkg>` nor `npm audit fix` fixes that — both resolve to

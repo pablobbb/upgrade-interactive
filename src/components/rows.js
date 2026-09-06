@@ -109,7 +109,7 @@ export function buildDisplayRows({
     }
     // Purely informational, and deliberately not navigable: there is no action
     // the tool can offer. npm has no way to re-resolve a single edge — verified
-    // in docs/spike-reresolve-2026-08-26.md — so the only fix is a full clean
+    // in docs/2026-08-26-spike-reresolve.md — so the only fix is a full clean
     // reinstall, which is the user's call to make, not a keypress.
     if (unappliedList.length > 0) {
       rows.push({ kind: 'header', key: 'h:unapplied', title: 'Overrides not in effect' });
