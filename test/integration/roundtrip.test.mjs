@@ -12,6 +12,15 @@
 //   { "expect": "rejected", "code": "EOVERRIDE", ... }
 // "accepted" asserts npm exits 0; "rejected" asserts a non-zero exit whose
 // output includes the given npm error code.
+//
+// A fixture may also include `expected-reresolved.json` — lockfile path -> version
+// — asserting what npm's re-resolution actually produced. That is how the
+// unapplied-override fixtures pin the premise the feature rests on: in a
+// *standalone* project npm applies a changed override on the next install, so
+// `--install` already fixes it and the tool stays quiet, while a workspace project
+// silently keeps the old version. Measured in docs/2026-08-26-spike-reresolve.md;
+// this keeps the standalone half honest if a future npm changes it. npm reports
+// "up to date" even as it rewrites the version, so the exit code cannot see this.
 
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,6 +61,15 @@ function runNpmInstall(cwd) {
       }
     );
   });
+}
+
+async function exists(file) {
+  try {
+    await access(file);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function readRoundtripConfig(fixtureDir) {
@@ -99,6 +117,22 @@ describe('real-world fixtures — npm round-trip', async () => {
         }
       } else {
         assert.equal(code, 0, `${name}: expected npm to accept the overrides\n${output}`);
+      }
+
+      // What npm's re-resolution actually produced (see the note at the top).
+      const reresolvedFile = path.join(fixtureDir, 'expected-reresolved.json');
+      if (await exists(reresolvedFile)) {
+        const expectedLock = await readJson(reresolvedFile);
+        const lock = await readJson(path.join(work, 'package-lock.json'));
+        for (const [lockPath, version] of Object.entries(expectedLock)) {
+          const node = lock.packages[lockPath];
+          assert.ok(node, `${name}: ${lockPath} missing from the re-resolved lockfile`);
+          assert.equal(
+            node.version,
+            version,
+            `${name}: npm should have re-resolved ${lockPath} to ${version}`
+          );
+        }
       }
     });
   }

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Box, Text, useInput, useApp, useStdout } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
-import { Row, VulnRow, OverrideRow, LoadingRow, SectionHeader, WorkspaceHeader } from './Row.js';
+import { Row, VulnRow, OverrideRow, UnappliedRow, LoadingRow, SectionHeader, WorkspaceHeader } from './Row.js';
 import { buildDisplayRows, overrideView, nextColumn, bulkColumn, windowSlice } from './rows.js';
 import { OverridePicker, ScopedOverridePicker, PICKER_MAX_HEIGHT } from './OverridePicker.js';
 import { fetchSuggestions } from '../semver-suggest.js';
@@ -170,6 +170,27 @@ export function App({
     : [];
   const removable = auditState && auditState.removableOverrides ? auditState.removableOverrides : null;
   const removableList = removable ? [...removable.entries()] : [];
+  // Overrides the tree never applied, flattened one row per pinned package.
+  //
+  // Shown only for workspace projects. npm re-resolves a changed override on the
+  // next `npm install` in a standalone project but not in a workspace — measured,
+  // not assumed (docs/2026-08-26-spike-reresolve.md) — so warning a standalone
+  // user would be telling them to act on something the tool's own `--install`
+  // step is about to fix.
+  const isWorkspaceProject = (manifestPaths?.length ?? 1) > 1;
+  const unapplied = auditState && auditState.unappliedOverrides ? auditState.unappliedOverrides : null;
+  const unappliedList =
+    unapplied && isWorkspaceProject
+      ? [...unapplied.entries()].flatMap(([key, info]) =>
+          info.mandates.map((m) => ({
+            key,
+            name: m.name,
+            mandated: m.mandated,
+            installed: m.found[0]?.installedVersion ?? null,
+            parentName: m.found[0]?.parentName ?? null,
+          }))
+        )
+      : [];
   // Audit requested but not yet resolved — the override sections show loading
   // placeholders until `runAudit` returns.
   const auditPending = audit && auditState === null;
@@ -182,6 +203,7 @@ export function App({
     section,
     overrideVulns,
     removableList,
+    unappliedList,
     auditPending,
   });
 
@@ -377,6 +399,15 @@ export function App({
           vuln: row.vuln,
           override: ov.spec,
           overrideNote: ov.note,
+        });
+      }
+      if (row.kind === 'unapplied') {
+        return e(UnappliedRow, {
+          key: row.key,
+          name: row.name,
+          mandated: row.mandated,
+          installed: row.installed,
+          parentName: row.parentName,
         });
       }
       if (row.kind === 'override') {

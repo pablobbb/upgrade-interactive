@@ -320,3 +320,64 @@ describe('windowSlice', () => {
     assert.deepEqual(windowSlice(items, 0, 7), { visible: items, above: 0, below: 0 });
   });
 });
+
+describe('buildDisplayRows — overrides not in effect', () => {
+  const unappliedList = [
+    { key: 'jsdom', name: 'undici', mandated: '7.29.0', installed: '7.28.0', parentName: 'jsdom' },
+  ];
+
+  it('renders an informational section after the removable-override section', () => {
+    const rows = buildDisplayRows({
+      descriptors: [],
+      entries: [],
+      allLoaded: true,
+      vulns: null,
+      section: false,
+      removableList: [['leftpad', { pin: '1.3.0', reason: 'dead' }]],
+      unappliedList,
+    });
+
+    assert.deepEqual(
+      rows.map((r) => [r.kind, r.key]),
+      [
+        ['header', 'h:unused'],
+        ['override', 'ovr:leftpad'],
+        ['header', 'h:unapplied'],
+        ['unapplied', 'unapp:jsdom:undici'],
+      ]
+    );
+  });
+
+  it('carries the mandated and installed versions onto the row', () => {
+    const rows = buildDisplayRows({
+      descriptors: [],
+      entries: [],
+      allLoaded: true,
+      vulns: null,
+      section: false,
+      unappliedList,
+    });
+
+    assert.deepEqual(rows.at(-1), {
+      kind: 'unapplied',
+      key: 'unapp:jsdom:undici',
+      name: 'undici',
+      mandated: '7.29.0',
+      installed: '7.28.0',
+      parentName: 'jsdom',
+    });
+  });
+
+  it('renders no section when nothing is unapplied', () => {
+    const rows = buildDisplayRows({
+      descriptors: [],
+      entries: [],
+      allLoaded: true,
+      vulns: null,
+      section: false,
+      unappliedList: [],
+    });
+
+    assert.deepEqual(rows, []);
+  });
+});

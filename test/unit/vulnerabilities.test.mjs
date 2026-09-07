@@ -760,3 +760,143 @@ describe('computeVulnerabilities — workspaces', () => {
     assert.ok(!v.instances.some((i) => i.conflict), 'no instance is flagged');
   });
 });
+
+// --- Unapplied overrides -----------------------------------------------------
+//
+// An override npm never applied: the pin is in package.json, but resolution
+// happened before it was added, so the lockfile still holds the old version.
+// See docs/2026-08-26-spike-reresolve.md for the measured npm behavior.
+
+describe('computeVulnerabilities — unapplied overrides', () => {
+  // jsdom's undici edge: declared ^7.25.0, resolved 7.28.0, mandated 7.29.0.
+  const scopedTree = (undiciVersion) =>
+    treeWith({
+      packages: {
+        '': {},
+        'node_modules/jsdom': { version: '29.1.1', dependencies: { undici: '^7.25.0' } },
+        'node_modules/undici': { version: undiciVersion },
+      },
+    });
+
+  it('flags a scoped pin the lockfile does not reflect', async () => {
+    const { unappliedOverrides } = await computeVulnerabilities(
+      { overrides: { jsdom: { undici: '7.29.0' } }, installed: scopedTree('7.28.0') },
+      stubRegistry()
+    );
+
+    assert.deepEqual(unappliedOverrides.get('jsdom').mandates, [
+      {
+        name: 'undici',
+        mandated: '7.29.0',
+        found: [
+          {
+            parentName: 'jsdom',
+            parentVersion: '29.1.1',
+            path: 'node_modules/undici',
+            installedVersion: '7.28.0',
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('does not flag a scoped pin the lockfile already reflects', async () => {
+    const { unappliedOverrides } = await computeVulnerabilities(
+      { overrides: { jsdom: { undici: '7.29.0' } }, installed: scopedTree('7.29.0') },
+      stubRegistry()
+    );
+
+    assert.equal(unappliedOverrides.size, 0);
+  });
+
+  it('flags a top-level pin the lockfile does not reflect', async () => {
+    const installed = treeWith({
+      packages: { '': {}, 'node_modules/undici': { version: '7.28.0' } },
+    });
+
+    const { unappliedOverrides } = await computeVulnerabilities(
+      { overrides: { undici: '7.29.0' }, installed },
+      stubRegistry()
+    );
+
+    assert.equal(unappliedOverrides.get('undici').mandates[0].mandated, '7.29.0');
+    assert.equal(unappliedOverrides.get('undici').mandates[0].found[0].installedVersion, '7.28.0');
+  });
+
+  it("leaves an override for a package no longer in the tree as 'dead', not unapplied", async () => {
+    const installed = treeWith({ packages: { '': {}, 'node_modules/unrelated': { version: '1.0.0' } } });
+
+    const { unappliedOverrides, removableOverrides } = await computeVulnerabilities(
+      { overrides: { leftpad: '1.3.0' }, installed },
+      stubRegistry()
+    );
+
+    assert.equal(unappliedOverrides.size, 0);
+    assert.deepEqual(removableOverrides.get('leftpad'), { pin: '1.3.0', reason: 'dead' });
+  });
+
+  it('never offers an unapplied override for removal', async () => {
+    // Nothing declares a dependency on `leftpad`, so the tree-based analysis
+    // would call it 'dead' — but the tree never applied the pin, so that verdict
+    // is drawn from a resolution this override had no part in.
+    const installed = treeWith({
+      packages: { '': {}, 'node_modules/leftpad': { version: '1.2.0' } },
+    });
+
+    const { unappliedOverrides, removableOverrides } = await computeVulnerabilities(
+      { overrides: { leftpad: '1.3.0' }, installed },
+      stubRegistry()
+    );
+
+    assert.equal(unappliedOverrides.has('leftpad'), true);
+    assert.equal(removableOverrides.has('leftpad'), false);
+  });
+
+  it('ignores a versionless workspace link rather than inventing a finding', async () => {
+    const installed = treeWith({
+      packages: {
+        '': {},
+        'packages/web': { version: '1.0.0' },
+        // How npm records a workspace: a link with no version of its own.
+        'node_modules/@acme/web': { resolved: 'packages/web', link: true },
+      },
+    });
+
+    const { unappliedOverrides } = await computeVulnerabilities(
+      { overrides: { '@acme/web': '2.0.0' }, installed },
+      stubRegistry()
+    );
+
+    assert.equal(unappliedOverrides.size, 0);
+  });
+
+  it('does not judge a version-scoped key it cannot parse', async () => {
+    const installed = treeWith({
+      packages: {
+        '': {},
+        'node_modules/minimatch': { version: '9.0.9', dependencies: { 'brace-expansion': '^2.0.1' } },
+        'node_modules/brace-expansion': { version: '2.0.1' },
+      },
+    });
+
+    const { unappliedOverrides } = await computeVulnerabilities(
+      { overrides: { 'brace-expansion@2': '2.1.4' }, installed },
+      stubRegistry()
+    );
+
+    assert.equal(unappliedOverrides.size, 0);
+  });
+
+  it('ignores a "$name" reference, which pins no concrete version', async () => {
+    const installed = treeWith({
+      packages: { '': {}, 'node_modules/undici': { version: '7.28.0' } },
+    });
+
+    const { unappliedOverrides } = await computeVulnerabilities(
+      { overrides: { undici: '$undici' }, installed },
+      stubRegistry()
+    );
+
+    assert.equal(unappliedOverrides.size, 0);
+  });
+});

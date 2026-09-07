@@ -190,6 +190,29 @@ export function OverrideRow({ name, active, pin, reason, staged }) {
   );
 }
 
+// An `overrides` entry the installed tree does not reflect: the pin is correct
+// and already in package.json, but resolution happened before it was added, so
+// npm never applied it. Read-only — see the `unapplied` branch in rows.js for
+// why no action is offered.
+export function UnappliedRow({ name, mandated, installed, parentName }) {
+  const where = parentName ? `${parentName} ${CHILD} ${name}` : name;
+  return e(
+    Box,
+    { flexDirection: 'row' },
+    e(Box, { width: 2, flexShrink: 0 }),
+    e(NameCell, { name: where }),
+    e(
+      Box,
+      { marginLeft: 1 },
+      e(
+        Text,
+        { color: 'yellow' },
+        `${WARN} override pins ${mandated} ${SEPARATOR} lockfile has ${installed}`
+      )
+    )
+  );
+}
+
 export function LoadingRow() {
   return e(
     Box,

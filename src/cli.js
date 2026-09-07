@@ -150,7 +150,7 @@ async function main() {
     return;
   }
 
-  const { applied, overrides, removed } = await applyProject(
+  const { applied, overrides, removed, alreadyPresent } = await applyProject(
     project,
     result.selections,
     overrideSelections,
@@ -158,9 +158,32 @@ async function main() {
   );
 
   process.stdout.write('\n');
-  process.stdout.write(formatSummary({ applied, overrides, removed, isMonorepo: isMonorepoProject(project) }));
+  process.stdout.write(
+    formatSummary({ applied, overrides, removed, alreadyPresent, isMonorepo: isMonorepoProject(project) })
+  );
 
   if (applied.length === 0 && overrides.length === 0 && removed.length === 0) {
+    // "No effective changes" is true of package.json and misleading about the
+    // project: an accepted pin that was already there means the installed tree
+    // never picked it up. npm only re-resolves a changed override on the next
+    // install in a *standalone* project — in a workspace it reports "up to date"
+    // and leaves the old version (docs/2026-08-26-spike-reresolve.md), so those
+    // users need to be told what actually clears it.
+    if (alreadyPresent && alreadyPresent.length > 0) {
+      process.stdout.write(
+        '\nThese overrides were already in package.json, so nothing was written —\n' +
+          'but the installed tree still resolves to a different version.\n'
+      );
+      if (isMonorepoProject(project)) {
+        process.stdout.write(
+          'npm will not re-resolve them in a workspace project. To apply them:\n' +
+            '  rm -rf node_modules package-lock.json && npm install\n'
+        );
+      } else {
+        process.stdout.write('Run npm install to apply them.\n');
+      }
+      return;
+    }
     process.stdout.write('No effective changes.\n');
     return;
   }

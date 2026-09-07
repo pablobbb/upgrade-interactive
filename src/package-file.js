@@ -187,7 +187,20 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
 // one decision before we get here (see mergeInstancesByOverrideKey), so this
 // writer never faces that conflict in the real flow. If a caller passes such a
 // pair anyway, the later pin wins.
-function writeOverrideSpec(json, name, spec, out, directField, applied) {
+function writeOverrideSpec(json, name, spec, out, directField, applied, alreadyPresent) {
+  // An accepted pin whose value is already in the manifest. Not writing it is
+  // correct — but discarding the fact is what makes the tool answer "no changes"
+  // to a user who just accepted a fix, which reads as "you were already fine"
+  // when the tree may still be unpatched. Recorded so the summary can say which
+  // it was. See `unappliedOverrides` in vulnerabilities.js.
+  const notePresent = (entry) => {
+    if (!alreadyPresent) return;
+    const at = alreadyPresent.findIndex(
+      (o) => o.name === entry.name && (o.parent ?? null) === (entry.parent ?? null)
+    );
+    if (at === -1) alreadyPresent.push(entry);
+  };
+
   const field = directField.get(name);
 
   // Bump a direct dependency's declared range to `version` instead of writing a
@@ -230,10 +243,10 @@ function writeOverrideSpec(json, name, spec, out, directField, applied) {
     const root = overridesRoot();
     const existing = root[name];
     if (existing && typeof existing === 'object') {
-      if (existing['.'] === version) return;
+      if (existing['.'] === version) return notePresent({ name, to: version });
       existing['.'] = version;
     } else {
-      if (existing === version) return;
+      if (existing === version) return notePresent({ name, to: version });
       root[name] = version;
     }
     record({ name, to: version });
@@ -272,7 +285,10 @@ function writeOverrideSpec(json, name, spec, out, directField, applied) {
     let bucket = root[key];
     if (typeof bucket === 'string') bucket = root[key] = { '.': bucket };
     else if (!bucket || typeof bucket !== 'object') bucket = root[key] = {};
-    if (bucket[name] === pin.version) continue;
+    if (bucket[name] === pin.version) {
+      notePresent({ name, to: pin.version, parent: key });
+      continue;
+    }
     bucket[name] = pin.version;
     record({ name, to: pin.version, parent: key });
   }
@@ -344,11 +360,12 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
   }
 
   const appliedOverrides = [];
+  const alreadyPresent = [];
   for (const [name, spec] of Object.entries(overrides || {})) {
     // writeOverrideSpec creates manifest.json.overrides lazily, only if it writes
     // a real override entry — pins that become direct-dependency range bumps
     // never materialize an (empty) overrides block.
-    writeOverrideSpec(manifest.json, name, spec, appliedOverrides, directField, applied);
+    writeOverrideSpec(manifest.json, name, spec, appliedOverrides, directField, applied, alreadyPresent);
   }
 
   const removed = [];
@@ -391,7 +408,7 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
   }
 
   if (applied.length === 0 && appliedOverrides.length === 0 && removed.length === 0) {
-    return { applied, overrides: appliedOverrides, removed };
+    return { applied, overrides: appliedOverrides, removed, alreadyPresent };
   }
 
   assertOverridesLanded(manifest.json, appliedOverrides);
@@ -399,7 +416,7 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
   const serialized = JSON.stringify(manifest.json, null, manifest.indent) + (manifest.trailingNewline ? '\n' : '');
   await writeFile(manifest.filePath, serialized, 'utf8');
 
-  return { applied, overrides: appliedOverrides, removed };
+  return { applied, overrides: appliedOverrides, removed, alreadyPresent };
 }
 
 /**
@@ -440,6 +457,7 @@ export async function applyProject(project, selections, overrides = {}, removals
   const applied = [];
   const appliedOverrides = [];
   const removed = [];
+  const alreadyPresent = [];
   for (const manifest of project.manifests) {
     const isRoot = manifest === project.root;
     const slotMap = byRelPath.get(manifest.relPath) || new Map();
@@ -455,7 +473,8 @@ export async function applyProject(project, selections, overrides = {}, removals
     }
     appliedOverrides.push(...res.overrides);
     removed.push(...res.removed);
+    alreadyPresent.push(...(res.alreadyPresent || []));
   }
 
-  return { applied, overrides: appliedOverrides, removed };
+  return { applied, overrides: appliedOverrides, removed, alreadyPresent };
 }

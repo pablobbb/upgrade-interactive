@@ -1,0 +1,18 @@
+{
+  "brace-expansion": {
+    "mandates": [
+      {
+        "name": "brace-expansion",
+        "mandated": "1.1.16",
+        "found": [
+          {
+            "parentName": null,
+            "parentVersion": null,
+            "path": "node_modules/brace-expansion",
+            "installedVersion": "1.1.11"
+          }
+        ]
+      }
+    ]
+  }
+}

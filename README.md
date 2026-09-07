@@ -51,7 +51,15 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
 6. **Flags overrides that are no longer needed** (nothing depends on them, or
    your deps now resolve safely without them). Press `x` to remove one — it only
    ever removes the one you select.
-7. Writes your choices back to `package.json` and runs `npm install`.
+7. **Flags overrides that aren't in effect** — the pin is in `package.json`, but
+   the installed tree resolved to a different version, so npm never applied it.
+   These are listed read-only under **Overrides not in effect**, showing what the
+   override pins against what the lockfile actually has. There's no keybinding
+   because there's nothing to stage: npm can't re-resolve a single edge, so
+   clearing it means a full reinstall (see **Notes**). An override in this state
+   is never offered for removal under (6) — the tree it would be judged against
+   is one this override had no part in.
+8. Writes your choices back to `package.json` and runs `npm install`.
 
 By default the list is grouped into **Dependencies**, **Dev dependencies**, and
 override sections. Pass `--no-section` for a single flat list. In an npm
@@ -168,6 +176,27 @@ also matches directories whose name starts with a dot.
 - Pinning a package **and** pinning something under it share one entry:
   npm's `"."` key holds the package's own pin next to its scoped children —
   `"vite": { ".": "7.3.6", "picomatch": "4.0.5" }`.
+- **npm applies `overrides` at resolution time, not retroactively.** An override
+  added *after* its lockfile entry was resolved can sit in `package.json` with no
+  effect, because the installed version still satisfies its dependent's declared
+  range and npm sees no reason to revisit it. What clears it depends on the
+  project shape, which is why step 7 above only warns in workspaces:
+  - **standalone** — the next `npm install` applies it, so the tool's own
+    `--install` step already fixes it and no warning is shown;
+  - **workspace repo** — `npm install` reports `up to date` and leaves the old
+    version. Neither `npm update <pkg>` nor `npm audit fix` fixes this: they
+    resolve to the newest version in range and ignore what the override mandates,
+    which merely *looks* right when the pin happens to be the newest. Deleting
+    the lockfile alone isn't enough either — npm rebuilds it from `node_modules`.
+    The only reliable fix is a clean slate:
+    `rm -rf node_modules package-lock.json && npm install`.
+
+  Measured against npm 11.13.0; see `docs/2026-08-26-spike-reresolve.md` for the
+  full comparison. Because that fix re-resolves *every* dependency, the tool
+  reports the state and leaves the decision to you rather than running it.
+- Accepting a pin that's **already** in `package.json` writes nothing, and the
+  summary says so explicitly instead of reporting "no effective changes" — that
+  combination is the signal that the override isn't in effect.
 - Only `dependencies` / `devDependencies` are scanned.
 - The list stays alphabetically sorted the whole time it's loading.
 

@@ -18,6 +18,7 @@ import { INFO } from '../icons.js';
  * @param section      group each workspace's rows by field when true
  * @param overrideVulns  [name, vuln][] for the shared "Override to a safe version" section
  * @param removableList  [name, info][] for the shared "Unused overrides" section
+ * @param unappliedList  [{ key, name, mandated, installed }] for "Overrides not in effect"
  * @param auditPending  audit still in flight — show loading placeholders for the two audit sections
  */
 export function buildDisplayRows({
@@ -28,6 +29,7 @@ export function buildDisplayRows({
   section,
   overrideVulns = [],
   removableList = [],
+  unappliedList = [],
   auditPending = false,
 }) {
   const depItems = descriptors.map((descriptor, i) => ({ descriptor, entry: entries[i], i }));
@@ -103,6 +105,23 @@ export function buildDisplayRows({
       rows.push({ kind: 'header', key: 'h:unused', title: 'Unused overrides' });
       for (const [name, info] of removableList) {
         rows.push({ kind: 'override', key: `ovr:${name}`, name, pin: info.pin, reason: info.reason });
+      }
+    }
+    // Purely informational, and deliberately not navigable: there is no action
+    // the tool can offer. npm has no way to re-resolve a single edge — verified
+    // in docs/2026-08-26-spike-reresolve.md — so the only fix is a full clean
+    // reinstall, which is the user's call to make, not a keypress.
+    if (unappliedList.length > 0) {
+      rows.push({ kind: 'header', key: 'h:unapplied', title: 'Overrides not in effect' });
+      for (const u of unappliedList) {
+        rows.push({
+          kind: 'unapplied',
+          key: `unapp:${u.key}:${u.name}`,
+          name: u.name,
+          mandated: u.mandated,
+          installed: u.installed,
+          parentName: u.parentName ?? null,
+        });
       }
     }
   }

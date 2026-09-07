@@ -935,3 +935,54 @@ describe('applyProject', () => {
     assert.equal(wsRaw.endsWith('\n'), true, 'workspace keeps trailing newline');
   });
 });
+
+// A pin the user accepted that was already in the manifest. Writing nothing is
+// correct; reporting nothing is what makes the tool answer "no changes" to
+// someone who just accepted a fix. See docs/2026-08-26-spike-reresolve.md.
+describe('applyUpgrades — overrides already present', () => {
+  it('reports a scoped pin that was already in the manifest instead of dropping it', async () => {
+    const dir = await project({
+      'package.json': pkg({
+        name: 'app',
+        dependencies: { jsdom: '^29.1.1' },
+        overrides: { jsdom: { undici: '7.29.0' } },
+      }),
+    });
+    const manifest = await loadManifest(dir);
+    const before = await readFile(path.join(dir, 'package.json'), 'utf8');
+
+    const res = await applyUpgrades(manifest, new Map(), {
+      undici: { scoped: [{ parentName: 'jsdom', parentVersion: '29.1.1', version: '7.29.0' }] },
+    });
+
+    assert.deepEqual(res.overrides, []);
+    assert.deepEqual(res.alreadyPresent, [{ name: 'undici', to: '7.29.0', parent: 'jsdom' }]);
+    // Still a no-op on disk — the point is to describe it, not to write it.
+    assert.equal(await readFile(path.join(dir, 'package.json'), 'utf8'), before);
+  });
+
+  it('reports a top-level pin that was already in the manifest', async () => {
+    const dir = await project({
+      'package.json': pkg({ name: 'app', overrides: { undici: '7.29.0' } }),
+    });
+    const manifest = await loadManifest(dir);
+
+    const res = await applyUpgrades(manifest, new Map(), { undici: '7.29.0' });
+
+    assert.deepEqual(res.overrides, []);
+    assert.deepEqual(res.alreadyPresent, [{ name: 'undici', to: '7.29.0' }]);
+  });
+
+  it('reports nothing as already-present when the pin actually changes', async () => {
+    const dir = await project({
+      'package.json': pkg({ name: 'app', overrides: { undici: '7.28.0' } }),
+    });
+    const manifest = await loadManifest(dir);
+
+    const res = await applyUpgrades(manifest, new Map(), { undici: '7.29.0' });
+
+    assert.deepEqual(res.overrides, [{ name: 'undici', to: '7.29.0' }]);
+    assert.deepEqual(res.alreadyPresent, []);
+    assert.deepEqual((await readJson(dir)).overrides, { undici: '7.29.0' });
+  });
+});
