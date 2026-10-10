@@ -550,6 +550,24 @@ export async function computeVulnerabilities(
     return versions.some((v) => matchesAny(v, advisories.get(name)));
   });
 
+  // The bulk endpoint returns only advisories affecting a submitted version.
+  // A fix for the current advisory can have a different advisory of its own,
+  // so audit candidate versions too before calling them safe. Keep this query
+  // separate: candidate-only advisories must not flag the installed tree.
+  const candidatesByName = {};
+  await mapWithConcurrency(vulnNames, CONCURRENCY, async (name) => {
+    const meta = await getMeta(name);
+    if (!meta) return;
+    const candidates = meta.versions
+      .filter((v) => semver.valid(v) && !semver.prerelease(v))
+      .filter((v) => !matchesAny(v, advisories.get(name)))
+      .sort(semver.compare);
+    if (candidates.length > 0) candidatesByName[name] = candidates;
+  });
+  const { ok: candidatesOk, advisories: candidateAdvisories } = Object.keys(candidatesByName).length > 0
+    ? await getAdvisories(candidatesByName)
+    : { ok: true, advisories: new Map() };
+
   const vulns = new Map();
   await mapWithConcurrency(vulnNames, CONCURRENCY, async (name) => {
     const list = advisories.get(name);
@@ -572,24 +590,25 @@ export async function computeVulnerabilities(
     }
     if (!SEVERITY[severity]) severity = 'low';
 
-    // Every published version affected by none of the matching advisories,
-    // ungated — the per-parent instance analysis needs targets relative to each
-    // parent's own installed version, not the whole tree's newest.
+    // Verified candidates are ungated by version here: each parent needs fixes
+    // relative to its own installed version. If any candidate query failed,
+    // fail closed rather than offer unverified versions from a partial result.
     const reference = maxVersion(flagged);
-    let publishedSafe = [];
-    const meta = await getMeta(name);
-    if (meta) {
-      publishedSafe = meta.versions
-        .filter((v) => semver.valid(v) && !semver.prerelease(v))
-        .filter((v) => !matchesAny(v, matching))
-        .sort(semver.compare);
-    }
+    const publishedSafe = candidatesOk
+      ? (candidatesByName[name] || []).filter((v) => !matchesAny(v, candidateAdvisories.get(name) || []))
+      : [];
     // The global picker still only offers versions at or above the newest one we
     // currently have anywhere in the tree.
     const safeVersions = reference ? publishedSafe.filter((v) => semver.gte(v, reference)) : publishedSafe;
 
     let firstPatched = safeVersions.length > 0 ? safeVersions[0] : null;
-    if (!firstPatched && primary && primary.patched_versions && primary.patched_versions !== '<0.0.0') {
+    // Only fall back to an advisory's promised fix when no candidates were
+    // available to verify. Do not advertise one we just rejected via another
+    // advisory (or failed to verify).
+    if (
+      candidatesOk && !candidatesByName[name] && !firstPatched &&
+      primary && primary.patched_versions && primary.patched_versions !== '<0.0.0'
+    ) {
       try {
         const mv = semver.minVersion(primary.patched_versions);
         if (mv) firstPatched = mv.version;
@@ -631,7 +650,7 @@ export async function computeVulnerabilities(
   });
 
   return {
-    offline: !ok,
+    offline: !ok || !candidatesOk,
     vulns,
     removableOverrides: collectRemovableOverrides(overrideInfo, ok, advisories, unapplied),
     unappliedOverrides: unapplied,

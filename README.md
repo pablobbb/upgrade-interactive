@@ -48,6 +48,10 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
    — npm rejects a top-level override that conflicts with a direct dependency
    (`EOVERRIDE`). The picker scrolls, so a package with a long list of safe
    versions (or a long list of dependents) stays reachable in any terminal.
+   Candidate versions are checked against their own advisories before appearing
+   in the safe-version picker; fixing the current advisory alone is not enough.
+   If that extra check fails, the vulnerability stays visible with the network
+   warning, but no unverified pins are offered.
 6. **Flags overrides that are no longer needed** (nothing depends on them, or
    your deps now resolve safely without them). Press `x` to remove one — it only
    ever removes the one you select.

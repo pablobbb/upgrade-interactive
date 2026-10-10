@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Safe versions are checked against their own advisories.** A version that
+  fixed the reported advisory was offered even when a different advisory
+  affected it, because the audit only looked up advisories for installed
+  versions. Candidate versions are now audited too. If that check can't
+  complete, the package stays listed with the network warning and no pins are
+  offered rather than unverified ones.
+
 ## 2.2.0 — 2026-09-06
 
 ### Added
