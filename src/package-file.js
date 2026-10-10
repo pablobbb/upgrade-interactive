@@ -180,7 +180,8 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
 // copies of itself, a bare "pkg" key can't express both — so those pins are
 // keyed by the more specific "pkg@version" selector instead. A parent that maps
 // to a single target keeps the simpler bare key (which covers every version of
-// it). Bare and qualified keys coexist; npm applies the most specific.
+// it). The selection also supplies `parentSelector` when unselected copies of
+// the same parent must be left alone; that scope takes precedence here.
 //
 // Two pins that resolve to the same key AND the same parent version are not
 // separately expressible in npm's format; the audit layer collapses those into
@@ -278,9 +279,11 @@ function writeOverrideSpec(json, name, spec, out, directField, applied, alreadyP
       pinTopLevel(pin.version);
       continue;
     }
-    // Fall back to the bare name if we can't qualify (no version recorded).
+    // Preserve scope computed from the full installed tree, not just the pins
+    // staged here. Safe parent versions are absent from targetsByParent.
+    // The fallback also supports callers that only supply the older spec shape.
     const qualify = (targetsByParent.get(pin.parentName)?.size || 0) > 1 && pin.parentVersion;
-    const key = qualify ? `${pin.parentName}@${pin.parentVersion}` : pin.parentName;
+    const key = pin.parentSelector || (qualify ? `${pin.parentName}@${pin.parentVersion}` : pin.parentName);
     const root = overridesRoot();
     let bucket = root[key];
     if (typeof bucket === 'string') bucket = root[key] = { '.': bucket };

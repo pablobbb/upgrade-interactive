@@ -1,8 +1,17 @@
-import { describe, it } from 'node:test';
+import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import semver from 'semver';
 import { computeVulnerabilities } from '../../src/vulnerabilities.js';
 import { defaultOverrideSelection } from '../../src/override-select.js';
+import { loadManifest, applyUpgrades } from '../../src/package-file.js';
+
+const dirs = [];
+afterEach(async () => {
+  for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
+});
 
 // Match the bulk endpoint: return only advisories affecting a submitted version.
 // Returning every advisory for a name would hide missing candidate verification.
@@ -95,4 +104,27 @@ describe('override safety — removal selectors', () => {
       assert.equal(result.removableOverrides.has(selector), false);
     });
   }
+});
+
+describe('override safety — scoped selections reach the writer', () => {
+  it('qualifies the vulnerable parent when another version of it is already safe', async () => {
+    const installed = {
+      versions: new Map([['child', new Set(['1.0.0', '2.0.0'])]]),
+      packages: {
+        ...currentTree.packages,
+        'node_modules/other/node_modules/parent': { version: '2.0.0', dependencies: { child: '^2.0.0' } },
+        'node_modules/other/node_modules/parent/node_modules/child': { version: '2.0.0' },
+      },
+    };
+    const { vulns } = await computeVulnerabilities({ installed }, registry(['1.0.0', '1.1.0', '2.0.0'], [currentAdvisory]));
+    const spec = defaultOverrideSelection(vulns.get('child'));
+    assert.equal(spec.scoped.length, 1, 'the safe instance should not be selected');
+    const dir = await mkdtemp(path.join(tmpdir(), 'nui-safety-'));
+    dirs.push(dir);
+    await writeFile(path.join(dir, 'package.json'), '{}\n');
+    const manifest = await loadManifest(dir);
+    await applyUpgrades(manifest, new Map(), { child: spec });
+    const written = JSON.parse(await readFile(manifest.filePath, 'utf8'));
+    assert.deepEqual(written.overrides, { 'parent@1.0.0': { child: '1.1.0' } });
+  });
 });

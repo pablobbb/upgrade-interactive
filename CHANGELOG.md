@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- **Scoped pins no longer change a dependent's already-safe copies.** When a
+  dependent was installed at several versions and only one of them needed a fix,
+  the pin was written under the bare dependent name, which npm applies to every
+  version of it. In the measured case, `"minimatch": { "brace-expansion":
+  "1.1.12" }` also moved `minimatch@9.0.9` — which declares `^2.0.2` and already
+  had a safe `2.1.4` — down to `1.1.12`. Pins are now keyed `minimatch@3.1.5`
+  whenever the dependent has several installed versions.
+
+  **If you accepted a scoped pin with 2.2.0 or earlier**, check `overrides` for
+  bare dependent keys like the one above. This release doesn't flag pins written
+  that way, because the tree they produce no longer looks vulnerable. Replace the
+  key with `"<dependent>@<version>"` for the copy that needed the fix, then run
+  `npm install`.
+
 - **Safe versions are checked against their own advisories.** A version that
   fixed the reported advisory was offered even when a different advisory
   affected it, because the audit only looked up advisories for installed

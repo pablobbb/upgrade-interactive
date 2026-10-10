@@ -51,7 +51,9 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
    Candidate versions are checked against their own advisories before appearing
    in the safe-version picker; fixing the current advisory alone is not enough.
    If that extra check fails, the vulnerability stays visible with the network
-   warning, but no unverified pins are offered.
+   warning, but no unverified pins are offered. When a parent exists at several
+   versions, scoped pins use `parent@version` selectors, including when the other
+   parent versions are already safe and need no change.
 6. **Flags overrides that are no longer needed** (nothing depends on them, or
    your deps now resolve safely without them). Press `x` to remove one — it only
    ever removes the one you select. Removal suggestions cover bare top-level

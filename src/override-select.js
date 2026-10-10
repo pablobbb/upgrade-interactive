@@ -20,6 +20,29 @@ export function defaultScopedChoiceIndex(instance) {
   return instance.safeCandidates.length - 1;
 }
 
+// Decide scope from every installed parent, including the safe/no-fix instances
+// that won't be staged. Once those are discarded, the writer cannot tell that
+// a bare parent key would also change a different version we meant to leave alone.
+// `choices`, when supplied by the picker, is aligned to the pinnable instances.
+export function scopedOverrideSelection(instances, choices) {
+  const versionsByParent = new Map();
+  for (const i of instances) {
+    if (i.parentName == null) continue;
+    if (!versionsByParent.has(i.parentName)) versionsByParent.set(i.parentName, new Set());
+    versionsByParent.get(i.parentName).add(i.parentVersion);
+  }
+  return {
+    scoped: instances.filter(isPinnableInstance).map((i, index) => ({
+      parentName: i.parentName,
+      parentVersion: i.parentVersion,
+      version: i.safeCandidates[choices?.[index] ?? defaultScopedChoiceIndex(i)],
+      ...(i.parentVersion && versionsByParent.get(i.parentName)?.size > 1
+        ? { parentSelector: `${i.parentName}@${i.parentVersion}` }
+        : {}),
+    })),
+  };
+}
+
 // True when the package is installed at several versions across the tree, so a
 // single global pin would be wrong and we offer per-parent scoped pins instead
 // (as long as at least one vulnerable instance has an in-range fix). Mirrors the
@@ -44,13 +67,7 @@ export function isPinBlocked(vuln) {
 export function defaultOverrideSelection(vuln) {
   if (isPinBlocked(vuln)) return null;
   if (shouldScope(vuln)) {
-    return {
-      scoped: pinnableInstances(vuln).map((i) => ({
-        parentName: i.parentName,
-        parentVersion: i.parentVersion,
-        version: i.safeCandidates[defaultScopedChoiceIndex(i)],
-      })),
-    };
+    return scopedOverrideSelection(vuln.instances);
   }
   if (vuln.safeVersions && vuln.safeVersions.length > 0) return vuln.safeVersions[0];
   return null;

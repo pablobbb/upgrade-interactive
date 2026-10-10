@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { isPinnableInstance, defaultScopedChoiceIndex } from '../override-select.js';
+import { isPinnableInstance, defaultScopedChoiceIndex, scopedOverrideSelection } from '../override-select.js';
 import { windowSlice } from './rows.js';
 import { CURSOR, CHILD, BECOMES, SEPARATOR, UP, DOWN, LEFT, RIGHT } from '../icons.js';
 
@@ -108,12 +108,7 @@ export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
       });
     }
     if (key.return) {
-      const scoped = pinnable.map((i, idx) => ({
-        parentName: i.parentName,
-        parentVersion: i.parentVersion,
-        version: i.safeCandidates[choices[idx]],
-      }));
-      onSelect({ scoped });
+      onSelect(scopedOverrideSelection(instances, choices));
     }
   });
 

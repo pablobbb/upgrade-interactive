@@ -2,7 +2,7 @@
 // exit code. Advisory data is frozen; npm generates the lockfiles itself.
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -10,12 +10,15 @@ import { promisify } from 'node:util';
 import { loadManifest, applyUpgrades } from '../../src/package-file.js';
 import { loadInstalledVersions } from '../../src/lockfile.js';
 import { computeVulnerabilities } from '../../src/vulnerabilities.js';
+import { defaultOverrideSelection } from '../../src/override-select.js';
+import { FIXTURES_DIR, stageFixture, stubFromSnapshot } from '../fixture-helpers.mjs';
 
 const exec = promisify(execFile);
 const dirs = [];
 afterEach(async () => {
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
+const readJson = async (file) => JSON.parse(await readFile(file, 'utf8'));
 const writeJson = (file, value) => writeFile(file, JSON.stringify(value, null, 2) + '\n');
 async function npm(cwd, args) {
   await exec('npm', args, {
@@ -25,6 +28,40 @@ async function npm(cwd, args) {
 const install = (cwd) => npm(cwd, ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund']);
 
 describe('override safety — real npm resolution', () => {
+  it('fixes one parent version without downgrading its already-safe sibling', async () => {
+    const dir = await stageFixture(path.join(FIXTURES_DIR, 'stale-transitive-minimatch'));
+    dirs.push(dir);
+    const file = path.join(dir, 'package.json');
+    const json = await readJson(file);
+    // Establish a safe 2.x branch with npm, then keep the generated lockfile
+    // while removing the temporary pin. The older 1.x branch stays vulnerable.
+    json.overrides = { 'minimatch@9.0.9': { 'brace-expansion': '2.1.4' } };
+    await writeJson(file, json);
+    await install(dir);
+    delete json.overrides;
+    await writeJson(file, json);
+
+    const installed = await loadInstalledVersions(dir);
+    const vulnerablePath = 'node_modules/brace-expansion';
+    const safePath = 'node_modules/rimraf/node_modules/brace-expansion';
+    assert.equal(installed.packages[vulnerablePath].version, '1.1.11');
+    assert.equal(installed.packages[safePath].version, '2.1.4');
+    const { vulns } = await computeVulnerabilities({ installed }, stubFromSnapshot({
+      meta: { 'brace-expansion': { versions: ['1.1.11', '1.1.12', '2.1.4'], distTags: {} } },
+      advisories: { 'brace-expansion': [{ vulnerable_versions: '<1.1.12', severity: 'low' }] },
+    }));
+    await applyUpgrades(await loadManifest(dir), new Map(), {
+      'brace-expansion': defaultOverrideSelection(vulns.get('brace-expansion')),
+    });
+    assert.deepEqual((await readJson(file)).overrides, {
+      'minimatch@3.1.5': { 'brace-expansion': '1.1.12' },
+    });
+    await install(dir);
+    const after = await loadInstalledVersions(dir);
+    assert.equal(after.packages[vulnerablePath].version, '1.1.12');
+    assert.equal(after.packages[safePath].version, '2.1.4', 'the safe branch must stay on its own major');
+  });
+
   it('preserves an active qualified override on an exact transitive dependency', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'nui-safety-npm-'));
     dirs.push(dir);
