@@ -11,6 +11,11 @@
   complete, the package stays listed with the network warning and no pins are
   offered rather than unverified ones.
 
+- **Version-qualified overrides are no longer offered for removal.** A key such
+  as `"left-pad@1.1.0"` was looked up as a package name, found nowhere in the
+  tree, and flagged as unused — even while npm was actively applying it. Only
+  bare top-level keys are judged now; qualified ones are left alone.
+
 ## 2.2.0 — 2026-09-06
 
 ### Added

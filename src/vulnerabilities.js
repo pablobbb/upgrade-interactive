@@ -488,10 +488,12 @@ export async function computeVulnerabilities(
   // loaded, with no registry involvement.
   const unapplied = unappliedOverrides(installed && installed.packages, overrides);
 
-  // For each existing top-level override, work out what version(s) would be
-  // installed *without* it, so we can tell whether it's still doing anything.
+  // Only bare top-level names are understood by requiredRangesFor. A qualified
+  // key ("pkg@^1") is a selector, not a dependency name: looking it up verbatim
+  // would misclassify an active pin as dead. Leave these entries untouched until
+  // removability can evaluate selector intersections.
   const overrideEntries = Object.entries(overrides || {}).filter(
-    ([, pin]) => typeof pin === 'string' && !pin.startsWith('$')
+    ([name, pin]) => bareOverrideKeyName(name) && typeof pin === 'string' && !pin.startsWith('$')
   );
   const overrideInfo = new Map();
   await mapWithConcurrency(overrideEntries, CONCURRENCY, async ([name, pin]) => {

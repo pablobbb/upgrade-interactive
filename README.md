@@ -54,7 +54,10 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
    warning, but no unverified pins are offered.
 6. **Flags overrides that are no longer needed** (nothing depends on them, or
    your deps now resolve safely without them). Press `x` to remove one — it only
-   ever removes the one you select.
+   ever removes the one you select. Removal suggestions cover bare top-level
+   package keys only. Version-qualified keys such as `package@^1` (including
+   `@scope/package@^1`) are left untouched: their selectors require separate
+   analysis and must not be mistaken for unused package names.
 7. **Flags overrides that aren't in effect** — the pin is in `package.json`, but
    the installed tree resolved to a different version, so npm never applied it.
    These are listed read-only under **Overrides not in effect**, showing what the

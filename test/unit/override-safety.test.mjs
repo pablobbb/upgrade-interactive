@@ -76,3 +76,23 @@ describe('override safety — candidate advisories', () => {
     assert.equal(defaultOverrideSelection(v), null);
   });
 });
+
+describe('override safety — removal selectors', () => {
+  for (const [name, selector] of [['child', 'child@^1'], ['@scope/child', '@scope/child@1.0.0']]) {
+    it(`does not offer ${selector} for removal, even offline`, async () => {
+      const installed = {
+        versions: new Map([[name, new Set(['1.1.0'])]]),
+        packages: {
+          '': {},
+          'node_modules/parent': { version: '1.0.0', dependencies: { [name]: '1.0.0' } },
+          [`node_modules/${name}`]: { version: '1.1.0' },
+        },
+      };
+      const result = await computeVulnerabilities({ installed, overrides: { [selector]: '1.1.0' } }, {
+        fetchPackageMeta: async () => { throw new Error('unsupported selectors must not be fetched as package names'); },
+        fetchBulkAdvisories: async () => ({ ok: false, advisories: new Map() }),
+      });
+      assert.equal(result.removableOverrides.has(selector), false);
+    });
+  }
+});
