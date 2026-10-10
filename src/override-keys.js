@@ -4,6 +4,12 @@
 //
 // - A bare "pkg" key and a "pkg@version" key are not combined. npm applies one
 //   and silently ignores the other.
+// - Two "pkg@version" keys keep their own pins only when they pin some shared
+//   package to versions that don't overlap. Otherwise npm falls back to the
+//   root override set for the copy other dependents resolve through (the
+//   hoisted one), and that copy's pins are silently dropped. Two copies of
+//   minimatch both pinned to brace-expansion 2.1.7 left the hoisted one on the
+//   vulnerable 2.0.1; pinned to 2.1.6 and 2.1.7, both applied.
 // - A "pkg@version" key without a "." value also pins pkg itself to `version`.
 //   When the root declares pkg with any other spec that admits `version`, npm
 //   fails the install with EOVERRIDE ("conflicts with direct dependency").
@@ -28,6 +34,22 @@ function pinnedSpec(key, value) {
   if (typeof value === 'string') return value || '*';
   if (value && typeof value === 'object' && typeof value['.'] === 'string') return value['.'] || '*';
   return overrideKeySpec(key) ?? '*';
+}
+
+// npm's test for whether two sibling override sets conflict: some package is
+// pinned in both, to ranges that don't intersect. References ("$pkg") and
+// non-semver specs never conflict, and a string value pins only the parent.
+export function overrideBucketsConflict(a, b) {
+  if (!a || typeof a !== 'object' || !b || typeof b !== 'object') return false;
+  for (const [key, value] of Object.entries(a)) {
+    if (key === '.' || !(key in b)) continue;
+    const x = pinnedSpec(key, value);
+    const y = pinnedSpec(key, b[key]);
+    if (x.startsWith('$') || y.startsWith('$')) continue;
+    if (!semver.validRange(x) || !semver.validRange(y)) continue;
+    if (!semver.intersects(x, y)) return true;
+  }
+  return false;
 }
 
 // True when writing `bucket` under the qualified `key` would make npm fail with

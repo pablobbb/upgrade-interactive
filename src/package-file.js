@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { discoverWorkspaces } from './workspaces.js';
-import { overrideKeyName, risksEoverride } from './override-keys.js';
+import { overrideKeyName, overrideBucketsConflict, risksEoverride } from './override-keys.js';
 
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies'];
 
@@ -334,7 +334,8 @@ function rootDeclaredSpec(json, name) {
 
 // Refuse a layout npm would ignore or reject (rules in override-keys.js). The
 // audit refuses such pins up front, but pins staged together in one run — for
-// different packages under the same parent — can still produce one between them. Only parents this run wrote under are
+// different packages under the same parent, or versions changed in the picker —
+// can still produce one between them. Only parents this run wrote under are
 // checked, so a layout already in the user's file doesn't block unrelated changes.
 function assertParentKeysApply(json, appliedOverrides) {
   const root = json.overrides;
@@ -357,6 +358,17 @@ function assertParentKeysApply(json, appliedOverrides) {
     for (const key of qualified) {
       if (written.has(key) && risksEoverride(key, root[key], rootSpec)) {
         refuse(`Cannot write override "${key}": the root declares ${name} ${rootSpec}, and npm rejects both with EOVERRIDE.`, name);
+      }
+    }
+    for (const [i, a] of qualified.entries()) {
+      for (const b of qualified.slice(i + 1)) {
+        if ((written.has(a) || written.has(b)) && !overrideBucketsConflict(root[a], root[b])) {
+          refuse(
+            `Cannot write overrides "${a}" and "${b}" side by side: npm keeps both only when they pin some ` +
+              "package to versions that don't overlap, so one of them would silently do nothing.",
+            name
+          );
+        }
       }
     }
   }

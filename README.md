@@ -56,10 +56,12 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
    parent versions are already safe and need no change. A pin isn't offered when
    npm would ignore or reject the key it lands on (see [Notes](#notes)): beside
    an override for the same parent in the other form (a bare `parent` key next
-   to `parent@version`, or the reverse), or as a `parent@version` key for a
-   parent the root itself declares with a range (`EOVERRIDE`). The picker lists
-   that dependent as left alone, with the reason; if no dependent is left to
-   pin, `o` is refused with a note, and the override is yours to edit by hand.
+   to `parent@version`, or the reverse); beside another `parent@version` key
+   unless the two pin some shared package to different versions; or as a
+   `parent@version` key for a parent the root itself declares with a range
+   (`EOVERRIDE`). The picker lists that dependent as left alone, with the
+   reason; if no dependent is left to pin, `o` is refused with a note, and the
+   override is yours to edit by hand.
 6. **Flags overrides that are no longer needed** (nothing depends on them, or
    your deps now resolve safely without them). Press `x` to remove one — it only
    ever removes the one you select. Removal suggestions cover bare top-level
@@ -213,6 +215,10 @@ also matches directories whose name starts with a dot.
   against npm 11.13.0:
   - A bare `"glob"` key and a `"glob@7.2.3"` key aren't combined: npm applies
     one and ignores the other, in either key order.
+  - Two keys such as `"minimatch@5.1.9"` and `"minimatch@9.0.9"` both take
+    effect only when they pin some shared package to versions that don't
+    overlap. Pinned to the same `brace-expansion` version, the hoisted copy's
+    pin was silently dropped; pinned to different versions, both applied.
   - A `"glob@7.2.3"` key also pins `glob` itself, so when the root declares
     `glob` as `^7.2.0` npm fails with `EOVERRIDE`. Declared as exactly
     `7.2.3`, it installs.

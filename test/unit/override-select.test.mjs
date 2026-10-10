@@ -126,6 +126,9 @@ describe('scopedOverrideSelection', () => {
   });
 
   it('keeps distinct selectors even when two parent versions choose the same target', () => {
+    // A bare key would also pin the safe parent@2.0.0. In the real flow the audit
+    // refuses this pair before selection (npm drops one of two same-version
+    // keys); the writer refuses it too if the picker produces it.
     const spec = scopedOverrideSelection([
       instance({ parentName: 'parent', parentVersion: '1.0.0', safeCandidates: ['1.2.0'] }),
       instance({ parentName: 'parent', parentVersion: '1.1.0', safeCandidates: ['1.2.0'] }),

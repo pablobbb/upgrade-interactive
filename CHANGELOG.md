@@ -46,6 +46,14 @@
   (measured against npm 11.13.0). These pins are now refused like the
   bare/qualified clash above, and the picker says why.
 
+- **Scoped pins that npm would drop are refused.** Two `parent@version` keys for
+  one parent both take effect only when they pin some shared package to
+  versions that don't overlap; otherwise npm silently drops the hoisted copy's
+  pins. Measured against npm 11.13.0, two `minimatch` copies pinned to
+  `brace-expansion@2.1.7` left one on the vulnerable `2.0.1`, and a pin beside
+  another key for a different package was dropped the same way. Such pins are
+  now refused too.
+
 ## 2.2.0 — 2026-09-06
 
 ### Added

@@ -228,6 +228,40 @@ describe('applyUpgrades', () => {
     assert.equal((await readJson(dir)).overrides.minimist, '1.2.6');
   });
 
+  it('refuses two parent@version keys that pin the same package to the same version', async () => {
+    // npm keeps both keys' pins only when they pin some package to versions
+    // that don't overlap; otherwise it drops the hoisted copy's pins.
+    const original = pkg({});
+    const dir = await project({ 'package.json': original });
+    const m = await loadManifest(dir);
+    const pin = (parentVersion) => ({
+      parentName: 'pkg-a', parentVersion, parentSelector: `pkg-a@${parentVersion}`, version: '1.3.0',
+    });
+
+    await assert.rejects(
+      () => applyUpgrades(m, new Map(), { 'dependency-a': { scoped: [pin('1.0.0'), pin('1.1.0')] } }),
+      /"pkg-a@1\.0\.0" and "pkg-a@1\.1\.0" side by side.*don't overlap.*Nothing was written/
+    );
+    assert.equal(await readRaw(dir), original);
+  });
+
+  it('refuses a parent@version key beside an existing one that pins a different package', async () => {
+    const original = pkg({ overrides: { 'pkg-a@2.0.0': { other: '1.0.0' } } });
+    const dir = await project({ 'package.json': original });
+    const m = await loadManifest(dir);
+
+    await assert.rejects(
+      () =>
+        applyUpgrades(m, new Map(), {
+          'dependency-a': {
+            scoped: [{ parentName: 'pkg-a', parentVersion: '1.0.0', parentSelector: 'pkg-a@1.0.0', version: '1.3.0' }],
+          },
+        }),
+      /"pkg-a@2\.0\.0" and "pkg-a@1\.0\.0" side by side/
+    );
+    assert.equal(await readRaw(dir), original);
+  });
+
   it('refuses a parent@version key npm would reject against the root dependency (EOVERRIDE)', async () => {
     const original = pkg({ dependencies: { 'pkg-a': '^1.0.0' } });
     const dir = await project({ 'package.json': original });

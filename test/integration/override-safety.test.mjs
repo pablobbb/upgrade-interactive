@@ -27,6 +27,25 @@ async function npm(cwd, args) {
 }
 const install = (cwd) => npm(cwd, ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund']);
 
+// The version of `name` the lockfile entry at `from` resolves to, by node's lookup.
+function resolvedFrom(packages, from, name) {
+  for (let prefix = from; ; ) {
+    const hit = packages[`${prefix ? `${prefix}/` : ''}node_modules/${name}`];
+    if (hit) return hit.version;
+    if (!prefix) return null;
+    const at = prefix.lastIndexOf('/node_modules/');
+    prefix = at === -1 ? '' : prefix.slice(0, at);
+  }
+}
+
+// Every installed copy of `name`, with what `child` resolves to from it.
+async function copiesOf(dir, name, child) {
+  const { packages } = await loadInstalledVersions(dir);
+  return Object.entries(packages)
+    .filter(([p]) => p === `node_modules/${name}` || p.endsWith(`/node_modules/${name}`))
+    .map(([p, info]) => ({ version: info.version, [child]: resolvedFrom(packages, p, child) }));
+}
+
 describe('override safety — real npm resolution', () => {
   it('fixes one parent version without downgrading its already-safe sibling', async () => {
     const dir = await stageFixture(path.join(FIXTURES_DIR, 'stale-transitive-minimatch'));
@@ -99,6 +118,67 @@ describe('override safety — real npm resolution', () => {
       await install(dir);
       assert.equal(await glob7Minimatch(), '3.1.1', `npm applied ${JSON.stringify(overrides)}`);
     }
+  });
+
+  it('refuses two copies of a parent pinned to the same version, which npm would half-apply', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'nui-safety-npm-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'package.json');
+    // minimatch at 3.x (glob@7), 5.x (filelist) and 9.x (rimraf@5). The 5.x and
+    // 9.x copies accept the same brace-expansion fix; 3.x is left alone.
+    const base = {
+      name: 'nui-safety-app', version: '1.0.0', dependencies: { filelist: '1.0.4', glob: '7.2.3', rimraf: '5.0.5' },
+    };
+    await writeJson(file, base);
+    await install(dir);
+    const v = Object.fromEntries((await copiesOf(dir, 'minimatch', 'be')).map((c) => [c.version.split('.')[0], c.version]));
+    const pins = (a, b) => ({ [`minimatch@${v[5]}`]: { 'brace-expansion': a }, [`minimatch@${v[9]}`]: { 'brace-expansion': b } });
+    // Lock vulnerable 2.0.x under both (different versions, so npm applies both), then drop the pins.
+    await writeJson(file, { ...base, overrides: pins('2.0.1', '2.0.2') });
+    await install(dir);
+    await writeJson(file, base);
+
+    const { vulns } = await computeVulnerabilities({ installed: await loadInstalledVersions(dir) }, stubFromSnapshot({
+      meta: { 'brace-expansion': { versions: ['2.0.1', '2.0.2', '2.1.7'], distTags: {} } },
+      advisories: { 'brace-expansion': [{ vulnerable_versions: '>=2.0.0 <2.0.3', severity: 'high' }] },
+    }));
+    const vuln = vulns.get('brace-expansion');
+    assert.deepEqual(vuln.instances.filter((i) => i.vulnerable).map((i) => i.pinRefusal?.kind), ['shadowed', 'shadowed']);
+    assert.equal(defaultOverrideSelection(vuln), null);
+
+    // Why: with both keys on the same version, npm drops one copy's pin.
+    await writeJson(file, { ...base, overrides: pins('2.1.7', '2.1.7') });
+    await install(dir);
+    const fixed = (await copiesOf(dir, 'minimatch', 'braceExpansion')).filter((c) => !c.version.startsWith('3.'));
+    assert.ok(fixed.some((c) => c.braceExpansion !== '2.1.7'), `npm applied both pins: ${JSON.stringify(fixed)}`);
+  });
+
+  it('refuses a parent@version pin beside one that pins a different package, which npm would drop', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'nui-safety-npm-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'package.json');
+    const base = { name: 'nui-safety-app', version: '1.0.0', dependencies: { glob: '7.2.3', rimraf: '5.0.5' } };
+    await writeJson(file, { ...base, overrides: { 'glob@7.2.3': { minimatch: '3.1.1' } } });
+    await install(dir);
+    // The user's own pin under the other copy of glob, for a package glob@7 doesn't share.
+    const glob10 = (await copiesOf(dir, 'glob', 'minipass')).find((c) => c.version.startsWith('10.'));
+    const theirs = { [`glob@${glob10.version}`]: { minipass: glob10.minipass } };
+    await writeJson(file, { ...base, overrides: theirs });
+    const glob7Minimatch = async () => (await copiesOf(dir, 'glob', 'minimatch')).find((c) => c.version === '7.2.3').minimatch;
+    assert.equal(await glob7Minimatch(), '3.1.1');
+
+    const { vulns } = await computeVulnerabilities({ installed: await loadInstalledVersions(dir), overrides: theirs }, stubFromSnapshot({
+      meta: { minimatch: { versions: ['3.1.1', '3.1.2'], distTags: {} } },
+      advisories: { minimatch: [{ vulnerable_versions: '<3.1.2', severity: 'high' }] },
+    }));
+    const vuln = vulns.get('minimatch');
+    assert.deepEqual(vuln.instances.find((i) => i.vulnerable).pinRefusal, { kind: 'shadowed', by: Object.keys(theirs)[0] });
+    assert.equal(defaultOverrideSelection(vuln), null);
+
+    // Why: npm drops the hoisted copy's pin when the two keys share no package.
+    await writeJson(file, { ...base, overrides: { ...theirs, 'glob@7.2.3': { minimatch: '3.1.2' } } });
+    await install(dir);
+    assert.equal(await glob7Minimatch(), '3.1.1');
   });
 
   it('refuses a parent@version pin that npm would reject against a root dependency range', async () => {

@@ -4,7 +4,7 @@
 import semver from 'semver';
 import { fetchPackageMeta, fetchBulkAdvisories, mapWithConcurrency } from './registry.js';
 import { parentOverrideKey, isPinnableInstance, defaultScopedChoiceIndex } from './override-select.js';
-import { overrideKeyName, risksEoverride } from './override-keys.js';
+import { overrideKeyName, overrideBucketsConflict, risksEoverride } from './override-keys.js';
 
 // The four standard npm/GitHub severity levels, ranked worst-first, with the
 // color used to render them. Centralized so Row.js and the picker agree.
@@ -136,10 +136,11 @@ function splitParentKey(key) {
 
 // Refuse, up front, each scoped pin npm would ignore or reject (the rules are in
 // override-keys.js). A pin is checked against the overrides already in
-// package.json and the root's own dependencies, keyed exactly as the writer
-// will key them. A refused instance records why as `pinRefusal`, which makes it
-// unpinnable. The tool used to write such pins: npm then either ignored them
-// while the tool reported them applied, or failed the install.
+// package.json, the root's own dependencies, and this package's other pins at
+// their default versions, keyed exactly as the writer will key them. A refused
+// instance records why as `pinRefusal`, which makes it unpinnable. The tool used
+// to write such pins: npm then either ignored them while the tool reported them
+// applied, or failed the install.
 function markPinRefusals(name, instances, overrides, packages) {
   const existing = overrides && typeof overrides === 'object' ? overrides : {};
   const keysOf = (parent) => Object.keys(existing).filter((k) => overrideKeyName(k) === parent);
@@ -148,7 +149,8 @@ function markPinRefusals(name, instances, overrides, packages) {
     .filter((i) => i.parentName != null && isPinnableInstance(i))
     .map((i) => ({ i, key: parentOverrideKey(instances, i), version: i.safeCandidates[defaultScopedChoiceIndex(i)] }));
 
-  // The key's form clashes with an existing one, or npm would fail the install.
+  // Refusals that hold whatever else gets staged: the key's form clashes with an
+  // existing one, or npm would fail the install.
   for (const pin of pins) {
     const parent = pin.i.parentName;
     const bare = pin.key === parent;
@@ -160,6 +162,24 @@ function markPinRefusals(name, instances, overrides, packages) {
     const rootSpec = packages && packages[''] ? declaredRangeFor(packages[''], parent) : null;
     if (!bare && risksEoverride(pin.key, { ...bucketOf(pin.key), [name]: pin.version }, rootSpec)) {
       pin.i.pinRefusal = { kind: 'eoverride', key: pin.key, name: parent, rootSpec };
+    }
+  }
+
+  // Qualified keys for one parent, existing or about to be written, must
+  // conflict pairwise. Pins that would leave two of them compatible are refused
+  // together — npm would keep only one of them, and can't be told which.
+  const live = pins.filter((p) => !p.i.pinRefusal && p.key !== p.i.parentName);
+  for (const pin of live) {
+    const parent = pin.i.parentName;
+    const layout = new Map(keysOf(parent).filter((k) => k !== parent).map((k) => [k, bucketOf(k)]));
+    for (const p of live) {
+      if (p.i.parentName === parent) layout.set(p.key, { ...(layout.get(p.key) || {}), [name]: p.version });
+    }
+    const mine = layout.get(pin.key);
+    for (const [key, bucket] of layout) {
+      if (key === pin.key || overrideBucketsConflict(mine, bucket)) continue;
+      pin.i.pinRefusal = { kind: 'shadowed', by: key };
+      break;
     }
   }
 }
