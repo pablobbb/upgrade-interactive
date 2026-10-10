@@ -3,6 +3,7 @@
 
 import semver from 'semver';
 import { fetchPackageMeta, fetchBulkAdvisories, mapWithConcurrency } from './registry.js';
+import { parentOverrideKey } from './override-select.js';
 
 // The four standard npm/GitHub severity levels, ranked worst-first, with the
 // color used to render them. Centralized so Row.js and the picker agree.
@@ -130,6 +131,33 @@ function splitParentKey(key) {
   const at = key.lastIndexOf('@');
   if (at <= 0) return { name: key, version: null };
   return { name: key.slice(0, at), version: key.slice(at + 1) };
+}
+
+// npm does not pick the more specific of a bare "parent" key and a
+// "parent@version" key: it applies one and silently ignores the other. Measured
+// against npm 11.13.0 with glob@7.2.3 and glob@10.5.0 in one tree — a
+// "glob@7.2.3" pin written next to an existing "glob" key left glob@7.2.3's
+// dependency unpinned in either key order, while the tool reported it applied
+// and later told the user `npm install` would fix it.
+//
+// So a pin is refused when its key would sit beside an existing key for the same
+// parent in the other form. Each such vulnerable instance records the existing
+// key that would shadow it as `overrideKeyClash`, which makes it unpinnable.
+function markOverrideKeyClashes(instances, overrides) {
+  if (!overrides || typeof overrides !== 'object') return;
+  const bare = new Set();
+  const qualified = new Map();
+  for (const key of Object.keys(overrides)) {
+    const { name, version } = splitParentKey(key);
+    if (version == null) bare.add(name);
+    else if (!qualified.has(name)) qualified.set(name, key);
+  }
+  for (const i of instances) {
+    if (!i.vulnerable || i.parentName == null) continue;
+    const isBare = parentOverrideKey(instances, i) === i.parentName;
+    const clash = isBare ? qualified.get(i.parentName) : bare.has(i.parentName) ? i.parentName : null;
+    if (clash) i.overrideKeyClash = clash;
+  }
 }
 
 /**
@@ -629,6 +657,7 @@ export async function computeVulnerabilities(
     // parent@version become one pin instead of colliding.
     const pinStrategy = decidePinStrategy(rawInstances, publishedSafe);
     const instances = mergeInstancesByOverrideKey(rawInstances, manifestSet);
+    markOverrideKeyClashes(instances, overrides);
 
     vulns.set(name, {
       advisories: matching,

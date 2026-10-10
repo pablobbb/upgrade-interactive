@@ -62,6 +62,45 @@ describe('override safety — real npm resolution', () => {
     assert.equal(after.packages[safePath].version, '2.1.4', 'the safe branch must stay on its own major');
   });
 
+  it('refuses a scoped pin that an existing bare parent key would shadow', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'nui-safety-npm-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'package.json');
+    // glob@7.2.3 at the root and glob@10 under rimraf, so a pin for glob@7's
+    // minimatch must be keyed "glob@7.2.3". Lock that minimatch at a vulnerable
+    // 3.1.1, then leave only the user's own bare "glob" override in place.
+    const base = { name: 'nui-safety-app', version: '1.0.0', dependencies: { glob: '7.2.3', rimraf: '5.0.5' } };
+    await writeJson(file, { ...base, overrides: { 'glob@7.2.3': { minimatch: '3.1.1' } } });
+    await install(dir);
+    const bare = { glob: { inflight: '1.0.6' } };
+    await writeJson(file, { ...base, overrides: bare });
+    const glob7Minimatch = async () => {
+      const { packages } = await loadInstalledVersions(dir);
+      return (packages['node_modules/glob/node_modules/minimatch'] || packages['node_modules/minimatch']).version;
+    };
+    assert.equal(await glob7Minimatch(), '3.1.1');
+
+    const { vulns } = await computeVulnerabilities({ installed: await loadInstalledVersions(dir), overrides: bare }, stubFromSnapshot({
+      meta: { minimatch: { versions: ['3.1.1', '3.1.2'], distTags: {} } },
+      advisories: { minimatch: [{ vulnerable_versions: '<3.1.2', severity: 'high' }] },
+    }));
+    const vuln = vulns.get('minimatch');
+    assert.equal(vuln.instances.find((i) => i.vulnerable).overrideKeyClash, 'glob');
+    assert.equal(defaultOverrideSelection(vuln), null);
+
+    // Why it is refused: npm ignores the pin the tool used to write, in either
+    // key order. If this starts failing, npm combines the keys and the refusal
+    // can be revisited.
+    for (const overrides of [
+      { ...bare, 'glob@7.2.3': { minimatch: '3.1.2' } },
+      { 'glob@7.2.3': { minimatch: '3.1.2' }, ...bare },
+    ]) {
+      await writeJson(file, { ...base, overrides });
+      await install(dir);
+      assert.equal(await glob7Minimatch(), '3.1.1', `npm applied ${JSON.stringify(overrides)}`);
+    }
+  });
+
   it('preserves an active qualified override on an exact transitive dependency', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'nui-safety-npm-'));
     dirs.push(dir);

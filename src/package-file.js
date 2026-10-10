@@ -176,12 +176,14 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
 // had selected the upgrade. Scoped pins *under other parents* still become
 // nested overrides — those don't conflict with the direct edge.
 //
-// When one parent name needs *different* child versions for different installed
-// copies of itself, a bare "pkg" key can't express both — so those pins are
-// keyed by the more specific "pkg@version" selector instead. A parent that maps
-// to a single target keeps the simpler bare key (which covers every version of
-// it). The selection also supplies `parentSelector` when unselected copies of
-// the same parent must be left alone; that scope takes precedence here.
+// A parent installed at several versions is keyed per version ("pkg@version"):
+// a bare "pkg" key would also pin the copies meant to be left alone, and can't
+// give different copies different targets. The selection supplies that key as
+// `parentSelector` (see parentOverrideKey), which takes precedence here; without
+// one, a parent mapped to more than one target is still qualified. npm does not
+// pick the more specific of a bare and a qualified key for the same parent — it
+// ignores one of them — so applyUpgrades refuses to leave both side by side
+// (assertNoMixedParentKeys).
 //
 // Two pins that resolve to the same key AND the same parent version are not
 // separately expressible in npm's format; the audit layer collapses those into
@@ -321,6 +323,37 @@ function assertOverridesLanded(json, appliedOverrides) {
   }
 }
 
+// The package name an `overrides` key addresses: "pkg@1.0.0" and "@scope/pkg"
+// both name a package, and index 0 is a scope, not a selector separator.
+function overrideKeyName(key) {
+  const at = key.lastIndexOf('@');
+  return at > 0 ? key.slice(0, at) : key;
+}
+
+// A bare "pkg" key and a "pkg@version" key for the same package are not combined
+// by npm; one of them is silently ignored (see markOverrideKeyClashes in
+// vulnerabilities.js). The audit refuses a pin that would land beside an existing
+// key of the other form, but two pins staged in the same run — for different
+// packages under the same parent — can still produce the mix between them. Only
+// keys this run wrote are checked, so a mix already in the user's file doesn't
+// block unrelated changes.
+function assertNoMixedParentKeys(json, appliedOverrides) {
+  const root = json.overrides;
+  if (!root || typeof root !== 'object') return;
+  const keys = Object.keys(root);
+  const touched = new Set(appliedOverrides.map((o) => overrideKeyName(o.parent ?? o.name)));
+  for (const name of touched) {
+    if (!(name in root)) continue;
+    const qualified = keys.find((k) => k !== name && overrideKeyName(k) === name);
+    if (!qualified) continue;
+    throw new Error(
+      `Cannot write overrides "${name}" and "${qualified}" side by side: npm applies only one of them, ` +
+        'so some of these pins would silently do nothing. Nothing was written. ' +
+        `Stage fewer pins under ${name}, or edit the overrides by hand.`
+    );
+  }
+}
+
 /**
  * Apply a Map<name, newRange> of accepted upgrades, an optional map of npm
  * `overrides` to add, and an optional list of override names to remove, then
@@ -414,6 +447,7 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
     return { applied, overrides: appliedOverrides, removed, alreadyPresent };
   }
 
+  assertNoMixedParentKeys(manifest.json, appliedOverrides);
   assertOverridesLanded(manifest.json, appliedOverrides);
 
   const serialized = JSON.stringify(manifest.json, null, manifest.indent) + (manifest.trailingNewline ? '\n' : '');

@@ -4,10 +4,14 @@
 // fixture test harness import these, so the test can't quietly assert against a
 // stale copy of the picker's default while the real app diverges.
 
-// A vulnerable instance is "pinnable" when it's actually vulnerable and its
-// declared range can accept at least one safe version without a downgrade.
+// A vulnerable instance is "pinnable" when it's actually vulnerable, its
+// declared range can accept at least one safe version without a downgrade, and
+// the pin wouldn't land beside an existing override npm would let shadow it
+// (`overrideKeyClash`, see vulnerabilities.js).
 export function isPinnableInstance(i) {
-  return !!(i && i.vulnerable && Array.isArray(i.safeCandidates) && i.safeCandidates.length > 0);
+  return !!(
+    i && i.vulnerable && !i.overrideKeyClash && Array.isArray(i.safeCandidates) && i.safeCandidates.length > 0
+  );
 }
 
 export function pinnableInstances(vuln) {
@@ -20,26 +24,31 @@ export function defaultScopedChoiceIndex(instance) {
   return instance.safeCandidates.length - 1;
 }
 
-// Decide scope from every installed parent, including the safe/no-fix instances
-// that won't be staged. Once those are discarded, the writer cannot tell that
-// a bare parent key would also change a different version we meant to leave alone.
+// The `overrides` key a scoped pin under instance `i` lands on: "parent@version"
+// when that parent is installed at several versions among `instances`, else the
+// bare parent name. Decided from every installed parent, including the
+// safe/no-fix instances that won't be staged — once those are discarded, the
+// writer cannot tell that a bare parent key would also change a different
+// version we meant to leave alone.
+export function parentOverrideKey(instances, i) {
+  if (i.parentName == null || !i.parentVersion) return i.parentName;
+  const versions = new Set();
+  for (const o of instances) if (o.parentName === i.parentName) versions.add(o.parentVersion);
+  return versions.size > 1 ? `${i.parentName}@${i.parentVersion}` : i.parentName;
+}
+
 // `choices`, when supplied by the picker, is aligned to the pinnable instances.
 export function scopedOverrideSelection(instances, choices) {
-  const versionsByParent = new Map();
-  for (const i of instances) {
-    if (i.parentName == null) continue;
-    if (!versionsByParent.has(i.parentName)) versionsByParent.set(i.parentName, new Set());
-    versionsByParent.get(i.parentName).add(i.parentVersion);
-  }
   return {
-    scoped: instances.filter(isPinnableInstance).map((i, index) => ({
-      parentName: i.parentName,
-      parentVersion: i.parentVersion,
-      version: i.safeCandidates[choices?.[index] ?? defaultScopedChoiceIndex(i)],
-      ...(i.parentVersion && versionsByParent.get(i.parentName)?.size > 1
-        ? { parentSelector: `${i.parentName}@${i.parentVersion}` }
-        : {}),
-    })),
+    scoped: instances.filter(isPinnableInstance).map((i, index) => {
+      const key = parentOverrideKey(instances, i);
+      return {
+        parentName: i.parentName,
+        parentVersion: i.parentVersion,
+        version: i.safeCandidates[choices?.[index] ?? defaultScopedChoiceIndex(i)],
+        ...(key !== i.parentName ? { parentSelector: key } : {}),
+      };
+    }),
   };
 }
 
@@ -51,13 +60,21 @@ export function shouldScope(vuln) {
   return vuln.pinStrategy === 'scoped' && pinnableInstances(vuln).length > 0;
 }
 
-// True when no `overrides` entry can express a fix: manifests in this project
-// declare different ranges for the package, and npm honors overrides only at
-// the root, so any single pin would satisfy one manifest and silently rewrite
-// or under-fix the others. Blocks *both* picker paths — clearing the scoped
-// candidates alone would just fall through to the global one.
+// True when no `overrides` entry can express a fix. Either manifests in this
+// project declare different ranges for the package, and npm honors overrides
+// only at the root, so any single pin would satisfy one manifest and silently
+// rewrite or under-fix the others; or the package needs per-parent pins and the
+// only fixable ones would land beside an existing override that npm lets shadow
+// them. Blocks *both* picker paths — clearing the scoped candidates alone would
+// just fall through to the global one, which would also pin the copies the
+// scoped strategy exists to leave alone.
 export function isPinBlocked(vuln) {
-  return !!vuln.pinConflict;
+  if (vuln.pinConflict) return true;
+  return (
+    vuln.pinStrategy === 'scoped' &&
+    pinnableInstances(vuln).length === 0 &&
+    (vuln.instances || []).some((i) => i.overrideKeyClash)
+  );
 }
 
 // The exact `overrides` value the UI would stage if the user pressed `o` on this

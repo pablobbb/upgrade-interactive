@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import semver from 'semver';
 import { computeVulnerabilities } from '../../src/vulnerabilities.js';
-import { defaultOverrideSelection } from '../../src/override-select.js';
+import { defaultOverrideSelection, isPinBlocked } from '../../src/override-select.js';
 import { loadManifest, applyUpgrades } from '../../src/package-file.js';
 
 const dirs = [];
@@ -126,5 +126,68 @@ describe('override safety — scoped selections reach the writer', () => {
     await applyUpgrades(manifest, new Map(), { child: spec });
     const written = JSON.parse(await readFile(manifest.filePath, 'utf8'));
     assert.deepEqual(written.overrides, { 'parent@1.0.0': { child: '1.1.0' } });
+  });
+});
+
+// npm applies only one of a bare "parent" key and a "parent@version" key, so a
+// pin in the other form beside an existing key would be reported and ignored.
+describe('override safety — pins npm would shadow', () => {
+  const twoParentVersions = {
+    versions: new Map([['child', new Set(['1.0.0', '2.0.0'])]]),
+    packages: {
+      ...currentTree.packages,
+      'node_modules/other/node_modules/parent': { version: '2.0.0', dependencies: { child: '^2.0.0' } },
+      'node_modules/other/node_modules/parent/node_modules/child': { version: '2.0.0' },
+    },
+  };
+  const deps = () => registry(['1.0.0', '1.1.0', '2.0.0'], [currentAdvisory]);
+
+  it('refuses a parent@version pin beside an existing bare parent key', async () => {
+    const overrides = { parent: { unrelated: '1.0.0' } };
+    const v = (await computeVulnerabilities({ installed: twoParentVersions, overrides }, deps())).vulns.get('child');
+    assert.equal(v.instances.find((i) => i.parentVersion === '1.0.0').overrideKeyClash, 'parent');
+    assert.equal(isPinBlocked(v), true, 'falling back to a global pin would also hit the safe parent@2.0.0');
+    assert.equal(defaultOverrideSelection(v), null);
+  });
+
+  it('refuses a bare parent pin beside an existing parent@version key', async () => {
+    const installed = {
+      versions: new Map([['child', new Set(['1.0.0', '2.0.0'])]]),
+      packages: {
+        '': { dependencies: { parent: '1.0.0', other: '1.0.0' } },
+        'node_modules/parent': { version: '1.0.0', dependencies: { child: '^1.0.0' } },
+        'node_modules/child': { version: '1.0.0' },
+        'node_modules/other': { version: '1.0.0', dependencies: { child: '^2.0.0' } },
+        'node_modules/other/node_modules/child': { version: '2.0.0' },
+      },
+    };
+    const overrides = { 'parent@0.9.0': { unrelated: '1.0.0' } };
+    const v = (await computeVulnerabilities({ installed, overrides }, deps())).vulns.get('child');
+    assert.equal(v.instances.find((i) => i.parentName === 'parent').overrideKeyClash, 'parent@0.9.0');
+    assert.equal(defaultOverrideSelection(v), null);
+  });
+
+  it('still pins the other dependents', async () => {
+    const installed = {
+      ...twoParentVersions,
+      packages: {
+        ...twoParentVersions.packages,
+        'node_modules/sibling': { version: '1.0.0', dependencies: { child: '^1.0.0' } },
+      },
+    };
+    const overrides = { parent: { unrelated: '1.0.0' } };
+    const v = (await computeVulnerabilities({ installed, overrides }, deps())).vulns.get('child');
+    assert.equal(isPinBlocked(v), false);
+    assert.deepEqual(defaultOverrideSelection(v), {
+      scoped: [{ parentName: 'sibling', parentVersion: '1.0.0', version: '1.1.0' }],
+    });
+  });
+
+  it('pins as before when the existing key has the same form', async () => {
+    const overrides = { 'parent@1.0.0': { unrelated: '1.0.0' } };
+    const v = (await computeVulnerabilities({ installed: twoParentVersions, overrides }, deps())).vulns.get('child');
+    assert.deepEqual(defaultOverrideSelection(v), {
+      scoped: [{ parentName: 'parent', parentVersion: '1.0.0', parentSelector: 'parent@1.0.0', version: '1.1.0' }],
+    });
   });
 });

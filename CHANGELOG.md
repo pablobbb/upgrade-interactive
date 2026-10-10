@@ -30,6 +30,16 @@
   tree, and flagged as unused — even while npm was actively applying it. Only
   bare top-level keys are judged now; qualified ones are left alone.
 
+- **Pins that npm would ignore are refused.** npm doesn't pick the more specific
+  of a bare `"glob"` key and a `"glob@7.2.3"` key: it applies one and ignores the
+  other. Measured against npm 11.13.0, a `glob@7.2.3` pin written beside an
+  existing `glob` override changed nothing, in either key order — yet the tool
+  reported it applied and, on the next run, said `npm install` would fix it.
+  Such pins are no longer offered; the picker lists the dependent as left alone,
+  and `o` is refused with a note when no other dependent can be pinned. If pins
+  staged in one run would create the mix between themselves, nothing is written
+  and the error says which keys collide.
+
 ## 2.2.0 — 2026-09-06
 
 ### Added
