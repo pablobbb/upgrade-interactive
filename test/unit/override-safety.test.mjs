@@ -145,7 +145,7 @@ describe('override safety — pins npm would shadow', () => {
   it('refuses a parent@version pin beside an existing bare parent key', async () => {
     const overrides = { parent: { unrelated: '1.0.0' } };
     const v = (await computeVulnerabilities({ installed: twoParentVersions, overrides }, deps())).vulns.get('child');
-    assert.equal(v.instances.find((i) => i.parentVersion === '1.0.0').overrideKeyClash, 'parent');
+    assert.deepEqual(v.instances.find((i) => i.parentVersion === '1.0.0').pinRefusal, { kind: 'shadowed', by: 'parent' });
     assert.equal(isPinBlocked(v), true, 'falling back to a global pin would also hit the safe parent@2.0.0');
     assert.equal(defaultOverrideSelection(v), null);
   });
@@ -163,7 +163,7 @@ describe('override safety — pins npm would shadow', () => {
     };
     const overrides = { 'parent@0.9.0': { unrelated: '1.0.0' } };
     const v = (await computeVulnerabilities({ installed, overrides }, deps())).vulns.get('child');
-    assert.equal(v.instances.find((i) => i.parentName === 'parent').overrideKeyClash, 'parent@0.9.0');
+    assert.deepEqual(v.instances.find((i) => i.parentName === 'parent').pinRefusal, { kind: 'shadowed', by: 'parent@0.9.0' });
     assert.equal(defaultOverrideSelection(v), null);
   });
 
@@ -190,4 +190,35 @@ describe('override safety — pins npm would shadow', () => {
       scoped: [{ parentName: 'parent', parentVersion: '1.0.0', parentSelector: 'parent@1.0.0', version: '1.1.0' }],
     });
   });
+});
+
+// A "parent@version" key fails the install (EOVERRIDE) when the root declares
+// parent with another spec that admits it.
+describe('override safety — pins npm would reject', () => {
+  const deps = (versions = ['1.0.0', '1.1.0', '2.0.0']) => registry(versions, [currentAdvisory]);
+  // parent@1.0.0 and parent@1.1.0 share the vulnerable child@1.0.0; parent@2.0.0 is safe.
+  const threeParents = (declared = ['^1.0.0', '^1.0.0']) => ({
+    versions: new Map([['child', new Set(['1.0.0', '2.0.0'])]]),
+    packages: {
+      '': { dependencies: { parent: '1.0.0' } },
+      'node_modules/parent': { version: '1.0.0', dependencies: { child: declared[0] } },
+      'node_modules/child': { version: '1.0.0' },
+      'node_modules/x/node_modules/parent': { version: '1.1.0', dependencies: { child: declared[1] } },
+      'node_modules/y/node_modules/parent': { version: '2.0.0', dependencies: { child: '^2.0.0' } },
+      'node_modules/y/node_modules/parent/node_modules/child': { version: '2.0.0' },
+    },
+  });
+  const refusals = (v) => Object.fromEntries(v.instances.filter((i) => i.vulnerable).map((i) => [i.parentVersion, i.pinRefusal]));
+
+  for (const [rootSpec, refused] of [['^1.0.0', true], ['1.0.0', false], ['^2.0.0', false]]) {
+    it(`${refused ? 'refuses' : 'allows'} a parent@1.0.0 pin when the root declares parent ${rootSpec}`, async () => {
+      const installed = { ...threeParents(), packages: { ...threeParents().packages, '': { dependencies: { parent: rootSpec } } } };
+      delete installed.packages['node_modules/x/node_modules/parent'];
+      const v = (await computeVulnerabilities({ installed }, deps())).vulns.get('child');
+      assert.deepEqual(
+        refusals(v)['1.0.0'],
+        refused ? { kind: 'eoverride', key: 'parent@1.0.0', name: 'parent', rootSpec } : undefined
+      );
+    });
+  }
 });

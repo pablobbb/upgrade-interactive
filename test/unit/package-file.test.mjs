@@ -177,7 +177,7 @@ describe('applyUpgrades', () => {
   it('refuses to add a qualified key beside a pre-existing bare parent override', async () => {
     // npm applies only one of "pkg-a" and "pkg-a@1.0.0", so writing both would
     // report pins that never take effect. The audit normally refuses these pins
-    // first (overrideKeyClash); this is the writer's own backstop.
+    // first (pinRefusal); this is the writer's own backstop.
     const original = pkg({ overrides: { 'pkg-a': { other: '2.0.0' } } });
     const dir = await project({ 'package.json': original });
     const m = await loadManifest(dir);
@@ -226,6 +226,36 @@ describe('applyUpgrades', () => {
     await applyUpgrades(m, new Map(), { minimist: '1.2.6' });
 
     assert.equal((await readJson(dir)).overrides.minimist, '1.2.6');
+  });
+
+  it('refuses a parent@version key npm would reject against the root dependency (EOVERRIDE)', async () => {
+    const original = pkg({ dependencies: { 'pkg-a': '^1.0.0' } });
+    const dir = await project({ 'package.json': original });
+    const m = await loadManifest(dir);
+
+    await assert.rejects(
+      () =>
+        applyUpgrades(m, new Map(), {
+          'dependency-a': {
+            scoped: [{ parentName: 'pkg-a', parentVersion: '1.0.0', parentSelector: 'pkg-a@1.0.0', version: '1.3.0' }],
+          },
+        }),
+      /"pkg-a@1\.0\.0": the root declares pkg-a \^1\.0\.0.*EOVERRIDE/
+    );
+    assert.equal(await readRaw(dir), original);
+  });
+
+  it('writes a parent@version key when the root declares exactly that version', async () => {
+    const dir = await project({ 'package.json': pkg({ dependencies: { 'pkg-a': '1.0.0' } }) });
+    const m = await loadManifest(dir);
+
+    await applyUpgrades(m, new Map(), {
+      'dependency-a': {
+        scoped: [{ parentName: 'pkg-a', parentVersion: '1.0.0', parentSelector: 'pkg-a@1.0.0', version: '1.3.0' }],
+      },
+    });
+
+    assert.deepEqual((await readJson(dir)).overrides, { 'pkg-a@1.0.0': { 'dependency-a': '1.3.0' } });
   });
 
   it('qualifies a scoped-package parent name correctly', async () => {

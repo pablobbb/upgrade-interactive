@@ -6,12 +6,21 @@
 
 // A vulnerable instance is "pinnable" when it's actually vulnerable, its
 // declared range can accept at least one safe version without a downgrade, and
-// the pin wouldn't land beside an existing override npm would let shadow it
-// (`overrideKeyClash`, see vulnerabilities.js).
+// npm would neither ignore nor reject the key its pin lands on (`pinRefusal`,
+// see markPinRefusals in vulnerabilities.js).
 export function isPinnableInstance(i) {
   return !!(
-    i && i.vulnerable && !i.overrideKeyClash && Array.isArray(i.safeCandidates) && i.safeCandidates.length > 0
+    i && i.vulnerable && !i.pinRefusal && Array.isArray(i.safeCandidates) && i.safeCandidates.length > 0
   );
+}
+
+// Why a pin was refused, worded for the picker and the row note.
+export function pinRefusalText(refusal) {
+  if (!refusal) return null;
+  if (refusal.kind === 'eoverride') {
+    return `npm rejects "${refusal.key}" beside the root's ${refusal.name} ${refusal.rootSpec} (EOVERRIDE)`;
+  }
+  return `npm would ignore a pin beside "${refusal.by}"`;
 }
 
 export function pinnableInstances(vuln) {
@@ -63,17 +72,17 @@ export function shouldScope(vuln) {
 // True when no `overrides` entry can express a fix. Either manifests in this
 // project declare different ranges for the package, and npm honors overrides
 // only at the root, so any single pin would satisfy one manifest and silently
-// rewrite or under-fix the others; or the package needs per-parent pins and the
-// only fixable ones would land beside an existing override that npm lets shadow
-// them. Blocks *both* picker paths — clearing the scoped candidates alone would
-// just fall through to the global one, which would also pin the copies the
-// scoped strategy exists to leave alone.
+// rewrite or under-fix the others; or the package needs per-parent pins and npm
+// would ignore or reject every fixable one (`pinRefusal`). Blocks *both* picker
+// paths — clearing the scoped candidates alone would just fall through to the
+// global one, which would also pin the copies the scoped strategy exists to
+// leave alone.
 export function isPinBlocked(vuln) {
   if (vuln.pinConflict) return true;
   return (
     vuln.pinStrategy === 'scoped' &&
     pinnableInstances(vuln).length === 0 &&
-    (vuln.instances || []).some((i) => i.overrideKeyClash)
+    (vuln.instances || []).some((i) => i.pinRefusal)
   );
 }
 

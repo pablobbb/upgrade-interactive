@@ -40,6 +40,12 @@
   staged in one run would create the mix between themselves, nothing is written
   and the error says which keys collide.
 
+- **Scoped pins that npm would reject are refused.** A `glob@7.2.3` key also
+  pins `glob` itself, so `npm install` fails with `EOVERRIDE` when the root
+  declares `glob` as `^7.2.0` — a common setup the tool wrote such keys for
+  (measured against npm 11.13.0). These pins are now refused like the
+  bare/qualified clash above, and the picker says why.
+
 ## 2.2.0 — 2026-09-06
 
 ### Added

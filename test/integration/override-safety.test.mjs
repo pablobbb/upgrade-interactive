@@ -85,7 +85,7 @@ describe('override safety — real npm resolution', () => {
       advisories: { minimatch: [{ vulnerable_versions: '<3.1.2', severity: 'high' }] },
     }));
     const vuln = vulns.get('minimatch');
-    assert.equal(vuln.instances.find((i) => i.vulnerable).overrideKeyClash, 'glob');
+    assert.deepEqual(vuln.instances.find((i) => i.vulnerable).pinRefusal, { kind: 'shadowed', by: 'glob' });
     assert.equal(defaultOverrideSelection(vuln), null);
 
     // Why it is refused: npm ignores the pin the tool used to write, in either
@@ -99,6 +99,31 @@ describe('override safety — real npm resolution', () => {
       await install(dir);
       assert.equal(await glob7Minimatch(), '3.1.1', `npm applied ${JSON.stringify(overrides)}`);
     }
+  });
+
+  it('refuses a parent@version pin that npm would reject against a root dependency range', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'nui-safety-npm-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'package.json');
+    const base = { name: 'nui-safety-app', version: '1.0.0', dependencies: { glob: '^7.2.0', rimraf: '5.0.5' } };
+    // "." keeps this temporary pin itself clear of EOVERRIDE.
+    await writeJson(file, { ...base, overrides: { 'glob@7.2.3': { '.': '^7.2.0', minimatch: '3.1.1' } } });
+    await install(dir);
+    await writeJson(file, base);
+
+    const { vulns } = await computeVulnerabilities({ installed: await loadInstalledVersions(dir) }, stubFromSnapshot({
+      meta: { minimatch: { versions: ['3.1.1', '3.1.2'], distTags: {} } },
+      advisories: { minimatch: [{ vulnerable_versions: '<3.1.2', severity: 'high' }] },
+    }));
+    const vuln = vulns.get('minimatch');
+    assert.deepEqual(vuln.instances.find((i) => i.vulnerable).pinRefusal, {
+      kind: 'eoverride', key: 'glob@7.2.3', name: 'glob', rootSpec: '^7.2.0',
+    });
+    assert.equal(defaultOverrideSelection(vuln), null);
+
+    // Why: the key the tool used to write fails the install outright.
+    await writeJson(file, { ...base, overrides: { 'glob@7.2.3': { minimatch: '3.1.2' } } });
+    await assert.rejects(install(dir), /EOVERRIDE/);
   });
 
   it('preserves an active qualified override on an exact transitive dependency', async () => {

@@ -3,7 +3,8 @@
 
 import semver from 'semver';
 import { fetchPackageMeta, fetchBulkAdvisories, mapWithConcurrency } from './registry.js';
-import { parentOverrideKey } from './override-select.js';
+import { parentOverrideKey, isPinnableInstance, defaultScopedChoiceIndex } from './override-select.js';
+import { overrideKeyName, risksEoverride } from './override-keys.js';
 
 // The four standard npm/GitHub severity levels, ranked worst-first, with the
 // color used to render them. Centralized so Row.js and the picker agree.
@@ -133,30 +134,33 @@ function splitParentKey(key) {
   return { name: key.slice(0, at), version: key.slice(at + 1) };
 }
 
-// npm does not pick the more specific of a bare "parent" key and a
-// "parent@version" key: it applies one and silently ignores the other. Measured
-// against npm 11.13.0 with glob@7.2.3 and glob@10.5.0 in one tree — a
-// "glob@7.2.3" pin written next to an existing "glob" key left glob@7.2.3's
-// dependency unpinned in either key order, while the tool reported it applied
-// and later told the user `npm install` would fix it.
-//
-// So a pin is refused when its key would sit beside an existing key for the same
-// parent in the other form. Each such vulnerable instance records the existing
-// key that would shadow it as `overrideKeyClash`, which makes it unpinnable.
-function markOverrideKeyClashes(instances, overrides) {
-  if (!overrides || typeof overrides !== 'object') return;
-  const bare = new Set();
-  const qualified = new Map();
-  for (const key of Object.keys(overrides)) {
-    const { name, version } = splitParentKey(key);
-    if (version == null) bare.add(name);
-    else if (!qualified.has(name)) qualified.set(name, key);
-  }
-  for (const i of instances) {
-    if (!i.vulnerable || i.parentName == null) continue;
-    const isBare = parentOverrideKey(instances, i) === i.parentName;
-    const clash = isBare ? qualified.get(i.parentName) : bare.has(i.parentName) ? i.parentName : null;
-    if (clash) i.overrideKeyClash = clash;
+// Refuse, up front, each scoped pin npm would ignore or reject (the rules are in
+// override-keys.js). A pin is checked against the overrides already in
+// package.json and the root's own dependencies, keyed exactly as the writer
+// will key them. A refused instance records why as `pinRefusal`, which makes it
+// unpinnable. The tool used to write such pins: npm then either ignored them
+// while the tool reported them applied, or failed the install.
+function markPinRefusals(name, instances, overrides, packages) {
+  const existing = overrides && typeof overrides === 'object' ? overrides : {};
+  const keysOf = (parent) => Object.keys(existing).filter((k) => overrideKeyName(k) === parent);
+  const bucketOf = (key) => (existing[key] && typeof existing[key] === 'object' ? existing[key] : {});
+  const pins = instances
+    .filter((i) => i.parentName != null && isPinnableInstance(i))
+    .map((i) => ({ i, key: parentOverrideKey(instances, i), version: i.safeCandidates[defaultScopedChoiceIndex(i)] }));
+
+  // The key's form clashes with an existing one, or npm would fail the install.
+  for (const pin of pins) {
+    const parent = pin.i.parentName;
+    const bare = pin.key === parent;
+    const otherForm = keysOf(parent).find((k) => (k === parent) !== bare);
+    if (otherForm) {
+      pin.i.pinRefusal = { kind: 'shadowed', by: otherForm };
+      continue;
+    }
+    const rootSpec = packages && packages[''] ? declaredRangeFor(packages[''], parent) : null;
+    if (!bare && risksEoverride(pin.key, { ...bucketOf(pin.key), [name]: pin.version }, rootSpec)) {
+      pin.i.pinRefusal = { kind: 'eoverride', key: pin.key, name: parent, rootSpec };
+    }
   }
 }
 
@@ -657,7 +661,7 @@ export async function computeVulnerabilities(
     // parent@version become one pin instead of colliding.
     const pinStrategy = decidePinStrategy(rawInstances, publishedSafe);
     const instances = mergeInstancesByOverrideKey(rawInstances, manifestSet);
-    markOverrideKeyClashes(instances, overrides);
+    markPinRefusals(name, instances, overrides, installed && installed.packages);
 
     vulns.set(name, {
       advisories: matching,

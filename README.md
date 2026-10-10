@@ -54,11 +54,12 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
    warning, but no unverified pins are offered. When a parent exists at several
    versions, scoped pins use `parent@version` selectors, including when the other
    parent versions are already safe and need no change. A pin isn't offered when
-   it would sit beside an existing override for the same parent in the other form
-   — a bare `parent` key next to `parent@version`, or the reverse — because npm
-   would ignore one of them (see [Notes](#notes)). The picker lists that
-   dependent as left alone; if no dependent is left to pin, `o` is refused with a
-   note, and the override is yours to edit by hand.
+   npm would ignore or reject the key it lands on (see [Notes](#notes)): beside
+   an override for the same parent in the other form (a bare `parent` key next
+   to `parent@version`, or the reverse), or as a `parent@version` key for a
+   parent the root itself declares with a range (`EOVERRIDE`). The picker lists
+   that dependent as left alone, with the reason; if no dependent is left to
+   pin, `o` is refused with a note, and the override is yours to edit by hand.
 6. **Flags overrides that are no longer needed** (nothing depends on them, or
    your deps now resolve safely without them). Press `x` to remove one — it only
    ever removes the one you select. Removal suggestions cover bare top-level
@@ -208,13 +209,18 @@ also matches directories whose name starts with a dot.
   Measured against npm 11.13.0; see `docs/2026-08-26-spike-reresolve.md` for the
   full comparison. Because that fix re-resolves *every* dependency, the tool
   reports the state and leaves the decision to you rather than running it.
-- **npm doesn't combine a bare parent key with a `parent@version` key.** Given
-  both `"glob"` and `"glob@7.2.3"`, npm applies one and ignores the other rather
-  than picking the more specific — measured against npm 11.13.0 with two
-  installed copies of `glob`, a `glob@7.2.3` pin had no effect in either key
-  order. The tool never writes that mix: such pins are refused (step 5 above),
-  and a run whose staged pins would create it between themselves writes nothing
-  and says why. A mix already in your `package.json` is left as you wrote it.
+- **npm is picky about several override keys for one parent.** Measured
+  against npm 11.13.0:
+  - A bare `"glob"` key and a `"glob@7.2.3"` key aren't combined: npm applies
+    one and ignores the other, in either key order.
+  - A `"glob@7.2.3"` key also pins `glob` itself, so when the root declares
+    `glob` as `^7.2.0` npm fails with `EOVERRIDE`. Declared as exactly
+    `7.2.3`, it installs.
+
+  The tool never writes these layouts: such pins are refused (step 5 above),
+  and a run whose staged pins would create one between themselves writes
+  nothing and says why. Layouts already in your `package.json` are left as you
+  wrote them.
 - Accepting a pin that's **already** in `package.json` writes nothing, and the
   summary says so explicitly instead of reporting "no effective changes" — that
   combination is the signal that the override isn't in effect.

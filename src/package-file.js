@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { discoverWorkspaces } from './workspaces.js';
+import { overrideKeyName, risksEoverride } from './override-keys.js';
 
 const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies'];
 
@@ -180,10 +181,9 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
 // a bare "pkg" key would also pin the copies meant to be left alone, and can't
 // give different copies different targets. The selection supplies that key as
 // `parentSelector` (see parentOverrideKey), which takes precedence here; without
-// one, a parent mapped to more than one target is still qualified. npm does not
-// pick the more specific of a bare and a qualified key for the same parent — it
-// ignores one of them — so applyUpgrades refuses to leave both side by side
-// (assertNoMixedParentKeys).
+// one, a parent mapped to more than one target is still qualified. npm ignores
+// or rejects some layouts of these keys (override-keys.js), so applyUpgrades
+// refuses to write one (assertParentKeysApply).
 //
 // Two pins that resolve to the same key AND the same parent version are not
 // separately expressible in npm's format; the audit layer collapses those into
@@ -323,34 +323,42 @@ function assertOverridesLanded(json, appliedOverrides) {
   }
 }
 
-// The package name an `overrides` key addresses: "pkg@1.0.0" and "@scope/pkg"
-// both name a package, and index 0 is a scope, not a selector separator.
-function overrideKeyName(key) {
-  const at = key.lastIndexOf('@');
-  return at > 0 ? key.slice(0, at) : key;
+// The spec the root manifest declares for `name`, in any dependency field.
+function rootDeclaredSpec(json, name) {
+  for (const field of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
+    const section = json[field];
+    if (section && typeof section === 'object' && section[name] != null) return section[name];
+  }
+  return null;
 }
 
-// A bare "pkg" key and a "pkg@version" key for the same package are not combined
-// by npm; one of them is silently ignored (see markOverrideKeyClashes in
-// vulnerabilities.js). The audit refuses a pin that would land beside an existing
-// key of the other form, but two pins staged in the same run — for different
-// packages under the same parent — can still produce the mix between them. Only
-// keys this run wrote are checked, so a mix already in the user's file doesn't
-// block unrelated changes.
-function assertNoMixedParentKeys(json, appliedOverrides) {
+// Refuse a layout npm would ignore or reject (rules in override-keys.js). The
+// audit refuses such pins up front, but pins staged together in one run — for
+// different packages under the same parent — can still produce one between them. Only parents this run wrote under are
+// checked, so a layout already in the user's file doesn't block unrelated changes.
+function assertParentKeysApply(json, appliedOverrides) {
   const root = json.overrides;
   if (!root || typeof root !== 'object') return;
-  const keys = Object.keys(root);
-  const touched = new Set(appliedOverrides.map((o) => overrideKeyName(o.parent ?? o.name)));
-  for (const name of touched) {
-    if (!(name in root)) continue;
-    const qualified = keys.find((k) => k !== name && overrideKeyName(k) === name);
-    if (!qualified) continue;
-    throw new Error(
-      `Cannot write overrides "${name}" and "${qualified}" side by side: npm applies only one of them, ` +
-        'so some of these pins would silently do nothing. Nothing was written. ' +
-        `Stage fewer pins under ${name}, or edit the overrides by hand.`
-    );
+  const written = new Set(appliedOverrides.map((o) => o.parent ?? o.name));
+  const refuse = (why, name) => {
+    throw new Error(`${why} Nothing was written. Stage fewer pins under ${name}, or edit the overrides by hand.`);
+  };
+  for (const name of new Set([...written].map(overrideKeyName))) {
+    const qualified = Object.keys(root).filter((k) => k !== name && overrideKeyName(k) === name);
+    if (qualified.length === 0) continue;
+    if (name in root) {
+      refuse(
+        `Cannot write overrides "${name}" and "${qualified[0]}" side by side: npm applies only one of them, ` +
+          'so some of these pins would silently do nothing.',
+        name
+      );
+    }
+    const rootSpec = rootDeclaredSpec(json, name);
+    for (const key of qualified) {
+      if (written.has(key) && risksEoverride(key, root[key], rootSpec)) {
+        refuse(`Cannot write override "${key}": the root declares ${name} ${rootSpec}, and npm rejects both with EOVERRIDE.`, name);
+      }
+    }
   }
 }
 
@@ -447,7 +455,7 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
     return { applied, overrides: appliedOverrides, removed, alreadyPresent };
   }
 
-  assertNoMixedParentKeys(manifest.json, appliedOverrides);
+  assertParentKeysApply(manifest.json, appliedOverrides);
   assertOverridesLanded(manifest.json, appliedOverrides);
 
   const serialized = JSON.stringify(manifest.json, null, manifest.indent) + (manifest.trailingNewline ? '\n' : '');

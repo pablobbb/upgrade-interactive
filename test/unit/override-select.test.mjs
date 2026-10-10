@@ -28,7 +28,7 @@ describe('isPinnableInstance', () => {
   });
 
   it('is false when an existing override would shadow the pin', () => {
-    assert.equal(isPinnableInstance({ ...instance({ safeCandidates: ['1.2.3'] }), overrideKeyClash: 'parent' }), false);
+    assert.equal(isPinnableInstance({ ...instance({ safeCandidates: ['1.2.3'] }), pinRefusal: { kind: 'shadowed', by: 'parent' } }), false);
   });
 
   it('is false for nullish or malformed instances', () => {
