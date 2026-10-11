@@ -3,7 +3,7 @@
 
 import semver from 'semver';
 import { fetchPackageMeta, fetchBulkAdvisories, mapWithConcurrency } from './registry.js';
-import { parentOverrideKey, isPinnableInstance, defaultScopedChoiceIndex } from './override-select.js';
+import { scopedPinKeys, isPinnableInstance, defaultScopedChoiceIndex } from './override-select.js';
 import { overrideKeyName, overrideKeySpec, overrideBucketsConflict, risksEoverride } from './override-keys.js';
 
 // The four standard npm/GitHub severity levels, ranked worst-first, with the
@@ -205,9 +205,11 @@ function markPinRefusals(name, instances, overrides, packages) {
 
   if (packages) limitToCopiesReached(name, instances, keysOf, packages);
 
-  const pins = instances
+  const candidates = instances
     .filter((i) => i.parentName != null && isPinnableInstance(i))
-    .map((i) => ({ i, key: parentOverrideKey(instances, i), version: i.safeCandidates[defaultScopedChoiceIndex(i)] }));
+    .map((i) => ({ i, version: i.safeCandidates[defaultScopedChoiceIndex(i)] }));
+  const keys = scopedPinKeys(instances, candidates);
+  const pins = candidates.map((p, n) => ({ ...p, key: keys[n] }));
 
   // Refusals that hold whatever else gets staged: the key's form clashes with an
   // existing one, or npm would fail the install.
@@ -306,7 +308,9 @@ function unappliedOverrides(packages, overrides) {
     const found = [];
     for (const parentPath of pathsByName.get(parent.name) || []) {
       const info = packages[parentPath];
-      if (parent.version && info.version !== parent.version) continue;
+      // The selector may be a range or a union ("1.0.0 || 1.1.0"), not just a
+      // version; an unparseable one can't be judged, so it's skipped.
+      if (parent.version && !(semver.validRange(parent.version) && semver.satisfies(info.version, parent.version))) continue;
       if (declaredRangeFor(info, name) == null) continue;
       const resolved = resolveInstalledPath(packages, parentPath, name);
       if (!resolved) continue;

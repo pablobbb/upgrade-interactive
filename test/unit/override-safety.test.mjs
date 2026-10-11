@@ -198,10 +198,10 @@ describe('override safety — pins npm would shadow', () => {
 describe('override safety — pins npm would drop or reject', () => {
   const deps = (versions = ['1.0.0', '1.1.0', '2.0.0']) => registry(versions, [currentAdvisory]);
   // parent@1.0.0 and parent@1.1.0 share the vulnerable child@1.0.0; parent@2.0.0 is safe.
-  const threeParents = (declared = ['^1.0.0', '^1.0.0']) => ({
+  const threeParents = (declared = ['^1.0.0', '^1.0.0'], root = { parent: '1.0.0' }) => ({
     versions: new Map([['child', new Set(['1.0.0', '2.0.0'])]]),
     packages: {
-      '': { dependencies: { parent: '1.0.0' } },
+      '': { dependencies: root },
       'node_modules/parent': { version: '1.0.0', dependencies: { child: declared[0] } },
       'node_modules/child': { version: '1.0.0' },
       'node_modules/x/node_modules/parent': { version: '1.1.0', dependencies: { child: declared[1] } },
@@ -211,12 +211,18 @@ describe('override safety — pins npm would drop or reject', () => {
   });
   const refusals = (v) => Object.fromEntries(v.instances.filter((i) => i.vulnerable).map((i) => [i.parentVersion, i.pinRefusal]));
 
-  it('refuses two copies of a parent pinned to the same version beside a copy left alone', async () => {
+  it('pins two copies of a parent that need the same version under one key', async () => {
+    const v = (await computeVulnerabilities({ installed: threeParents(undefined, {}) }, deps())).vulns.get('child');
+    assert.deepEqual(defaultOverrideSelection(v).scoped.map((p) => [p.parentSelector, p.version]), [
+      ['parent@1.0.0 || 1.1.0', '1.1.0'],
+      ['parent@1.0.0 || 1.1.0', '1.1.0'],
+    ]);
+  });
+
+  it('refuses that shared key when the root declares the parent (EOVERRIDE)', async () => {
     const v = (await computeVulnerabilities({ installed: threeParents() }, deps())).vulns.get('child');
-    assert.deepEqual(refusals(v), {
-      '1.0.0': { kind: 'shadowed', by: 'parent@1.1.0' },
-      '1.1.0': { kind: 'shadowed', by: 'parent@1.0.0' },
-    });
+    const refusal = { kind: 'eoverride', key: 'parent@1.0.0 || 1.1.0', name: 'parent', rootSpec: '1.0.0' };
+    assert.deepEqual(refusals(v), { '1.0.0': refusal, '1.1.0': refusal });
     assert.equal(isPinBlocked(v), true);
   });
 
