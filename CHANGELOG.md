@@ -1,6 +1,38 @@
 # Changelog
 
-## Unreleased
+## 2.2.0 — 2026-10-11
+
+### Added
+
+- **Overrides that aren't in effect are now detected and reported.** npm applies
+  `overrides` at resolution time, so a pin added after its lockfile entry was
+  resolved can sit in `package.json` doing nothing — the installed version still
+  satisfies its dependent's range, and npm never revisits it. The audit read the
+  un-overridden version, flagged it, and then wrote nothing when the user
+  accepted the fix, because the pin was already there. That combination reported
+  "no effective changes" to someone who had just accepted a security fix and was
+  still vulnerable.
+
+  Such overrides now appear read-only under **Overrides not in effect**, showing
+  the pin against what the lockfile actually has, and accepting an
+  already-present pin now says so explicitly instead of reporting nothing. They
+  are also never offered for removal any more: the "is this override still
+  needed?" analysis reads the installed tree, and for an unapplied override that
+  tree reflects a resolution the pin had no part in — so both `dead` and
+  `redundant` were unsound verdicts.
+
+  Only workspace projects are warned. Measured against npm 11.13.0
+  (`docs/2026-08-26-spike-reresolve.md`): a standalone project applies the new
+  mandate on its next `npm install`, so the existing `--install` step already
+  covers it. A workspace project reports `up to date` and keeps the old version,
+  and neither `npm update <pkg>` nor `npm audit fix` fixes that — both resolve to
+  the newest version in range and ignore what the override mandates. The tool
+  reports the state rather than acting, because the only reliable fix
+  (`rm -rf node_modules package-lock.json && npm install`) re-resolves every
+  dependency in the project.
+
+  Known gap: version-scoped override keys (`"brace-expansion@2"`) are not parsed
+  yet, so an unapplied pin written that way is not detected. Tracked separately.
 
 ### Fixed
 
@@ -12,7 +44,7 @@
   had a safe `2.1.4` — down to `1.1.12`. Pins are now keyed `minimatch@3.1.5`
   whenever the dependent has several installed versions.
 
-  **If you accepted a scoped pin with 2.2.0 or earlier**, check `overrides` for
+  **If you accepted a scoped pin with 2.1.0 or earlier**, check `overrides` for
   bare dependent keys like the one above. This release doesn't flag pins written
   that way, because the tree they produce no longer looks vulnerable. Replace the
   key with `"<dependent>@<version>"` for the copy that needed the fix, then run
@@ -63,45 +95,9 @@
   version it resolved to. Measured on npm 11.13 through 12.2, a
   `minimatch@3.0.4` pin also changed `glob@7.1.6`'s own `minimatch@3.1.2`,
   which glob reaches through `^3.0.4` — a downgrade whenever the chosen fix is
-  older than what that copy had. The picker now offers only fixes that are harmless for every copy a pin
-  reaches (inside that copy's range, and no downgrade), and refuses the pin when
-  none are.
-
-## 2.2.0 — 2026-09-06
-
-### Added
-
-- **Overrides that aren't in effect are now detected and reported.** npm applies
-  `overrides` at resolution time, so a pin added after its lockfile entry was
-  resolved can sit in `package.json` doing nothing — the installed version still
-  satisfies its dependent's range, and npm never revisits it. The audit read the
-  un-overridden version, flagged it, and then wrote nothing when the user
-  accepted the fix, because the pin was already there. That combination reported
-  "no effective changes" to someone who had just accepted a security fix and was
-  still vulnerable.
-
-  Such overrides now appear read-only under **Overrides not in effect**, showing
-  the pin against what the lockfile actually has, and accepting an
-  already-present pin now says so explicitly instead of reporting nothing. They
-  are also never offered for removal any more: the "is this override still
-  needed?" analysis reads the installed tree, and for an unapplied override that
-  tree reflects a resolution the pin had no part in — so both `dead` and
-  `redundant` were unsound verdicts.
-
-  Only workspace projects are warned. Measured against npm 11.13.0
-  (`docs/2026-08-26-spike-reresolve.md`): a standalone project applies the new
-  mandate on its next `npm install`, so the existing `--install` step already
-  covers it. A workspace project reports `up to date` and keeps the old version,
-  and neither `npm update <pkg>` nor `npm audit fix` fixes that — both resolve to
-  the newest version in range and ignore what the override mandates. The tool
-  reports the state rather than acting, because the only reliable fix
-  (`rm -rf node_modules package-lock.json && npm install`) re-resolves every
-  dependency in the project.
-
-  Known gap: version-scoped override keys (`"brace-expansion@2"`) are not parsed
-  yet, so an unapplied pin written that way is not detected. Tracked separately.
-
-### Fixed
+  older than what that copy had. The picker now offers only fixes that are
+  harmless for every copy a pin reaches (inside that copy's range, and no
+  downgrade), and refuses the pin when none are.
 
 - **A scoped pin and a top-level pin on the same package no longer overwrite
   each other.** Pinning `picomatch` under `vite` and pinning `vite` itself both
@@ -111,17 +107,20 @@
   its scoped children, so both survive. Removing an unused override that has
   since gained a scoped child drops only the override itself, for the same
   reason.
+
 - **The post-run summary can no longer report an override the file does not
   have.** It was built from what the writer intended rather than from the
   result, so a lost write was reported as applied. The two are now reconciled
   before `package.json` is written, and a mismatch fails the run instead of
   being reported as a success.
+
 - **Status icons no longer overlap the text next to them.** Ink advances one
   column for a Basic-Multilingual-Plane emoji, so on a terminal whose font
   substitutes emoji for `⚠`, `✔` and `ℹ` — drawing them two columns wide — each
   bled into the cell beside it and the row read as stretched. Terminals that
   honour those characters' default text presentation drew them narrow and showed
   no problem, which is why the fault appeared on some machines and not others.
+
 - **The `Current` / `Range` / `Latest` headings line up with the versions under
   them.** The heading row reserved 50 columns before its first cell where a row
   spends 49 reaching its first version, so every label sat one column to the
