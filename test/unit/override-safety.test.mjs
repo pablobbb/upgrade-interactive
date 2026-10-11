@@ -257,3 +257,52 @@ describe('override safety — pins npm would drop or reject', () => {
     });
   }
 });
+
+// npm matches a "parent@1.0.0" key against the range each dependent declares, so
+// it also reaches another copy of parent whose dependent's range admits 1.0.0.
+describe('override safety — pins that reach another copy of the parent', () => {
+  // a -> parent@1.0.0 (vulnerable child@1.0.0); b -> parent@1.2.0, nested, with
+  // its own child. `bRange` is what b declares for parent.
+  const overlap = ({ range = '^1.0.0', child = '1.1.0', bRange = '^1.0.0' } = {}) => ({
+    versions: new Map([['child', new Set(['1.0.0', child])]]),
+    packages: {
+      '': { dependencies: { a: '1.0.0', b: '1.0.0' } },
+      'node_modules/a': { version: '1.0.0', dependencies: { parent: '1.0.0' } },
+      'node_modules/parent': { version: '1.0.0', dependencies: { child: range } },
+      'node_modules/child': { version: '1.0.0' },
+      'node_modules/b': { version: '1.0.0', dependencies: { parent: bRange } },
+      'node_modules/b/node_modules/parent': { version: '1.2.0', dependencies: { child: '^1.0.0' } },
+      'node_modules/b/node_modules/parent/node_modules/child': { version: child },
+    },
+  });
+  const audit = async (installed, overrides) =>
+    (await computeVulnerabilities({ installed, overrides }, registry(['1.0.0', '1.1.0', '1.2.0'], [currentAdvisory]))).vulns.get('child');
+  const pinned = (v) => v.instances.find((i) => i.parentVersion === '1.0.0');
+
+  it('pins when the fix is harmless for the copy it also reaches', async () => {
+    const v = await audit(overlap());
+    assert.deepEqual(defaultOverrideSelection(v).scoped.map((p) => [p.parentSelector, p.version]), [['parent@1.0.0', '1.2.0']]);
+  });
+
+  it('drops the versions that would downgrade the copy it also reaches', async () => {
+    const v = await audit(overlap({ child: '1.2.0' }));
+    assert.deepEqual(pinned(v).safeCandidates, ['1.2.0']);
+  });
+
+  it('refuses the pin when every fix would downgrade the copy it also reaches', async () => {
+    const v = await audit(overlap({ range: '>=1.0.0 <1.2.0', child: '1.2.0' }));
+    assert.deepEqual(pinned(v).pinRefusal, { kind: 'reaches', copy: 'parent@1.2.0' });
+    assert.equal(isPinBlocked(v), true);
+  });
+
+  it('ignores a copy whose dependents rule the pinned version out', async () => {
+    const v = await audit(overlap({ range: '>=1.0.0 <1.2.0', child: '1.2.0', bRange: '^1.2.0' }));
+    assert.deepEqual(pinned(v).safeCandidates, ['1.1.0']);
+  });
+
+  it('ignores a copy an existing key already covers, since npm applies that key first', async () => {
+    const overrides = { 'parent@1.2.0': { child: '1.2.0' } };
+    const v = await audit(overlap({ range: '>=1.0.0 <1.2.0', child: '1.2.0' }), overrides);
+    assert.deepEqual(defaultOverrideSelection(v).scoped.map((p) => [p.parentSelector, p.version]), [['parent@1.0.0', '1.1.0']]);
+  });
+});

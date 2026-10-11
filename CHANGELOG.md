@@ -54,6 +54,15 @@
   another key for a different package was dropped the same way. Such pins are
   now refused too.
 
+- **Pins no longer silently change another copy of the parent.** npm matches a
+  `parent@version` key against the range each dependent declares, not the
+  version it resolved to. Measured against npm 11.13.0, a `minimatch@3.0.4` pin
+  also changed `glob@7.1.6`'s own `minimatch@3.1.2`, which glob reaches through
+  `^3.0.4` — a downgrade whenever the chosen fix is older than what that copy
+  had. The picker now offers only fixes that are harmless for every copy a pin
+  reaches (inside that copy's range, and no downgrade), and refuses the pin when
+  none are.
+
 ## 2.2.0 — 2026-09-06
 
 ### Added

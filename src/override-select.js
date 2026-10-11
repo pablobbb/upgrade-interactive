@@ -20,6 +20,7 @@ export function pinRefusalText(refusal) {
   if (refusal.kind === 'eoverride') {
     return `npm rejects "${refusal.key}" beside the root's ${refusal.name} ${refusal.rootSpec} (EOVERRIDE)`;
   }
+  if (refusal.kind === 'reaches') return `npm would also apply the pin to ${refusal.copy}, and no fix suits both`;
   return `npm would ignore a pin beside "${refusal.by}"`;
 }
 

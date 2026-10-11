@@ -53,15 +53,19 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
    If that extra check fails, the vulnerability stays visible with the network
    warning, but no unverified pins are offered. When a parent exists at several
    versions, scoped pins use `parent@version` selectors, including when the other
-   parent versions are already safe and need no change. A pin isn't offered when
+   parent versions are already safe and need no change. Such a selector also
+   applies to other copies of the parent whose dependents declare a range that
+   admits it, so the picker only offers fixes that are harmless there — inside
+   that copy's own range, and no downgrade. A pin isn't offered when
    npm would ignore or reject the key it lands on (see [Notes](#notes)): beside
    an override for the same parent in the other form (a bare `parent` key next
    to `parent@version`, or the reverse); beside another `parent@version` key
    unless the two pin some shared package to different versions; or as a
    `parent@version` key for a parent the root itself declares with a range
-   (`EOVERRIDE`). The picker lists that dependent as left alone, with the
-   reason; if no dependent is left to pin, `o` is refused with a note, and the
-   override is yours to edit by hand.
+   (`EOVERRIDE`); or when no fix is harmless for another copy it would reach.
+   The picker lists that dependent as left alone, with the reason; if no
+   dependent is left to pin, `o` is refused with a note, and the override is
+   yours to edit by hand.
 6. **Flags overrides that are no longer needed** (nothing depends on them, or
    your deps now resolve safely without them). Press `x` to remove one — it only
    ever removes the one you select. Removal suggestions cover bare top-level
@@ -222,11 +226,14 @@ also matches directories whose name starts with a dot.
   - A `"glob@7.2.3"` key also pins `glob` itself, so when the root declares
     `glob` as `^7.2.0` npm fails with `EOVERRIDE`. Declared as exactly
     `7.2.3`, it installs.
+  - A key is matched against the range each dependent *declares*, not the
+    version it got. A `"minimatch@3.0.4"` pin also changed `glob@7.1.6`'s own
+    `minimatch@3.1.2`, because glob declares `^3.0.4`.
 
-  The tool never writes these layouts: such pins are refused (step 5 above),
-  and a run whose staged pins would create one between themselves writes
-  nothing and says why. Layouts already in your `package.json` are left as you
-  wrote them.
+  The tool never writes a layout npm would ignore or reject: such pins are
+  refused (step 5 above), and a run whose staged pins would create one between
+  themselves writes nothing and says why. Layouts already in your
+  `package.json` are left as you wrote them.
 - Accepting a pin that's **already** in `package.json` writes nothing, and the
   summary says so explicitly instead of reporting "no effective changes" — that
   combination is the signal that the override isn't in effect.

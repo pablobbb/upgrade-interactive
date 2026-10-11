@@ -153,6 +153,51 @@ describe('override safety — real npm resolution', () => {
     assert.ok(fixed.some((c) => c.braceExpansion !== '2.1.7'), `npm applied both pins: ${JSON.stringify(fixed)}`);
   });
 
+  it('pins only versions that are harmless for another copy the key also reaches', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'nui-safety-npm-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'package.json');
+    const lockFile = path.join(dir, 'package-lock.json');
+    // The root's minimatch@3.0.4 has a vulnerable brace-expansion; glob@7.1.6 has
+    // its own minimatch@3.1.2 with a safe 1.1.21, reached through its "^3.0.4" —
+    // a range that admits 3.0.4, so a "minimatch@3.0.4" key applies to it too.
+    const base = { name: 'nui-safety-app', version: '1.0.0', dependencies: { minimatch: '3.0.4', glob: '7.1.6' } };
+    await writeJson(file, {
+      ...base,
+      overrides: { glob: { minimatch: '3.1.2', 'brace-expansion': '1.1.21' }, 'minimatch@3.0.4': { 'brace-expansion': '1.1.11' } },
+    });
+    await install(dir);
+    await writeJson(file, base);
+    await install(dir);
+    const staleLock = await readFile(lockFile, 'utf8');
+    const braceExpansion = async () =>
+      Object.fromEntries((await copiesOf(dir, 'minimatch', 'brace-expansion')).map((c) => [c.version, c['brace-expansion']]));
+    assert.deepEqual(await braceExpansion(), { '3.0.4': '1.1.11', '3.1.2': '1.1.21' });
+    const audit = async (versions) =>
+      (await computeVulnerabilities({ installed: await loadInstalledVersions(dir) }, stubFromSnapshot({
+        meta: { 'brace-expansion': { versions, distTags: {} } },
+        advisories: { 'brace-expansion': [{ vulnerable_versions: '<1.1.12', severity: 'high' }] },
+      }))).vulns.get('brace-expansion');
+
+    // Only 1.1.12 is on offer: it would downgrade glob's copy, so the pin is refused.
+    const refused = await audit(['1.1.11', '1.1.12']);
+    assert.deepEqual(refused.instances.find((i) => i.vulnerable).pinRefusal, { kind: 'reaches', copy: 'minimatch@3.1.2' });
+    assert.equal(defaultOverrideSelection(refused), null);
+
+    // With 1.1.21 on offer, that's the only harmless fix, and it's what gets pinned.
+    const spec = defaultOverrideSelection(await audit(['1.1.11', '1.1.12', '1.1.21']));
+    await applyUpgrades(await loadManifest(dir), new Map(), { 'brace-expansion': spec });
+    assert.deepEqual((await readJson(file)).overrides, { 'minimatch@3.0.4': { 'brace-expansion': '1.1.21' } });
+    await install(dir);
+    assert.deepEqual(await braceExpansion(), { '3.0.4': '1.1.21', '3.1.2': '1.1.21' });
+
+    // Why: the refused pin would have downgraded glob's copy along with the root's.
+    await writeFile(lockFile, staleLock);
+    await writeJson(file, { ...base, overrides: { 'minimatch@3.0.4': { 'brace-expansion': '1.1.12' } } });
+    await install(dir);
+    assert.equal((await braceExpansion())['3.1.2'], '1.1.12');
+  });
+
   it('refuses a parent@version pin beside one that pins a different package, which npm would drop', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'nui-safety-npm-'));
     dirs.push(dir);

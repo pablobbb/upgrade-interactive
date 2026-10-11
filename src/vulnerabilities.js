@@ -4,7 +4,7 @@
 import semver from 'semver';
 import { fetchPackageMeta, fetchBulkAdvisories, mapWithConcurrency } from './registry.js';
 import { parentOverrideKey, isPinnableInstance, defaultScopedChoiceIndex } from './override-select.js';
-import { overrideKeyName, overrideBucketsConflict, risksEoverride } from './override-keys.js';
+import { overrideKeyName, overrideKeySpec, overrideBucketsConflict, risksEoverride } from './override-keys.js';
 
 // The four standard npm/GitHub severity levels, ranked worst-first, with the
 // color used to render them. Centralized so Row.js and the picker agree.
@@ -134,6 +134,63 @@ function splitParentKey(key) {
   return { name: key.slice(0, at), version: key.slice(at + 1) };
 }
 
+// Every installed copy of `name`, with the ranges its dependents (the root
+// manifest included) declare for it.
+function installedCopies(packages, name) {
+  const copies = new Map();
+  for (const [from, info] of Object.entries(packages)) {
+    if (!info || typeof info !== 'object') continue;
+    const range = declaredRangeFor(info, name);
+    if (range == null) continue;
+    const at = resolveInstalledPath(packages, from, name);
+    if (!at) continue;
+    if (!copies.has(at)) copies.set(at, { path: at, version: packages[at].version, ranges: [] });
+    copies.get(at).ranges.push(range);
+  }
+  return [...copies.values()];
+}
+
+// A "parent@version" key also applies to every other copy of the parent whose
+// dependents declare a range admitting that version: npm matches keys against
+// declared ranges, not installed versions. Measured against npm 11.13.0, a
+// "minimatch@3.0.4" pin also changed glob's own minimatch@3.1.2, reached through
+// glob's "^3.0.4". So each pin that needs such a key keeps only the versions
+// that are harmless for every copy it reaches — inside that copy's declared
+// range for `name`, and no downgrade — and is refused when none are. A copy
+// already covered by an existing key of the parent isn't reached: npm uses the
+// first matching key, and existing keys come first.
+function limitToCopiesReached(name, instances, keysOf, packages) {
+  const copiesByParent = new Map();
+  for (const i of instances) {
+    if (!isPinnableInstance(i) || i.parentName == null || !i.parentVersion) continue;
+    if (!instances.some((o) => o.parentName === i.parentName && o.parentVersion !== i.parentVersion)) continue;
+    if (!copiesByParent.has(i.parentName)) copiesByParent.set(i.parentName, installedCopies(packages, i.parentName));
+    const covered = (version) =>
+      keysOf(i.parentName).some((k) => {
+        const spec = overrideKeySpec(k);
+        return spec != null && semver.validRange(spec) && semver.satisfies(version, spec);
+      });
+    let fits = i.safeCandidates;
+    for (const copy of copiesByParent.get(i.parentName)) {
+      if (copy.version === i.parentVersion || covered(copy.version)) continue;
+      if (!copy.ranges.some((r) => !semver.validRange(r) || semver.intersects(r, i.parentVersion))) continue;
+      const range = declaredRangeFor(packages[copy.path], name);
+      if (range == null) continue;
+      const resolved = resolveInstalledPath(packages, copy.path, name);
+      const floor = resolved ? packages[resolved].version : null;
+      fits = fits.filter((v) => semver.validRange(range) && semver.satisfies(v, range) && (!floor || semver.gte(v, floor)));
+      if (fits.length === 0) {
+        i.pinRefusal = { kind: 'reaches', copy: `${i.parentName}@${copy.version}` };
+        break;
+      }
+    }
+    if (!i.pinRefusal && fits !== i.safeCandidates) {
+      i.safeCandidates = fits;
+      i.bestSafeInRange = fits[fits.length - 1];
+    }
+  }
+}
+
 // Refuse, up front, each scoped pin npm would ignore or reject (the rules are in
 // override-keys.js). A pin is checked against the overrides already in
 // package.json, the root's own dependencies, and this package's other pins at
@@ -145,6 +202,9 @@ function markPinRefusals(name, instances, overrides, packages) {
   const existing = overrides && typeof overrides === 'object' ? overrides : {};
   const keysOf = (parent) => Object.keys(existing).filter((k) => overrideKeyName(k) === parent);
   const bucketOf = (key) => (existing[key] && typeof existing[key] === 'object' ? existing[key] : {});
+
+  if (packages) limitToCopiesReached(name, instances, keysOf, packages);
+
   const pins = instances
     .filter((i) => i.parentName != null && isPinnableInstance(i))
     .map((i) => ({ i, key: parentOverrideKey(instances, i), version: i.safeCandidates[defaultScopedChoiceIndex(i)] }));
