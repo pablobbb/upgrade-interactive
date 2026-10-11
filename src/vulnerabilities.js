@@ -152,9 +152,9 @@ function installedCopies(packages, name) {
 
 // A "parent@version" key also applies to every other copy of the parent whose
 // dependents declare a range admitting that version: npm matches keys against
-// declared ranges, not installed versions. Measured against npm 11.13.0, a
-// "minimatch@3.0.4" pin also changed glob's own minimatch@3.1.2, reached through
-// glob's "^3.0.4". So each pin that needs such a key keeps only the versions
+// declared ranges, not installed versions. Measured on npm 11.13 through 12.2
+// (docs/2026-10-11-spike-override-keys.md), a "minimatch@3.0.4" pin also
+// changed glob's own minimatch@3.1.2, reached through glob's "^3.0.4". So each pin that needs such a key keeps only the versions
 // that are harmless for every copy it reaches — inside that copy's declared
 // range for `name`, and no downgrade — and is refused when none are. A copy
 // already covered by an existing key of the parent isn't reached: npm uses the
