@@ -2,11 +2,12 @@
 // exit code. Advisory data is frozen; npm generates the lockfiles itself.
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import semver from 'semver';
 import { loadManifest, applyUpgrades } from '../../src/package-file.js';
 import { loadInstalledVersions } from '../../src/lockfile.js';
 import { computeVulnerabilities } from '../../src/vulnerabilities.js';
@@ -26,6 +27,15 @@ async function npm(cwd, args) {
   });
 }
 const install = (cwd) => npm(cwd, ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund']);
+
+// The npm these tests drive (CI runs npm 10 and 11). How npm treats several
+// override keys for one parent changed between releases, so an assertion about
+// that behaviour only runs on the releases it was measured on
+// (docs/2026-10-11-spike-override-keys.md). The tool's own refusals hold on all.
+const { stdout: npmVersion } = await exec('npm', ['--version'], {
+  env: { ...process.env, ASDF_NODEJS_VERSION: process.versions.node },
+});
+const npmAtLeast = (version) => semver.gte(npmVersion.trim(), version);
 
 // The version of `name` the lockfile entry at `from` resolves to, by node's lookup.
 function resolvedFrom(packages, from, name) {
@@ -60,11 +70,11 @@ describe('override safety — real npm resolution', () => {
     delete json.overrides;
     await writeJson(file, json);
 
+    // Read through node's lookup: npm releases nest the copies differently.
+    const braceExpansion = async () =>
+      Object.fromEntries((await copiesOf(dir, 'minimatch', 'brace-expansion')).map((c) => [c.version, c['brace-expansion']]));
+    assert.deepEqual(await braceExpansion(), { '3.1.5': '1.1.11', '9.0.9': '2.1.4' });
     const installed = await loadInstalledVersions(dir);
-    const vulnerablePath = 'node_modules/brace-expansion';
-    const safePath = 'node_modules/rimraf/node_modules/brace-expansion';
-    assert.equal(installed.packages[vulnerablePath].version, '1.1.11');
-    assert.equal(installed.packages[safePath].version, '2.1.4');
     const { vulns } = await computeVulnerabilities({ installed }, stubFromSnapshot({
       meta: { 'brace-expansion': { versions: ['1.1.11', '1.1.12', '2.1.4'], distTags: {} } },
       advisories: { 'brace-expansion': [{ vulnerable_versions: '<1.1.12', severity: 'low' }] },
@@ -76,9 +86,7 @@ describe('override safety — real npm resolution', () => {
       'minimatch@3.1.5': { 'brace-expansion': '1.1.12' },
     });
     await install(dir);
-    const after = await loadInstalledVersions(dir);
-    assert.equal(after.packages[vulnerablePath].version, '1.1.12');
-    assert.equal(after.packages[safePath].version, '2.1.4', 'the safe branch must stay on its own major');
+    assert.deepEqual(await braceExpansion(), { '3.1.5': '1.1.12', '9.0.9': '2.1.4' }, 'the safe branch must stay on its own major');
   });
 
   it('refuses a scoped pin that an existing bare parent key would shadow', async () => {
@@ -93,10 +101,7 @@ describe('override safety — real npm resolution', () => {
     await install(dir);
     const bare = { glob: { inflight: '1.0.6' } };
     await writeJson(file, { ...base, overrides: bare });
-    const glob7Minimatch = async () => {
-      const { packages } = await loadInstalledVersions(dir);
-      return (packages['node_modules/glob/node_modules/minimatch'] || packages['node_modules/minimatch']).version;
-    };
+    const glob7Minimatch = async () => (await copiesOf(dir, 'glob', 'minimatch')).find((c) => c.version === '7.2.3').minimatch;
     assert.equal(await glob7Minimatch(), '3.1.1');
 
     const { vulns } = await computeVulnerabilities({ installed: await loadInstalledVersions(dir), overrides: bare }, stubFromSnapshot({
@@ -107,17 +112,13 @@ describe('override safety — real npm resolution', () => {
     assert.deepEqual(vuln.instances.find((i) => i.vulnerable).pinRefusal, { kind: 'shadowed', by: 'glob' });
     assert.equal(defaultOverrideSelection(vuln), null);
 
-    // Why it is refused: npm ignores the pin the tool used to write, in either
-    // key order. If this starts failing, npm combines the keys and the refusal
-    // can be revisited.
-    for (const overrides of [
-      { ...bare, 'glob@7.2.3': { minimatch: '3.1.2' } },
-      { 'glob@7.2.3': { minimatch: '3.1.2' }, ...bare },
-    ]) {
-      await writeJson(file, { ...base, overrides });
-      await install(dir);
-      assert.equal(await glob7Minimatch(), '3.1.1', `npm applied ${JSON.stringify(overrides)}`);
-    }
+    // Why it is refused: npm ignores the pin the tool used to write, which lands
+    // after the existing bare key. Measured on npm 9.9 through 12.2. (With the
+    // keys the other way round, npm 9 and 10 apply both and 11.13+ neither.)
+    const overrides = { ...bare, 'glob@7.2.3': { minimatch: '3.1.2' } };
+    await writeJson(file, { ...base, overrides });
+    await install(dir);
+    assert.equal(await glob7Minimatch(), '3.1.1', `npm applied ${JSON.stringify(overrides)}`);
   });
 
   it('refuses two copies of a parent pinned to the same version, which npm would half-apply', async () => {
@@ -131,7 +132,7 @@ describe('override safety — real npm resolution', () => {
     };
     await writeJson(file, base);
     await install(dir);
-    const v = Object.fromEntries((await copiesOf(dir, 'minimatch', 'be')).map((c) => [c.version.split('.')[0], c.version]));
+    const v = Object.fromEntries((await copiesOf(dir, 'minimatch', 'brace-expansion')).map((c) => [c.version.split('.')[0], c.version]));
     const pins = (a, b) => ({ [`minimatch@${v[5]}`]: { 'brace-expansion': a }, [`minimatch@${v[9]}`]: { 'brace-expansion': b } });
     // Lock vulnerable 2.0.x under both (different versions, so npm applies both), then drop the pins.
     await writeJson(file, { ...base, overrides: pins('2.0.1', '2.0.2') });
@@ -146,14 +147,21 @@ describe('override safety — real npm resolution', () => {
     assert.deepEqual(vuln.instances.filter((i) => i.vulnerable).map((i) => i.pinRefusal?.kind), ['shadowed', 'shadowed']);
     assert.equal(defaultOverrideSelection(vuln), null);
 
-    // Why: with both keys on the same version, npm drops one copy's pin.
+    // Why: with both keys on the same version, npm 11.13+ drops one copy's pin
+    // (npm 9 and 10 apply both). The refusal holds either way: the lockfile may
+    // be regenerated by any npm.
+    if (!npmAtLeast('11.13.0')) return;
     await writeJson(file, { ...base, overrides: pins('2.1.7', '2.1.7') });
     await install(dir);
-    const fixed = (await copiesOf(dir, 'minimatch', 'braceExpansion')).filter((c) => !c.version.startsWith('3.'));
-    assert.ok(fixed.some((c) => c.braceExpansion !== '2.1.7'), `npm applied both pins: ${JSON.stringify(fixed)}`);
+    const fixed = (await copiesOf(dir, 'minimatch', 'brace-expansion')).filter((c) => !c.version.startsWith('3.'));
+    assert.ok(fixed.some((c) => c['brace-expansion'] !== '2.1.7'), `npm applied both pins: ${JSON.stringify(fixed)}`);
   });
 
-  it('pins only versions that are harmless for another copy the key also reaches', async () => {
+  // The setup relies on how npm 11.13+ places the two copies; npm 9 and 10 merge
+  // them. The audit side is covered in the unit tests on every npm.
+  it('pins only versions that are harmless for another copy the key also reaches', {
+    skip: !npmAtLeast('11.13.0') && `measured on npm 11.13+, this is ${npmVersion.trim()}`,
+  }, async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'nui-safety-npm-'));
     dirs.push(dir);
     const file = path.join(dir, 'package.json');
@@ -220,7 +228,10 @@ describe('override safety — real npm resolution', () => {
     assert.deepEqual(vuln.instances.find((i) => i.vulnerable).pinRefusal, { kind: 'shadowed', by: Object.keys(theirs)[0] });
     assert.equal(defaultOverrideSelection(vuln), null);
 
-    // Why: npm drops the hoisted copy's pin when the two keys share no package.
+    // Why: npm 11.12+ drops the hoisted copy's pin when the two keys share no
+    // package (npm 9 through 11.11 apply both). The refusal holds either way:
+    // the lockfile may be regenerated by any npm.
+    if (!npmAtLeast('11.12.0')) return;
     await writeJson(file, { ...base, overrides: { ...theirs, 'glob@7.2.3': { minimatch: '3.1.2' } } });
     await install(dir);
     assert.equal(await glob7Minimatch(), '3.1.1');
@@ -254,30 +265,25 @@ describe('override safety — real npm resolution', () => {
   it('preserves an active qualified override on an exact transitive dependency', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'nui-safety-npm-'));
     dirs.push(dir);
-    const parentDir = path.join(dir, 'parent');
-    await mkdir(parentDir);
-    // Use a tarball: npm does not apply this override to a file: directory link.
-    // left-pad is a resolution fixture, not an asserted vulnerable package.
-    await writeJson(path.join(parentDir, 'package.json'), {
-      name: 'nui-safety-parent', version: '1.0.0', dependencies: { 'left-pad': '1.1.0' },
-    });
-    await npm(parentDir, ['pack', '--ignore-scripts']);
+    // brace-expansion@1.1.11 depends on exactly concat-map 0.0.1; npm 9.9
+    // through 12.2 all apply this override. concat-map is a resolution fixture,
+    // not an asserted vulnerable package.
     await writeJson(path.join(dir, 'package.json'), {
       name: 'nui-safety-app', version: '1.0.0',
-      dependencies: { 'nui-safety-parent': 'file:./parent/nui-safety-parent-1.0.0.tgz' },
-      overrides: { 'left-pad@1.1.0': '1.3.0' },
+      dependencies: { 'brace-expansion': '1.1.11' },
+      overrides: { 'concat-map@0.0.1': '0.0.2' },
     });
     await install(dir);
     const manifest = await loadManifest(dir);
     const installed = await loadInstalledVersions(dir);
-    assert.deepEqual([...installed.versions.get('left-pad')], ['1.3.0']);
+    assert.deepEqual([...installed.versions.get('concat-map')], ['0.0.2']);
     const { removableOverrides } = await computeVulnerabilities({ installed, overrides: manifest.json.overrides }, {
       fetchPackageMeta: async () => null,
       fetchBulkAdvisories: async () => ({ ok: true, advisories: new Map() }),
     });
-    assert.equal(removableOverrides.has('left-pad@1.1.0'), false);
+    assert.equal(removableOverrides.has('concat-map@0.0.1'), false);
     await applyUpgrades(manifest, new Map(), {}, [...removableOverrides.keys()]);
     await install(dir);
-    assert.deepEqual([...(await loadInstalledVersions(dir)).versions.get('left-pad')], ['1.3.0']);
+    assert.deepEqual([...(await loadInstalledVersions(dir)).versions.get('concat-map')], ['0.0.2']);
   });
 });
