@@ -11,6 +11,7 @@ import {
   defaultScopedChoiceIndex,
   shouldScope,
   defaultOverrideSelection,
+  scopedOverrideSelection,
 } from '../../src/override-select.js';
 
 // A vuln instance as computeVulnerabilities emits it (only the fields the
@@ -24,6 +25,10 @@ describe('isPinnableInstance', () => {
     assert.equal(isPinnableInstance(instance({ vulnerable: true, safeCandidates: ['1.2.3'] })), true);
     assert.equal(isPinnableInstance(instance({ vulnerable: false, safeCandidates: ['1.2.3'] })), false);
     assert.equal(isPinnableInstance(instance({ vulnerable: true, safeCandidates: [] })), false);
+  });
+
+  it('is false when an existing override would shadow the pin', () => {
+    assert.equal(isPinnableInstance({ ...instance({ safeCandidates: ['1.2.3'] }), pinRefusal: { kind: 'shadowed', by: 'parent' } }), false);
   });
 
   it('is false for nullish or malformed instances', () => {
@@ -82,8 +87,8 @@ describe('defaultOverrideSelection', () => {
     };
     assert.deepEqual(defaultOverrideSelection(vuln), {
       scoped: [
-        { parentName: 'minimatch', parentVersion: '3.1.5', version: '1.1.16' },
-        { parentName: 'minimatch', parentVersion: '9.0.9', version: '2.1.2' },
+        { parentName: 'minimatch', parentVersion: '3.1.5', parentSelector: 'minimatch@3.1.5', version: '1.1.16' },
+        { parentName: 'minimatch', parentVersion: '9.0.9', parentSelector: 'minimatch@9.0.9', version: '2.1.2' },
       ],
     });
   });
@@ -105,6 +110,31 @@ describe('defaultOverrideSelection', () => {
       safeVersions: ['3.0.0', '3.0.1'],
     };
     assert.equal(defaultOverrideSelection(vuln), '3.0.0');
+  });
+});
+
+describe('scopedOverrideSelection', () => {
+  it('preserves scope and a user-selected version when other parent versions are not pinnable', () => {
+    const instances = [
+      instance({ parentName: '@scope/parent', parentVersion: '2.0.0', vulnerable: false, safeCandidates: ['2.1.0'] }),
+      instance({ parentName: '@scope/parent', parentVersion: '1.0.0', safeCandidates: ['1.1.0', '1.2.0'] }),
+      instance({ parentName: '@scope/parent', parentVersion: '3.0.0', safeCandidates: [] }),
+    ];
+    assert.deepEqual(scopedOverrideSelection(instances, [0]), {
+      scoped: [{ parentName: '@scope/parent', parentVersion: '1.0.0', parentSelector: '@scope/parent@1.0.0', version: '1.1.0' }],
+    });
+  });
+
+  it('keeps distinct selectors even when two parent versions choose the same target', () => {
+    // A bare key would also pin the safe parent@2.0.0. In the real flow the audit
+    // refuses this pair before selection (npm drops one of two same-version
+    // keys); the writer refuses it too if the picker produces it.
+    const spec = scopedOverrideSelection([
+      instance({ parentName: 'parent', parentVersion: '1.0.0', safeCandidates: ['1.2.0'] }),
+      instance({ parentName: 'parent', parentVersion: '1.1.0', safeCandidates: ['1.2.0'] }),
+      instance({ parentName: 'parent', parentVersion: '2.0.0', vulnerable: false, safeCandidates: ['2.0.0'] }),
+    ]);
+    assert.deepEqual(spec.scoped.map((p) => p.parentSelector), ['parent@1.0.0', 'parent@1.1.0']);
   });
 });
 

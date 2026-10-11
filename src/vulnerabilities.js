@@ -3,6 +3,8 @@
 
 import semver from 'semver';
 import { fetchPackageMeta, fetchBulkAdvisories, mapWithConcurrency } from './registry.js';
+import { parentOverrideKey, isPinnableInstance, defaultScopedChoiceIndex } from './override-select.js';
+import { overrideKeyName, overrideKeySpec, overrideBucketsConflict, risksEoverride } from './override-keys.js';
 
 // The four standard npm/GitHub severity levels, ranked worst-first, with the
 // color used to render them. Centralized so Row.js and the picker agree.
@@ -130,6 +132,116 @@ function splitParentKey(key) {
   const at = key.lastIndexOf('@');
   if (at <= 0) return { name: key, version: null };
   return { name: key.slice(0, at), version: key.slice(at + 1) };
+}
+
+// Every installed copy of `name`, with the ranges its dependents (the root
+// manifest included) declare for it.
+function installedCopies(packages, name) {
+  const copies = new Map();
+  for (const [from, info] of Object.entries(packages)) {
+    if (!info || typeof info !== 'object') continue;
+    const range = declaredRangeFor(info, name);
+    if (range == null) continue;
+    const at = resolveInstalledPath(packages, from, name);
+    if (!at) continue;
+    if (!copies.has(at)) copies.set(at, { path: at, version: packages[at].version, ranges: [] });
+    copies.get(at).ranges.push(range);
+  }
+  return [...copies.values()];
+}
+
+// A "parent@version" key also applies to every other copy of the parent whose
+// dependents declare a range admitting that version: npm matches keys against
+// declared ranges, not installed versions. Measured on npm 11.13 through 12.2
+// (docs/2026-10-11-spike-override-keys.md), a "minimatch@3.0.4" pin also
+// changed glob's own minimatch@3.1.2, reached through glob's "^3.0.4". So each pin that needs such a key keeps only the versions
+// that are harmless for every copy it reaches — inside that copy's declared
+// range for `name`, and no downgrade — and is refused when none are. A copy
+// already covered by an existing key of the parent isn't reached: npm uses the
+// first matching key, and existing keys come first.
+function limitToCopiesReached(name, instances, keysOf, packages) {
+  const copiesByParent = new Map();
+  for (const i of instances) {
+    if (!isPinnableInstance(i) || i.parentName == null || !i.parentVersion) continue;
+    if (!instances.some((o) => o.parentName === i.parentName && o.parentVersion !== i.parentVersion)) continue;
+    if (!copiesByParent.has(i.parentName)) copiesByParent.set(i.parentName, installedCopies(packages, i.parentName));
+    const covered = (version) =>
+      keysOf(i.parentName).some((k) => {
+        const spec = overrideKeySpec(k);
+        return spec != null && semver.validRange(spec) && semver.satisfies(version, spec);
+      });
+    let fits = i.safeCandidates;
+    for (const copy of copiesByParent.get(i.parentName)) {
+      if (copy.version === i.parentVersion || covered(copy.version)) continue;
+      if (!copy.ranges.some((r) => !semver.validRange(r) || semver.intersects(r, i.parentVersion))) continue;
+      const range = declaredRangeFor(packages[copy.path], name);
+      if (range == null) continue;
+      const resolved = resolveInstalledPath(packages, copy.path, name);
+      const floor = resolved ? packages[resolved].version : null;
+      fits = fits.filter((v) => semver.validRange(range) && semver.satisfies(v, range) && (!floor || semver.gte(v, floor)));
+      if (fits.length === 0) {
+        i.pinRefusal = { kind: 'reaches', copy: `${i.parentName}@${copy.version}` };
+        break;
+      }
+    }
+    if (!i.pinRefusal && fits !== i.safeCandidates) {
+      i.safeCandidates = fits;
+      i.bestSafeInRange = fits[fits.length - 1];
+    }
+  }
+}
+
+// Refuse, up front, each scoped pin npm would ignore or reject (the rules are in
+// override-keys.js). A pin is checked against the overrides already in
+// package.json, the root's own dependencies, and this package's other pins at
+// their default versions, keyed exactly as the writer will key them. A refused
+// instance records why as `pinRefusal`, which makes it unpinnable. The tool used
+// to write such pins: npm then either ignored them while the tool reported them
+// applied, or failed the install.
+function markPinRefusals(name, instances, overrides, packages) {
+  const existing = overrides && typeof overrides === 'object' ? overrides : {};
+  const keysOf = (parent) => Object.keys(existing).filter((k) => overrideKeyName(k) === parent);
+  const bucketOf = (key) => (existing[key] && typeof existing[key] === 'object' ? existing[key] : {});
+
+  if (packages) limitToCopiesReached(name, instances, keysOf, packages);
+
+  const pins = instances
+    .filter((i) => i.parentName != null && isPinnableInstance(i))
+    .map((i) => ({ i, key: parentOverrideKey(instances, i), version: i.safeCandidates[defaultScopedChoiceIndex(i)] }));
+
+  // Refusals that hold whatever else gets staged: the key's form clashes with an
+  // existing one, or npm would fail the install.
+  for (const pin of pins) {
+    const parent = pin.i.parentName;
+    const bare = pin.key === parent;
+    const otherForm = keysOf(parent).find((k) => (k === parent) !== bare);
+    if (otherForm) {
+      pin.i.pinRefusal = { kind: 'shadowed', by: otherForm };
+      continue;
+    }
+    const rootSpec = packages && packages[''] ? declaredRangeFor(packages[''], parent) : null;
+    if (!bare && risksEoverride(pin.key, { ...bucketOf(pin.key), [name]: pin.version }, rootSpec)) {
+      pin.i.pinRefusal = { kind: 'eoverride', key: pin.key, name: parent, rootSpec };
+    }
+  }
+
+  // Qualified keys for one parent, existing or about to be written, must
+  // conflict pairwise. Pins that would leave two of them compatible are refused
+  // together — npm would keep only one of them, and can't be told which.
+  const live = pins.filter((p) => !p.i.pinRefusal && p.key !== p.i.parentName);
+  for (const pin of live) {
+    const parent = pin.i.parentName;
+    const layout = new Map(keysOf(parent).filter((k) => k !== parent).map((k) => [k, bucketOf(k)]));
+    for (const p of live) {
+      if (p.i.parentName === parent) layout.set(p.key, { ...(layout.get(p.key) || {}), [name]: p.version });
+    }
+    const mine = layout.get(pin.key);
+    for (const [key, bucket] of layout) {
+      if (key === pin.key || overrideBucketsConflict(mine, bucket)) continue;
+      pin.i.pinRefusal = { kind: 'shadowed', by: key };
+      break;
+    }
+  }
 }
 
 /**
@@ -488,10 +600,12 @@ export async function computeVulnerabilities(
   // loaded, with no registry involvement.
   const unapplied = unappliedOverrides(installed && installed.packages, overrides);
 
-  // For each existing top-level override, work out what version(s) would be
-  // installed *without* it, so we can tell whether it's still doing anything.
+  // Only bare top-level names are understood by requiredRangesFor. A qualified
+  // key ("pkg@^1") is a selector, not a dependency name: looking it up verbatim
+  // would misclassify an active pin as dead. Leave these entries untouched until
+  // removability can evaluate selector intersections.
   const overrideEntries = Object.entries(overrides || {}).filter(
-    ([, pin]) => typeof pin === 'string' && !pin.startsWith('$')
+    ([name, pin]) => bareOverrideKeyName(name) && typeof pin === 'string' && !pin.startsWith('$')
   );
   const overrideInfo = new Map();
   await mapWithConcurrency(overrideEntries, CONCURRENCY, async ([name, pin]) => {
@@ -550,6 +664,24 @@ export async function computeVulnerabilities(
     return versions.some((v) => matchesAny(v, advisories.get(name)));
   });
 
+  // The bulk endpoint returns only advisories affecting a submitted version.
+  // A fix for the current advisory can have a different advisory of its own,
+  // so audit candidate versions too before calling them safe. Keep this query
+  // separate: candidate-only advisories must not flag the installed tree.
+  const candidatesByName = {};
+  await mapWithConcurrency(vulnNames, CONCURRENCY, async (name) => {
+    const meta = await getMeta(name);
+    if (!meta) return;
+    const candidates = meta.versions
+      .filter((v) => semver.valid(v) && !semver.prerelease(v))
+      .filter((v) => !matchesAny(v, advisories.get(name)))
+      .sort(semver.compare);
+    if (candidates.length > 0) candidatesByName[name] = candidates;
+  });
+  const { ok: candidatesOk, advisories: candidateAdvisories } = Object.keys(candidatesByName).length > 0
+    ? await getAdvisories(candidatesByName)
+    : { ok: true, advisories: new Map() };
+
   const vulns = new Map();
   await mapWithConcurrency(vulnNames, CONCURRENCY, async (name) => {
     const list = advisories.get(name);
@@ -572,24 +704,25 @@ export async function computeVulnerabilities(
     }
     if (!SEVERITY[severity]) severity = 'low';
 
-    // Every published version affected by none of the matching advisories,
-    // ungated — the per-parent instance analysis needs targets relative to each
-    // parent's own installed version, not the whole tree's newest.
+    // Verified candidates are ungated by version here: each parent needs fixes
+    // relative to its own installed version. If any candidate query failed,
+    // fail closed rather than offer unverified versions from a partial result.
     const reference = maxVersion(flagged);
-    let publishedSafe = [];
-    const meta = await getMeta(name);
-    if (meta) {
-      publishedSafe = meta.versions
-        .filter((v) => semver.valid(v) && !semver.prerelease(v))
-        .filter((v) => !matchesAny(v, matching))
-        .sort(semver.compare);
-    }
+    const publishedSafe = candidatesOk
+      ? (candidatesByName[name] || []).filter((v) => !matchesAny(v, candidateAdvisories.get(name) || []))
+      : [];
     // The global picker still only offers versions at or above the newest one we
     // currently have anywhere in the tree.
     const safeVersions = reference ? publishedSafe.filter((v) => semver.gte(v, reference)) : publishedSafe;
 
     let firstPatched = safeVersions.length > 0 ? safeVersions[0] : null;
-    if (!firstPatched && primary && primary.patched_versions && primary.patched_versions !== '<0.0.0') {
+    // Only fall back to an advisory's promised fix when no candidates were
+    // available to verify. Do not advertise one we just rejected via another
+    // advisory (or failed to verify).
+    if (
+      candidatesOk && !candidatesByName[name] && !firstPatched &&
+      primary && primary.patched_versions && primary.patched_versions !== '<0.0.0'
+    ) {
       try {
         const mv = semver.minVersion(primary.patched_versions);
         if (mv) firstPatched = mv.version;
@@ -608,6 +741,7 @@ export async function computeVulnerabilities(
     // parent@version become one pin instead of colliding.
     const pinStrategy = decidePinStrategy(rawInstances, publishedSafe);
     const instances = mergeInstancesByOverrideKey(rawInstances, manifestSet);
+    markPinRefusals(name, instances, overrides, installed && installed.packages);
 
     vulns.set(name, {
       advisories: matching,
@@ -631,7 +765,7 @@ export async function computeVulnerabilities(
   });
 
   return {
-    offline: !ok,
+    offline: !ok || !candidatesOk,
     vulns,
     removableOverrides: collectRemovableOverrides(overrideInfo, ok, advisories, unapplied),
     unappliedOverrides: unapplied,

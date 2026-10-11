@@ -527,7 +527,7 @@ async function testRemovableOverride() {
 }
 
 async function testScopedOverrideFlow() {
-  const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
+  const descriptors = [];
   const vulns = new Map();
   vulns.set('dependency-a', {
     advisories: [],
@@ -551,9 +551,9 @@ async function testScopedOverrideFlow() {
         bestSafeInRange: '1.3.0',
       },
       {
-        parentName: 'pkg-b',
-        parentPath: 'node_modules/pkg-b/node_modules/dependency-a',
-        parentVersion: '1.0.0',
+        parentName: 'pkg-a',
+        parentPath: 'node_modules/other/node_modules/pkg-a',
+        parentVersion: '2.0.0',
         declaredRange: '^0.4.0',
         installedVersion: '0.4.0',
         vulnerable: false,
@@ -577,19 +577,16 @@ async function testScopedOverrideFlow() {
     })
   );
 
-  await rowsLoaded(lastFrame, 'chalk to load');
-  stdin.write('[B'); // down from chalk -> the dependency-a override row
-  await wait(50);
-  stdin.write('o'); // open the scoped picker
-  await wait(80);
-  const frame = lastFrame();
+  await waitForFrame(lastFrame, (f) => f.includes('❯ dependency-a'), { label: 'the vulnerable row to receive focus' });
+  await React.act(async () => { stdin.write('o'); });
+  const frame = await waitForFrame(lastFrame, (f) => f.includes('per dependent'), { label: 'the scoped picker' });
   assert(frame.includes('per dependent') && frame.includes('pkg-a'), "'o' opens the scoped picker listing dependents");
   assert(frame.includes('already safe'), 'the already-safe instance is shown as left alone');
 
-  stdin.write('\r'); // apply the default pins
-  await wait(50);
-  stdin.write('\r'); // submit
-  await wait(100);
+  await React.act(async () => { stdin.write('\r'); }); // apply the default pins
+  await waitForFrame(lastFrame, (f) => f.includes('pin pkg-a'), { label: 'the staged scoped pin' });
+  await React.act(async () => { stdin.write('\r'); }); // submit
+  await waitForFrame(lastFrame, () => overrides !== null, { label: 'the scoped submission' });
   unmount();
 
   const spec = overrides && overrides['dependency-a'];
@@ -598,6 +595,10 @@ async function testScopedOverrideFlow() {
   assert(
     spec && spec.scoped[0].parentName === 'pkg-a' && spec.scoped[0].version === '1.3.0',
     'the pin targets the vulnerable dependent at its in-range fix'
+  );
+  assert(
+    spec && spec.scoped[0].parentSelector === 'pkg-a@1.0.0',
+    'the real picker preserves a selector that leaves the safe parent version alone'
   );
 }
 

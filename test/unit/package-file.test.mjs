@@ -174,24 +174,122 @@ describe('applyUpgrades', () => {
     assert.deepEqual((await readJson(dir)).overrides, { 'pkg-a': { 'dependency-a': '1.3.0' } });
   });
 
-  it('adds a qualified key alongside a pre-existing bare parent override', async () => {
-    const dir = await project({ 'package.json': pkg({ overrides: { 'pkg-a': { other: '2.0.0' } } }) });
+  it('refuses to add a qualified key beside a pre-existing bare parent override', async () => {
+    // npm applies only one of "pkg-a" and "pkg-a@1.0.0", so writing both would
+    // report pins that never take effect. The audit normally refuses these pins
+    // first (pinRefusal); this is the writer's own backstop.
+    const original = pkg({ overrides: { 'pkg-a': { other: '2.0.0' } } });
+    const dir = await project({ 'package.json': original });
+    const m = await loadManifest(dir);
+
+    await assert.rejects(
+      () =>
+        applyUpgrades(m, new Map(), {
+          'dependency-a': {
+            scoped: [
+              { parentName: 'pkg-a', parentVersion: '1.0.0', version: '1.3.0' },
+              { parentName: 'pkg-a', parentVersion: '2.0.0', version: '2.5.0' },
+            ],
+          },
+        }),
+      /"pkg-a" and "pkg-a@1\.0\.0" side by side.*Nothing was written/
+    );
+    assert.equal(await readRaw(dir), original);
+  });
+
+  it('refuses two pins in one run that would put a bare and a qualified key for one parent side by side', async () => {
+    // Each pin is fine alone; the mix only exists between them, so the audit
+    // can't see it.
+    const original = pkg({});
+    const dir = await project({ 'package.json': original });
+    const m = await loadManifest(dir);
+
+    await assert.rejects(
+      () =>
+        applyUpgrades(m, new Map(), {
+          inflight: { scoped: [{ parentName: 'glob', parentVersion: '7.2.3', version: '1.0.6' }] },
+          minimatch: {
+            scoped: [{ parentName: 'glob', parentVersion: '7.2.3', parentSelector: 'glob@7.2.3', version: '3.1.5' }],
+          },
+        }),
+      /"glob" and "glob@7\.2\.3" side by side/
+    );
+    assert.equal(await readRaw(dir), original);
+  });
+
+  it('leaves a bare and qualified mix already in the file alone when the run touches neither', async () => {
+    const dir = await project({
+      'package.json': pkg({ overrides: { glob: { inflight: '1.0.6' }, 'glob@7.2.3': { minimatch: '3.1.5' } } }),
+    });
+    const m = await loadManifest(dir);
+
+    await applyUpgrades(m, new Map(), { minimist: '1.2.6' });
+
+    assert.equal((await readJson(dir)).overrides.minimist, '1.2.6');
+  });
+
+  it('refuses two parent@version keys that pin the same package to the same version', async () => {
+    // npm keeps both keys' pins only when they pin some package to versions
+    // that don't overlap; otherwise it drops the hoisted copy's pins.
+    const original = pkg({});
+    const dir = await project({ 'package.json': original });
+    const m = await loadManifest(dir);
+    const pin = (parentVersion) => ({
+      parentName: 'pkg-a', parentVersion, parentSelector: `pkg-a@${parentVersion}`, version: '1.3.0',
+    });
+
+    await assert.rejects(
+      () => applyUpgrades(m, new Map(), { 'dependency-a': { scoped: [pin('1.0.0'), pin('1.1.0')] } }),
+      /"pkg-a@1\.0\.0" and "pkg-a@1\.1\.0" side by side.*don't overlap.*Nothing was written/
+    );
+    assert.equal(await readRaw(dir), original);
+  });
+
+  it('refuses a parent@version key beside an existing one that pins a different package', async () => {
+    const original = pkg({ overrides: { 'pkg-a@2.0.0': { other: '1.0.0' } } });
+    const dir = await project({ 'package.json': original });
+    const m = await loadManifest(dir);
+
+    await assert.rejects(
+      () =>
+        applyUpgrades(m, new Map(), {
+          'dependency-a': {
+            scoped: [{ parentName: 'pkg-a', parentVersion: '1.0.0', parentSelector: 'pkg-a@1.0.0', version: '1.3.0' }],
+          },
+        }),
+      /"pkg-a@2\.0\.0" and "pkg-a@1\.0\.0" side by side/
+    );
+    assert.equal(await readRaw(dir), original);
+  });
+
+  it('refuses a parent@version key npm would reject against the root dependency (EOVERRIDE)', async () => {
+    const original = pkg({ dependencies: { 'pkg-a': '^1.0.0' } });
+    const dir = await project({ 'package.json': original });
+    const m = await loadManifest(dir);
+
+    await assert.rejects(
+      () =>
+        applyUpgrades(m, new Map(), {
+          'dependency-a': {
+            scoped: [{ parentName: 'pkg-a', parentVersion: '1.0.0', parentSelector: 'pkg-a@1.0.0', version: '1.3.0' }],
+          },
+        }),
+      /"pkg-a@1\.0\.0": the root declares pkg-a \^1\.0\.0.*EOVERRIDE/
+    );
+    assert.equal(await readRaw(dir), original);
+  });
+
+  it('writes a parent@version key when the root declares exactly that version', async () => {
+    const dir = await project({ 'package.json': pkg({ dependencies: { 'pkg-a': '1.0.0' } }) });
     const m = await loadManifest(dir);
 
     await applyUpgrades(m, new Map(), {
       'dependency-a': {
-        scoped: [
-          { parentName: 'pkg-a', parentVersion: '1.0.0', version: '1.3.0' },
-          { parentName: 'pkg-a', parentVersion: '2.0.0', version: '2.5.0' },
-        ],
+        scoped: [{ parentName: 'pkg-a', parentVersion: '1.0.0', parentSelector: 'pkg-a@1.0.0', version: '1.3.0' }],
       },
     });
 
-    assert.deepEqual((await readJson(dir)).overrides, {
-      'pkg-a': { other: '2.0.0' },
-      'pkg-a@1.0.0': { 'dependency-a': '1.3.0' },
-      'pkg-a@2.0.0': { 'dependency-a': '2.5.0' },
-    });
+    assert.deepEqual((await readJson(dir)).overrides, { 'pkg-a@1.0.0': { 'dependency-a': '1.3.0' } });
   });
 
   it('qualifies a scoped-package parent name correctly', async () => {

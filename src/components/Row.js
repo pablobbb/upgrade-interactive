@@ -5,6 +5,7 @@ import {
   WARN, CHECK, INFO, CURSOR, MARKER_ON, MARKER_OFF, WORKSPACE_BAR, CHILD, BECOMES, SEPARATOR,
 } from '../icons.js';
 import { SEVERITY } from '../vulnerabilities.js';
+import { isPinBlocked, pinRefusalText } from '../override-select.js';
 
 const e = React.createElement;
 
@@ -45,12 +46,17 @@ export function overrideLabel(spec) {
   return null;
 }
 
-// Why `o` is refused on a flagged row, or null when it isn't. Two manifests in
-// the project declare different ranges for this package and npm honors
-// `overrides` only at the root, so no single entry can fix both — upgrading each
-// workspace's own row is the way out.
+// Why `o` is refused on a flagged row, or null when it isn't. Either two
+// manifests in the project declare different ranges for this package and npm
+// honors `overrides` only at the root, so no single entry can fix both —
+// upgrading each workspace's own row is the way out — or npm would ignore or
+// reject every fixable pin.
 export function pinBlockedNote(vuln) {
-  if (!vuln || !vuln.pinConflict) return null;
+  if (!vuln || !isPinBlocked(vuln)) return null;
+  if (!vuln.pinConflict) {
+    const refused = (vuln.instances || []).find((i) => i.pinRefusal);
+    return `${INFO} ${pinRefusalText(refused.pinRefusal)} — edit overrides by hand`;
+  }
   const conflicted = (vuln.instances || []).find((i) => i.conflict);
   const ranges = conflicted && conflicted.conflictRanges ? conflicted.conflictRanges.join(' vs ') : null;
   const detail = ranges ? ` (${ranges})` : '';

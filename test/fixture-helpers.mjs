@@ -10,6 +10,7 @@ import { readFile, readdir, mkdtemp, copyFile, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import semver from 'semver';
 import { loadManifest } from '../src/package-file.js';
 import { loadInstalledVersions } from '../src/lockfile.js';
 import { computeVulnerabilities } from '../src/vulnerabilities.js';
@@ -33,8 +34,11 @@ export function stubFromSnapshot(snapshot) {
     fetchPackageMeta: async (name) => snapshot.meta[name] || null,
     fetchBulkAdvisories: async (versionsByName) => {
       const advisories = new Map();
-      for (const name of Object.keys(versionsByName)) {
-        if (snapshot.advisories[name]) advisories.set(name, snapshot.advisories[name]);
+      for (const [name, versions] of Object.entries(versionsByName)) {
+        const matching = (snapshot.advisories[name] || []).filter((a) =>
+          [...versions].some((v) => semver.satisfies(v, a.vulnerable_versions, { includePrerelease: true }))
+        );
+        if (matching.length > 0) advisories.set(name, matching);
       }
       return { ok: true, advisories };
     },

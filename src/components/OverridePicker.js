@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { isPinnableInstance, defaultScopedChoiceIndex } from '../override-select.js';
+import {
+  isPinnableInstance, defaultScopedChoiceIndex, scopedOverrideSelection, pinRefusalText,
+} from '../override-select.js';
 import { windowSlice } from './rows.js';
 import { CURSOR, CHILD, BECOMES, SEPARATOR, UP, DOWN, LEFT, RIGHT } from '../icons.js';
 
@@ -78,8 +80,9 @@ export function OverridePicker({ name, versions, onSelect, onCancel }) {
  * A picker for the case where a package is installed at several versions across
  * the tree and a single global pin would be wrong. Lists each vulnerable
  * dependent with a per-parent safe version (←/→ to change it), and shows the
- * already-safe / no-in-range-fix instances read-only so it's clear what's being
- * left alone. Enter stages a { scoped: [...] } spec; Esc cancels.
+ * already-safe / no-in-range-fix / refused-pin instances read-only so it's
+ * clear what's being left alone. Enter stages a { scoped: [...] } spec; Esc
+ * cancels.
  */
 export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
   const pinnable = instances.filter(isPinnableInstance);
@@ -108,12 +111,7 @@ export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
       });
     }
     if (key.return) {
-      const scoped = pinnable.map((i, idx) => ({
-        parentName: i.parentName,
-        parentVersion: i.parentVersion,
-        version: i.safeCandidates[choices[idx]],
-      }));
-      onSelect({ scoped });
+      onSelect(scopedOverrideSelection(instances, choices));
     }
   });
 
@@ -163,7 +161,11 @@ export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
           Text,
           { dimColor: true },
           `  ${parentLabel(i)} ${CHILD} ${i.installedVersion} `,
-          i.vulnerable ? '— no in-range fix, left as is' : '— already safe, left as is'
+          i.pinRefusal
+            ? `— ${pinRefusalText(i.pinRefusal)}, left as is`
+            : i.vulnerable
+              ? '— no in-range fix, left as is'
+              : '— already safe, left as is'
         )
       )
     ),
