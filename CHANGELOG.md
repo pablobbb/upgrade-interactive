@@ -51,9 +51,8 @@
   versions that don't overlap; otherwise npm silently drops the hoisted copy's
   pins. Measured against npm 11.13.0, two `minimatch` copies pinned to
   `brace-expansion@2.1.7` left one on the vulnerable `2.0.1`, and a pin beside
-  another key for a different package was dropped the same way. A pin beside
-  such a key is now refused too, and copies that get the same fix share one key
-  (`"minimatch@5.1.9 || 9.0.9"`), which npm applies to both.
+  another key for a different package was dropped the same way. Such pins are
+  now refused too.
 
 - **Pins no longer silently change another copy of the parent.** npm matches a
   `parent@version` key against the range each dependent declares, not the

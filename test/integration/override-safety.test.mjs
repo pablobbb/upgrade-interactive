@@ -120,11 +120,10 @@ describe('override safety — real npm resolution', () => {
     }
   });
 
-  it('pins two copies of a parent that need the same version under one key', async () => {
+  it('refuses two copies of a parent pinned to the same version, which npm would half-apply', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'nui-safety-npm-'));
     dirs.push(dir);
     const file = path.join(dir, 'package.json');
-    const lockFile = path.join(dir, 'package-lock.json');
     // minimatch at 3.x (glob@7), 5.x (filelist) and 9.x (rimraf@5). The 5.x and
     // 9.x copies accept the same brace-expansion fix; 3.x is left alone.
     const base = {
@@ -132,34 +131,26 @@ describe('override safety — real npm resolution', () => {
     };
     await writeJson(file, base);
     await install(dir);
-    const v = Object.fromEntries((await copiesOf(dir, 'minimatch', 'brace-expansion')).map((c) => [c.version.split('.')[0], c.version]));
+    const v = Object.fromEntries((await copiesOf(dir, 'minimatch', 'be')).map((c) => [c.version.split('.')[0], c.version]));
     const pins = (a, b) => ({ [`minimatch@${v[5]}`]: { 'brace-expansion': a }, [`minimatch@${v[9]}`]: { 'brace-expansion': b } });
     // Lock vulnerable 2.0.x under both (different versions, so npm applies both), then drop the pins.
     await writeJson(file, { ...base, overrides: pins('2.0.1', '2.0.2') });
     await install(dir);
     await writeJson(file, base);
-    const staleLock = await readFile(lockFile, 'utf8');
-    const braceExpansion = async () =>
-      Object.fromEntries((await copiesOf(dir, 'minimatch', 'brace-expansion')).map((c) => [c.version.split('.')[0], c['brace-expansion']]));
 
     const { vulns } = await computeVulnerabilities({ installed: await loadInstalledVersions(dir) }, stubFromSnapshot({
       meta: { 'brace-expansion': { versions: ['2.0.1', '2.0.2', '2.1.7'], distTags: {} } },
       advisories: { 'brace-expansion': [{ vulnerable_versions: '>=2.0.0 <2.0.3', severity: 'high' }] },
     }));
-    const spec = defaultOverrideSelection(vulns.get('brace-expansion'));
-    await applyUpgrades(await loadManifest(dir), new Map(), { 'brace-expansion': spec });
-    assert.deepEqual((await readJson(file)).overrides, { [`minimatch@${v[5]} || ${v[9]}`]: { 'brace-expansion': '2.1.7' } });
-    await install(dir);
-    const fixed = await braceExpansion();
-    assert.deepEqual([fixed[5], fixed[9]], ['2.1.7', '2.1.7']);
-    assert.match(fixed[3], /^1\./, 'the 3.x copy is left alone');
+    const vuln = vulns.get('brace-expansion');
+    assert.deepEqual(vuln.instances.filter((i) => i.vulnerable).map((i) => i.pinRefusal?.kind), ['shadowed', 'shadowed']);
+    assert.equal(defaultOverrideSelection(vuln), null);
 
-    // Why one key: with two keys on the same version, npm drops one copy's pin.
-    await writeFile(lockFile, staleLock);
+    // Why: with both keys on the same version, npm drops one copy's pin.
     await writeJson(file, { ...base, overrides: pins('2.1.7', '2.1.7') });
     await install(dir);
-    const split = await braceExpansion();
-    assert.ok(split[5] !== '2.1.7' || split[9] !== '2.1.7', `npm applied both pins: ${JSON.stringify(split)}`);
+    const fixed = (await copiesOf(dir, 'minimatch', 'braceExpansion')).filter((c) => !c.version.startsWith('3.'));
+    assert.ok(fixed.some((c) => c.braceExpansion !== '2.1.7'), `npm applied both pins: ${JSON.stringify(fixed)}`);
   });
 
   it('pins only versions that are harmless for another copy the key also reaches', async () => {

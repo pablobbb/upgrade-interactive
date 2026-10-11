@@ -34,52 +34,31 @@ export function defaultScopedChoiceIndex(instance) {
   return instance.safeCandidates.length - 1;
 }
 
-// The `overrides` key each scoped pin lands on, aligned with `pins`
-// ([{ i, version }]). A parent installed at a single version among `instances`
-// keeps the bare name. Otherwise a pin is keyed by its parent's version —
-// decided from every installed parent, including the safe/no-fix instances that
-// won't be staged, since a bare key would also change the copies meant to be
-// left alone. Copies of one parent pinned to the same version share one key
-// ("parent@1.0.0 || 1.1.0"): npm drops a copy's pins when two keys for one
-// parent pin the same version (override-keys.js).
-export function scopedPinKeys(instances, pins) {
-  const versions = new Map();
-  for (const o of instances) {
-    if (o.parentName == null) continue;
-    if (!versions.has(o.parentName)) versions.set(o.parentName, new Set());
-    versions.get(o.parentName).add(o.parentVersion);
-  }
-  const group = (p) =>
-    p.i.parentName != null && p.i.parentVersion && versions.get(p.i.parentName).size > 1
-      ? `${p.i.parentName}\0${p.version}`
-      : null;
-  const sharing = new Map();
-  for (const p of pins) {
-    const g = group(p);
-    if (!g) continue;
-    if (!sharing.has(g)) sharing.set(g, []);
-    if (!sharing.get(g).includes(p.i.parentVersion)) sharing.get(g).push(p.i.parentVersion);
-  }
-  return pins.map((p) => {
-    const g = group(p);
-    return g ? `${p.i.parentName}@${sharing.get(g).join(' || ')}` : p.i.parentName;
-  });
+// The `overrides` key a scoped pin under instance `i` lands on: "parent@version"
+// when that parent is installed at several versions among `instances`, else the
+// bare parent name. Decided from every installed parent, including the
+// safe/no-fix instances that won't be staged — once those are discarded, the
+// writer cannot tell that a bare parent key would also change a different
+// version we meant to leave alone.
+export function parentOverrideKey(instances, i) {
+  if (i.parentName == null || !i.parentVersion) return i.parentName;
+  const versions = new Set();
+  for (const o of instances) if (o.parentName === i.parentName) versions.add(o.parentVersion);
+  return versions.size > 1 ? `${i.parentName}@${i.parentVersion}` : i.parentName;
 }
 
 // `choices`, when supplied by the picker, is aligned to the pinnable instances.
 export function scopedOverrideSelection(instances, choices) {
-  const pins = instances.filter(isPinnableInstance).map((i, index) => ({
-    i,
-    version: i.safeCandidates[choices?.[index] ?? defaultScopedChoiceIndex(i)],
-  }));
-  const keys = scopedPinKeys(instances, pins);
   return {
-    scoped: pins.map(({ i, version }, index) => ({
-      parentName: i.parentName,
-      parentVersion: i.parentVersion,
-      version,
-      ...(keys[index] !== i.parentName ? { parentSelector: keys[index] } : {}),
-    })),
+    scoped: instances.filter(isPinnableInstance).map((i, index) => {
+      const key = parentOverrideKey(instances, i);
+      return {
+        parentName: i.parentName,
+        parentVersion: i.parentVersion,
+        version: i.safeCandidates[choices?.[index] ?? defaultScopedChoiceIndex(i)],
+        ...(key !== i.parentName ? { parentSelector: key } : {}),
+      };
+    }),
   };
 }
 

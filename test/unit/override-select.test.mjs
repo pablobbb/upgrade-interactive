@@ -125,23 +125,16 @@ describe('scopedOverrideSelection', () => {
     });
   });
 
-  it('shares one key between parent versions that choose the same target', () => {
-    // A bare key would also pin the safe parent@2.0.0, and two keys pinning the
-    // same version make npm drop one copy's pin — so the two share one key.
-    const instances = [
-      instance({ parentName: 'parent', parentVersion: '1.0.0', safeCandidates: ['1.1.5', '1.2.0'] }),
+  it('keeps distinct selectors even when two parent versions choose the same target', () => {
+    // A bare key would also pin the safe parent@2.0.0. In the real flow the audit
+    // refuses this pair before selection (npm drops one of two same-version
+    // keys); the writer refuses it too if the picker produces it.
+    const spec = scopedOverrideSelection([
+      instance({ parentName: 'parent', parentVersion: '1.0.0', safeCandidates: ['1.2.0'] }),
       instance({ parentName: 'parent', parentVersion: '1.1.0', safeCandidates: ['1.2.0'] }),
       instance({ parentName: 'parent', parentVersion: '2.0.0', vulnerable: false, safeCandidates: ['2.0.0'] }),
-    ];
-    assert.deepEqual(scopedOverrideSelection(instances).scoped.map((p) => p.parentSelector), [
-      'parent@1.0.0 || 1.1.0',
-      'parent@1.0.0 || 1.1.0',
     ]);
-    // Choosing different versions in the picker splits them again.
-    assert.deepEqual(scopedOverrideSelection(instances, [0, 0]).scoped.map((p) => p.parentSelector), [
-      'parent@1.0.0',
-      'parent@1.1.0',
-    ]);
+    assert.deepEqual(spec.scoped.map((p) => p.parentSelector), ['parent@1.0.0', 'parent@1.1.0']);
   });
 });
 

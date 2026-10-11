@@ -53,8 +53,7 @@ upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
    If that extra check fails, the vulnerability stays visible with the network
    warning, but no unverified pins are offered. When a parent exists at several
    versions, scoped pins use `parent@version` selectors, including when the other
-   parent versions are already safe and need no change; copies that get the same
-   fix share one selector (`parent@1.0.0 || 1.1.0`). Such a selector also
+   parent versions are already safe and need no change. Such a selector also
    applies to other copies of the parent whose dependents declare a range that
    admits it, so the picker only offers fixes that are harmless there — inside
    that copy's own range, and no downgrade. A pin isn't offered when
@@ -223,12 +222,10 @@ also matches directories whose name starts with a dot.
   - Two keys such as `"minimatch@5.1.9"` and `"minimatch@9.0.9"` both take
     effect only when they pin some shared package to versions that don't
     overlap. Pinned to the same `brace-expansion` version, the hoisted copy's
-    pin was silently dropped; pinned to different versions, both applied. One
-    key `"minimatch@5.1.9 || 9.0.9"` applied the shared version to both.
+    pin was silently dropped; pinned to different versions, both applied.
   - A `"glob@7.2.3"` key also pins `glob` itself, so when the root declares
     `glob` as `^7.2.0` npm fails with `EOVERRIDE`. Declared as exactly
-    `7.2.3`, it installs — but a `"glob@7.2.3 || 10.5.0"` key failed even
-    then.
+    `7.2.3`, it installs.
   - A key is matched against the range each dependent *declares*, not the
     version it got. A `"minimatch@3.0.4"` pin also changed `glob@7.1.6`'s own
     `minimatch@3.1.2`, because glob declares `^3.0.4`.
