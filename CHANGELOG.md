@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.2.0 — 2026-10-11
+## 2.2.0 — 2026-10-12
 
 ### Added
 
@@ -23,11 +23,11 @@
 
   Only workspace projects are warned. Measured against npm 11.13.0
   (`docs/2026-08-26-spike-reresolve.md`): a standalone project applies the new
-  mandate on its next `npm install`, so the existing `--install` step already
-  covers it. A workspace project reports `up to date` and keeps the old version,
-  and neither `npm update <pkg>` nor `npm audit fix` fixes that — both resolve to
-  the newest version in range and ignore what the override mandates. The tool
-  reports the state rather than acting, because the only reliable fix
+  mandate on its next `npm install`, which the tool runs itself whenever the run
+  writes anything. A workspace project reports `up to date` and keeps the old
+  version, and neither `npm update <pkg>` nor `npm audit fix` fixes that — both
+  resolve to the newest version in range and ignore what the override mandates.
+  The tool reports the state rather than acting, because the only reliable fix
   (`rm -rf node_modules package-lock.json && npm install`) re-resolves every
   dependency in the project.
 
@@ -43,6 +43,13 @@
   "1.1.12" }` also moved `minimatch@9.0.9` — which declares `^2.0.2` and already
   had a safe `2.1.4` — down to `1.1.12`. Pins are now keyed `minimatch@3.1.5`
   whenever the dependent has several installed versions.
+
+  Such a key has a side effect that isn't guarded yet: on a fresh resolve (no
+  lockfile, or the `rm -rf node_modules package-lock.json` reinstall above), npm
+  also pins the dependent itself to the key's version wherever a declared range
+  admits it. On every npm measured, a `minimatch@3.0.4` key moved `glob`'s
+  `minimatch` from 3.1.5 down to 3.0.4
+  (`docs/2026-10-11-spike-override-keys.md`).
 
   **If you accepted a scoped pin with 2.1.0 or earlier**, check `overrides` for
   bare dependent keys like the one above. This release doesn't flag pins written
