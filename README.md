@@ -22,236 +22,105 @@ npm install -g upgrade-interactive
 nui
 ```
 
-Requires Node 18+ and an interactive terminal. Inside a project, `npx
-upgrade-interactive` (or `npx nui`) runs the locally-installed copy — no
-`package.json` script needed.
+Requires Node 18+ and an interactive terminal.
 
 ## What it does
 
-1. Reads `dependencies` and `devDependencies` from `package.json`.
-2. For each package, offers two upgrades from the registry, re-using your range
-   modifier (`^`, `~`, or exact):
-   - **Range** — highest version still satisfying your current range (npm's
-     "Wanted").
-   - **Latest** — the `latest`-tagged version, even if it's a major bump.
+- **Pick upgrades** per package — Current, Range (the newest version your range
+  allows) or Latest — keeping your `^` / `~` / exact modifier. Packages with
+  nothing new are left out.
+- **See vulnerabilities** in direct and transitive dependencies: severity, CVE
+  link, affected range and first fixed version.
+- **Fix them with `o`**: pins a safe version via npm `overrides` — per dependent
+  when the package is installed at several versions, or a range bump when it's
+  one of your direct dependencies.
+- **Clean up with `x`**: removes an override that's no longer needed.
+- In a workspace repo, **see overrides npm never applied** (see [Notes](#notes)).
 
-   Packages with nothing new to offer are left out of the list.
-3. Lets you pick, per package, **Current** / **Range** / **Latest**.
-4. **Checks for known vulnerabilities** (on by default) across direct *and*
-   transitive dependencies. Flagged rows show a ▲ icon, severity, and a
-   clickable CVE link, with the affected range and first fixed version inline.
-5. Press `o` on a vulnerable package to **pin a safe version via npm
-   `overrides`**. A single-version package gets one global pin; a package
-   installed at several versions gets **per-dependent scoped pins**
-   (`parent › package`) so already-safe copies are left alone. If the package is
-   one of your **direct** dependencies, it bumps that dependency's range instead
-   — npm rejects a top-level override that conflicts with a direct dependency
-   (`EOVERRIDE`). The picker scrolls, so a package with a long list of safe
-   versions (or a long list of dependents) stays reachable in any terminal.
-   Candidate versions are checked against their own advisories before appearing
-   in the safe-version picker; fixing the current advisory alone is not enough.
-   If that extra check fails, the vulnerability stays visible with the network
-   warning, but no unverified pins are offered. When a parent exists at several
-   versions, scoped pins use `parent@version` selectors, including when the other
-   parent versions are already safe and need no change. Such a selector also
-   applies to other copies of the parent whose dependents declare a range that
-   admits it, so the picker only offers fixes that are harmless there — inside
-   that copy's own range, and no downgrade. A pin isn't offered when
-   npm would ignore or reject the key it lands on (see [Notes](#notes)): beside
-   an override for the same parent in the other form (a bare `parent` key next
-   to `parent@version`, or the reverse); beside another `parent@version` key
-   unless the two pin some shared package to different versions; or as a
-   `parent@version` key for a parent the root itself declares with a range
-   (`EOVERRIDE`); or when no fix is harmless for another copy it would reach.
-   The picker lists that dependent as left alone, with the reason; if no
-   dependent is left to pin, `o` is refused with a note, and the override is
-   yours to edit by hand.
-6. **Flags overrides that are no longer needed** (nothing depends on them, or
-   your deps now resolve safely without them). Press `x` to remove one — it only
-   ever removes the one you select. Removal suggestions cover bare top-level
-   package keys only. Version-qualified keys such as `package@^1` (including
-   `@scope/package@^1`) are left untouched: their selectors require separate
-   analysis and must not be mistaken for unused package names.
-7. **Flags overrides that aren't in effect** — the pin is in `package.json`, but
-   the installed tree resolved to a different version, so npm never applied it.
-   These are listed read-only under **Overrides not in effect**, showing what the
-   override pins against what the lockfile actually has. There's no keybinding
-   because there's nothing to stage: npm can't re-resolve a single edge, so
-   clearing it means a full reinstall (see **Notes**). An override in this state
-   is never offered for removal under (6) — the tree it would be judged against
-   is one this override had no part in.
-8. Writes your choices back to `package.json` and runs `npm install`.
-
-By default the list is grouped into **Dependencies**, **Dev dependencies**, and
-override sections. Pass `--no-section` for a single flat list. In an npm
-workspace repo, each workspace additionally gets its own outer section (root
-first); `--no-section` collapses only the inner field grouping.
+On `Enter` it writes your choices to `package.json` and runs `npm install`.
 
 ## Controls
 
-| Key                | Action                                              |
-| ------------------ | ---------------------------------------------------- |
-| `↑` / `↓`          | Move between packages                                |
-| `←` / `→`          | Move between Current / Range / Latest                |
-| `c` / `r` / `l`     | Select current / range / latest for *every* package |
-| `o`                | Pin the focused vulnerable package to a safe version (override, or a range bump if it's a direct dependency) |
-| `x`                | Remove the focused unused override                   |
-| `Enter`            | Apply upgrades and run `npm install`                 |
-| `Esc`   | Abort — nothing is written                            |
-
-Not every package offers all three columns — a package already at the top of its
-range has no Range, one whose range already reaches the newest version has no
-Latest. `←` / `→` skip the columns a package doesn't offer and stop at the last
-one it does, so the marker never sits on an empty cell. `c` / `r` / `l` fall back
-the same way, always *downwards*: `l` takes Range when there's no Latest, and `r`
-leaves a package on Current rather than staging a major it never offered.
-
-Version numbers are colorized by bump size (minor vs. major), highlighting only
-the part that changed.
+| Key               | Action                                                                     |
+| ----------------- | -------------------------------------------------------------------------- |
+| `↑` / `↓`         | Move between packages                                                      |
+| `←` / `→`         | Move between Current / Range / Latest, skipping columns a package lacks    |
+| `c` / `r` / `l`   | Select that column for every package; one that lacks it falls back lower   |
+| `o`               | Pin the focused vulnerable package to a safe version                       |
+| `x`               | Remove the focused override that's no longer needed                        |
+| `Enter`           | Apply, then run `npm install`                                              |
+| `Esc` / `Ctrl+C`  | Abort — nothing is written                                                 |
 
 ## Flags
 
-- `--install` / `--no-install` — run `npm install` after writing changes (default: on)
-- `--audit` / `--no-audit` — vulnerability check (default: on)
-- `--section` / `--no-section` — grouped sections vs. flat list (default: on)
-- `-w, --workspace <name>` — in a workspaces repo, limit to matching workspace(s);
-  repeatable, matches by package name or path (e.g. `-w packages/api -w @acme/web`)
-- `--no-workspaces` — only the root `package.json`, ignoring any `workspaces` field
-- `-h, --help`, `-v, --version`
+| Setting                         | Flag                         | Env var       | Config key | Default |
+| ------------------------------- | ---------------------------- | ------------- | ---------- | ------- |
+| Run `npm install` after writing | `--install` / `--no-install` | `NUI_INSTALL` | `install`  | on      |
+| Vulnerability check             | `--audit` / `--no-audit`     | `NUI_AUDIT`   | `audit`    | on      |
+| Group the list into sections    | `--section` / `--no-section` | `NUI_SECTION` | `section`  | on      |
 
-`--install`, `--audit` and `--section` are on by default. To change a default
-permanently, use an env var or a `package.json` config block:
+A flag beats the env var (`0`, `false`, `no` or `off` turns it off), which beats
+the config block in `package.json`:
 
 ```json
 "upgrade-interactive": { "install": false, "audit": false, "section": true }
 ```
 
-```sh
-NUI_AUDIT=0 npx upgrade-interactive
-```
+Also `-w, --workspace <name>` and `--no-workspaces` (see
+[Workspaces](#workspaces)), `-h, --help` and `-v, --version`.
 
-Precedence, highest first: CLI flag → `NUI_INSTALL` / `NUI_AUDIT` / `NUI_SECTION`
-→ `package.json` config → default (on). In a workspaces repo the config block is
-read from the root `package.json` only — see [Workspaces](#workspaces).
-
-> Auditing needs network access. Offline, the tool says so (`no network —
-> couldn't check for vulnerable packages`) instead of pretending everything is
-> clean, and upgrades still work.
+The vulnerability check needs network access; offline, the tool says so and
+upgrades still work.
 
 ## Workspaces
 
-Run it in an npm workspaces repo (a root `package.json` with a `workspaces`
-field) from anywhere in the tree. Each workspace gets its own section (root
-first), and edits are written to that workspace's own manifest. `overrides` and
-`npm install` always go to the root, which npm shares across workspaces — so a
-vulnerable package used by several workspaces is staged as an override once,
-from one row.
-
-"From anywhere in the tree" includes running inside a workspace: from
-`packages/api` the tool still operates on the whole repo and reads its
-`upgrade-interactive` config from the **root** `package.json`. Use
-`--no-workspaces` for the old one-manifest behavior.
-
-A workspace's own block is ignored — those settings describe the run, not a
-package. You get a note naming the file and keys whenever an ignored block would
-have changed the run.
-
-A repository with no `workspaces` field is unaffected by any of this — it loads
-exactly one `package.json` and renders no workspace headings.
-
-Because npm honors `overrides` only in the root manifest, a vulnerable package
-whose workspaces declare *different* ranges can't be fixed by any single
-override entry. Those rows say so and offer no pin — upgrade each workspace's
-own row instead. This holds under `--no-workspaces` too: narrowing what you edit
-doesn't change what's installed, so the pin would still be wrong.
-
-Scope with `-w <name>` (repeatable) or `--no-workspaces`:
+In an npm workspaces repo, run it from anywhere in the tree — including inside a
+workspace — and it covers the whole repo. Each workspace gets its own section
+(root first, kept under `--no-section`), and its edits go to its own
+`package.json`. `overrides`, `npm install` and the config block belong to the
+root; a workspace's own config block is ignored, with a note when that changes
+the run.
 
 ```console
-$ nui -w packages/api                 # by path
-$ nui -w @acme/web                    # by package name
-$ nui -w packages/api -w @acme/web    # repeatable
+$ nui -w packages/api      # limit to a workspace by path…
+$ nui -w @acme/web         # …or by package name; repeatable
+$ nui --no-workspaces      # the root package.json only
 ```
 
-A `-w` value that matches no workspace is an error naming what didn't match,
-rather than an empty list — as is combining `-w` with `--no-workspaces`. Paths
-match regardless of separator or a trailing slash, so the form your shell
-completes is always accepted.
+npm honours `overrides` only at the root, so a vulnerable package whose
+workspaces declare *different* ranges can't be fixed by one override. Those rows
+offer no pin — upgrade each workspace's row instead. This holds under
+`--no-workspaces` too.
 
-The `workspaces` glob supports literal paths, `*` anywhere within a path segment
-(`packages/*`, `packages/*-api`), a trailing `**`, and `!` exclusions. That is a
-subset of npm's patterns: `?`, character classes (`[a-z]`), brace expansion
-(`{a,b}`) and a non-trailing `**` are not supported, and unlike npm a `*` here
-also matches directories whose name starts with a dot.
+The `workspaces` field supports literal paths, `*` within a path segment, a
+trailing `**` and `!` exclusions — not `?`, `[a-z]`, `{a,b}` or a non-trailing
+`**`. Unlike npm, `*` also matches directories starting with a dot.
 
 ## Notes
 
-- **Compound ranges** (`>=1.0.0 <2.0.0`, `1.x || 2.x`, `1.0.0 - 2.0.0`) have no
-  single modifier to re-apply, so they collapse to a caret. Protocol ranges
-  (git/file/link/workspace, npm aliases) are skipped entirely.
-- A package you've already pinned through `overrides` isn't flagged again. The
-  audit judges the versions you actually have; the version your dependents
-  *would* fall back to without the pin is computed too, but only to decide
-  whether the pin is still needed (step 6 above) — never to call the package
-  vulnerable.
-- Pinning a package **and** pinning something under it share one entry:
-  npm's `"."` key holds the package's own pin next to its scoped children —
-  `"vite": { ".": "7.3.6", "picomatch": "4.0.5" }`.
-- **npm applies `overrides` at resolution time, not retroactively.** An override
-  added *after* its lockfile entry was resolved can sit in `package.json` with no
-  effect, because the installed version still satisfies its dependent's declared
-  range and npm sees no reason to revisit it. What clears it depends on the
-  project shape, which is why step 7 above only warns in workspaces:
-  - **standalone** — the next `npm install` applies it, so the tool's own
-    `--install` step already fixes it and no warning is shown;
-  - **workspace repo** — `npm install` reports `up to date` and leaves the old
-    version. Neither `npm update <pkg>` nor `npm audit fix` fixes this: they
-    resolve to the newest version in range and ignore what the override mandates,
-    which merely *looks* right when the pin happens to be the newest. Deleting
-    the lockfile alone isn't enough either — npm rebuilds it from `node_modules`.
-    The only reliable fix is a clean slate:
-    `rm -rf node_modules package-lock.json && npm install`.
-
-  Measured against npm 11.13.0; see `docs/2026-08-26-spike-reresolve.md` for the
-  full comparison. Because that fix re-resolves *every* dependency, the tool
-  reports the state and leaves the decision to you rather than running it.
-- **npm is picky about several override keys for one parent, and the details
-  depend on the npm version.** Measured on npm 9.9 through 12.2
-  (`docs/2026-10-11-spike-override-keys.md`):
-  - A `"glob@7.2.3"` key written after a bare `"glob"` key is ignored, on every
-    version measured. (In the other order, npm 9 and 10 apply both keys and
-    11.13+ neither.)
-  - Two keys such as `"minimatch@5.1.9"` and `"minimatch@9.0.9"`: since npm
-    11.12, both take effect only when they pin some shared package to
-    versions that don't overlap — otherwise the hoisted copy's pins are
-    silently dropped. npm 11.2 to 11.11 applied both either way. npm 11.1 and
-    earlier dropped the hoisted copy's pin when the two pinned *different*
-    versions and the parent was also a root dependency.
-  - A `"glob@7.2.3"` key also pins `glob` itself, so when the root declares
-    `glob` as `^7.2.0` npm fails with `EOVERRIDE`, on every version measured.
-    Declared as exactly `7.2.3`, it installs.
-  - A key is matched against the range each dependent *declares*, not the
-    version it got. On npm 11.13+, a `"minimatch@3.0.4"` pin also changed
-    `glob@7.1.6`'s own `minimatch@3.1.2`, because glob declares `^3.0.4`.
-  - On a fresh resolve (no lockfile, or the clean-slate install above), a
-    `"pkg@version"` key holds every dependent whose range admits that version
-    at exactly that version, on every version measured: a `"minimatch@3.0.4"`
-    key moved glob's minimatch from 3.1.5 down to 3.0.4.
-
-  The tool refuses the layouts that fail on current npm (step 5 above), even
-  where an older npm would apply them, since a lockfile may be regenerated by
-  any npm; a run whose staged pins would create one between themselves writes
-  nothing and says why. Two gaps remain: it still writes two keys pinning
-  different versions for a parent the root also declares, which npm 11.1 and
-  earlier half-apply, and it doesn't account for the fresh-resolve pinning
-  above. Layouts already in your `package.json` are left as you wrote them.
-- Accepting a pin that's **already** in `package.json` writes nothing, and the
-  summary says so explicitly instead of reporting "no effective changes" — that
-  combination is the signal that the override isn't in effect.
-- Only `dependencies` / `devDependencies` are scanned.
-- The list stays alphabetically sorted the whole time it's loading.
+- **Compound ranges** (`>=1.0.0 <2.0.0`, `1.x || 2.x`) have no single modifier to
+  re-apply, so they collapse to a caret. Protocol ranges (git/file/link/workspace,
+  npm aliases) are skipped.
+- Only `dependencies` and `devDependencies` are scanned.
+- Pinning a package **and** something under it share one entry, using npm's
+  `"."` key: `"vite": { ".": "7.3.6", "picomatch": "4.0.5" }`.
+- **Some override pins are refused** — ones npm would ignore, reject
+  (`EOVERRIDE`), or apply to copies of a package you didn't target. The picker
+  says why. Two cases aren't guarded yet: npm 11.1 and earlier can drop one of
+  two `parent@version` pins when the root also depends on that parent, and on a
+  fresh install a `parent@version` key also pins the parent itself to that
+  version, which can downgrade it.
+- **In a workspace repo, npm doesn't apply an override added after the
+  lockfile** — `npm install` reports `up to date`. The fix,
+  `rm -rf node_modules package-lock.json && npm install`, re-resolves every
+  dependency, so the tool flags these overrides rather than running it. A
+  standalone project applies them on its next `npm install`.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the test conventions, and how
-to capture a run against a real project with `scripts/capture-run.sh`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests, and capturing a run
+against a real project.
+
+## License
+
+MIT
