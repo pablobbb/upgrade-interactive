@@ -100,7 +100,12 @@ one project's dependency graph. The method in brief:
    `package.json` and the resulting lockfile. That discrepancy is how the
    writer's one known write-loss bug was found; an analysis that starts from the
    summary cannot see it.
-2. Re-audit both lockfiles rather than trusting reported counts.
+2. Re-audit both lockfiles rather than trusting reported counts, and compare
+   **direct advisories**: packages whose `vulnerabilities[*].via` holds an
+   advisory object, which is what `capture-run.sh` prints. npm's
+   `metadata.vulnerabilities` totals also count packages flagged only through a
+   vulnerable dependency, and they have moved from 21 to 34 on an unchanged
+   lockfile.
 3. Look for advisories the run *introduced*, not only ones it fixed.
 4. Check every written override against its dependents' declared ranges, to
    catch forced majors.

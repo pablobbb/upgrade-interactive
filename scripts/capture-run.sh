@@ -28,6 +28,18 @@ set -euo pipefail
 
 MARKER=".capture-run-current"
 
+# Packages with a direct advisory: a `via` entry that is an object, not the name
+# of a vulnerable dependency. npm's `metadata.vulnerabilities` totals also count
+# metavulnerabilities (packages flagged only through a dependency), and those
+# moved from 21 to 34 on an unchanged lockfile (docs/2026-10-17-field-report.md,
+# F5). Compare these; the totals are printed only as context.
+DIRECT_ADVISORIES_JS='
+  const direct = (a) => Object.entries((a && a.vulnerabilities) || {})
+    .filter(([, v]) => (v.via || []).some((x) => typeof x === "object"))
+    .map(([name]) => name)
+    .sort();
+'
+
 die() { printf 'capture-run: %s\n' "$*" >&2; exit 1; }
 note() { printf '  %s\n' "$*"; }
 
@@ -71,10 +83,14 @@ capture_side() {
   [ -f package-lock.json ] && cp package-lock.json "$dir/package-lock.json" \
     || note "WARNING: no package-lock.json — the analysis loses its ground truth"
   capture_audit "$dir/audit.json"
-  node -e '
+  node -e "$DIRECT_ADVISORIES_JS"'
     const a = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-    const v = a.metadata && a.metadata.vulnerabilities;
-    console.log("  audit: " + (v ? JSON.stringify(v) : "unavailable"));
+    if (!a.vulnerabilities) {
+      console.log("  audit: unavailable");
+    } else {
+      console.log("  audit: " + direct(a).length + " packages with a direct advisory");
+      console.log("  npm totals (count metavulnerabilities too): " + JSON.stringify(a.metadata && a.metadata.vulnerabilities));
+    }
   ' "$dir/audit.json"
 }
 
@@ -199,15 +215,18 @@ do_post() {
   rm -f "$MARKER"
 
   printf '\nPOST captured: %s\n\n' "$out"
-  node -e '
+  node -e "$DIRECT_ADVISORIES_JS"'
     const fs = require("fs");
     const read = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return null; } };
     const pre = read(process.argv[1]), post = read(process.argv[2]);
-    const t = (a) => a && a.metadata && a.metadata.vulnerabilities;
-    if (t(pre) && t(post)) {
-      console.log("  advisories: " + t(pre).total + " -> " + t(post).total);
-      console.log("  pre : " + JSON.stringify(t(pre)));
-      console.log("  post: " + JSON.stringify(t(post)));
+    if (pre && post && pre.vulnerabilities && post.vulnerabilities) {
+      const before = direct(pre), after = direct(post);
+      const introduced = after.filter((n) => !before.includes(n));
+      const t = (a) => (a.metadata && a.metadata.vulnerabilities) || {};
+      console.log("  direct advisories: " + before.length + " -> " + after.length + " packages");
+      console.log("  remaining:  " + (after.join(", ") || "none"));
+      console.log("  introduced: " + (introduced.join(", ") || "none"));
+      console.log("  npm totals (count metavulnerabilities too): " + t(pre).total + " -> " + t(post).total);
     }
   ' "$out/pre/audit.json" "$out/post/audit.json"
   printf '\n'
