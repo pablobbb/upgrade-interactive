@@ -123,7 +123,7 @@ export interface PackageMeta {
 /** An advisory as npm's bulk advisories endpoint returns it. */
 export interface Advisory {
   id?: number;
-  url?: string;
+  url?: string | null;
   title?: string;
   severity?: string;
   vulnerable_versions: string;
@@ -241,7 +241,8 @@ export interface AuditResult {
 export interface ScopedPin {
   /** Null pins the root project's own (direct) edge. */
   parentName: string | null;
-  parentVersion: string | null;
+  /** Absent in the older spec shape, which the writer still accepts. */
+  parentVersion?: string | null;
   version: string;
   /** The `overrides` key, when the bare parent name would reach too far. */
   parentSelector?: string;

@@ -7,7 +7,9 @@ import path from 'node:path';
 import { TOGGLES } from './flags.js';
 import { INFO, CHILD, BECOMES } from './icons.js';
 
-/** @import { AppliedUpgrade, DependencyField, Project, WrittenOverride } from './types.js' */
+/** @import { AppliedUpgrade, DependencyField, Project, ProjectManifest, WrittenOverride } from './types.js' */
+
+/** @typedef {Pick<ProjectManifest, 'json'> & Partial<Pick<ProjectManifest, 'relPath'>>} ManifestConfig */
 
 /**
  * Does this project have manifests beyond the root? Derived from the descriptors
@@ -78,7 +80,7 @@ export function manifestPathsOf(project, lockfileDir) {
  * `--no-workspaces` loads a single manifest as the root, so this is silent there,
  * exactly as it is for a standalone project.
  *
- * @param {Pick<Project, 'root' | 'manifests'>} project
+ * @param {{ root: ManifestConfig, manifests?: ManifestConfig[] }} project
  * @param {Record<string, boolean>} [resolved]
  */
 export function formatIgnoredConfigNote(project, resolved = {}) {

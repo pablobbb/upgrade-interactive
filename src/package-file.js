@@ -448,7 +448,7 @@ function assertParentKeysApply(json, appliedOverrides) {
  *
  * @param {Manifest} manifest
  * @param {Map<string, string>} selections
- * @param {Record<string, OverrideSpec>} [overrides]
+ * @param {Record<string, OverrideSpec | null>} [overrides]  a null spec writes nothing
  * @param {string[]} [removals]
  * @returns {Promise<ApplyResult>}
  */
@@ -571,7 +571,7 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
  *
  * @param {Project} project
  * @param {Map<string, string>} selections
- * @param {Record<string, OverrideSpec>} [overrides]
+ * @param {Record<string, OverrideSpec | null>} [overrides]  a null spec writes nothing
  * @param {string[]} [removals]
  * @returns {Promise<ApplyResult<ProjectAppliedUpgrade>>}
  */

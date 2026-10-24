@@ -31,7 +31,7 @@ export function pinRefusalText(refusal) {
   return `npm would ignore a pin beside your override "${refusal.by}"`;
 }
 
-/** @param {Pick<Vuln, 'instances'>} vuln */
+/** @param {Partial<Pick<Vuln, 'instances'>>} vuln */
 export function pinnableInstances(vuln) {
   return (vuln.instances || []).filter(isPinnableInstance);
 }

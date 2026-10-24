@@ -178,9 +178,9 @@ export function WorkspaceHeader({ relPath, workspace }) {
  *   active: boolean,
  *   suggestions: Suggestion[],
  *   selectedColumn: number,
- *   vuln: Vuln | null,
- *   override: OverrideSpec | undefined,
- *   overrideNote: string | null,
+ *   vuln?: Vuln | null,
+ *   override?: OverrideSpec,
+ *   overrideNote?: string | null,
  * }} props
  */
 export function Row({ name, active, suggestions, selectedColumn, vuln, override, overrideNote }) {

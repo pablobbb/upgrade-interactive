@@ -773,7 +773,7 @@ function unsafePinsOf(overrides, name, isSafe) {
  * check every relevant version against npm's advisory database.
  *
  * @param {{
- *   descriptors?: Pick<Descriptor, 'name' | 'range'>[],
+ *   descriptors?: (Pick<Descriptor, 'name' | 'range'> & Partial<Descriptor>)[],
  *   installed?: InstalledTree | null,
  *   overrides?: Overrides | null,
  *   manifestPaths?: readonly string[] | null,
