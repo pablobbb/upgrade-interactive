@@ -54,3 +54,22 @@ These docs are cited from code comments, the README and `CHANGELOG.md`, and
 corrected. Renaming one means updating every reference in the same commit; check
 with `grep -rn '<old-name>' --include='*.js' --include='*.mjs' --include='*.md' .`
 and do it before tagging a release, never after.
+
+## Never name other projects
+
+Field reports, spikes and fixtures come from runs against real projects. Never
+write the name of a project the tool was run against, or of any other repository,
+anywhere in this one. That covers docs, plans, code comments, tests and fixtures,
+`CHANGELOG.md`, file names, branch names, commit messages and PR text. This repo
+is public, and `CHANGELOG.md` ships in the npm tarball.
+
+- Describe the project by its shape instead: "a static Astro 5 site", "a
+  standalone Electron 41 + Vue 3 app".
+- Name a run's documents and branch by date: `docs/2026-10-17-field-report.md`,
+  `PLAN_2026-10-17_fixes.md`, `bugfix/field-report-2026-10-17`.
+- `capture-run.sh` names its output directory after the project. Refer to it as
+  `<project>-nui-run-<stamp>/`.
+
+npm packages in the dependency tree (`electron-builder`, `minimatch`) are not
+project names, since findings need them. Neither are made-up examples
+(`@acme/web`).
