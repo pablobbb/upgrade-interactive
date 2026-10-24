@@ -7,7 +7,7 @@ function Key({ children }) {
   return e(Text, { bold: true, color: 'cyanBright' }, children);
 }
 
-export function Prompt({ audit = false } = {}) {
+export function Prompt({ audit = false }) {
   return e(
     Box,
     { flexDirection: 'row' },

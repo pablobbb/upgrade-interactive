@@ -309,7 +309,7 @@ export function App({
   const moveFocus = useCallback(
     (direction) => {
       setFocusedKey((cur) => {
-        const idx = navKeys.indexOf(cur);
+        const idx = cur == null ? -1 : navKeys.indexOf(cur);
         if (idx === -1) return navKeys[0] ?? null;
         const nextIdx = idx + direction;
         if (nextIdx < 0 || nextIdx >= navKeys.length) return cur;
