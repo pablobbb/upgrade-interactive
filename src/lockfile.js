@@ -44,8 +44,9 @@ export async function loadInstalledVersions(cwd) {
     if (!pkgPath || !info || !info.version) continue; // skip the "" root entry
     const name = nameFromPath(pkgPath);
     if (!name) continue;
-    if (!versions.has(name)) versions.set(name, new Set());
-    versions.get(name).add(info.version);
+    let set = versions.get(name);
+    if (!set) versions.set(name, (set = new Set()));
+    set.add(info.version);
   }
 
   return { versions, packages };

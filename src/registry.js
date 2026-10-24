@@ -19,7 +19,8 @@ function encodePackageName(name) {
  * Returns null if the package can't be resolved (404, network error, etc).
  */
 export async function fetchPackageMeta(name) {
-  if (cache.has(name)) return cache.get(name);
+  const cached = cache.get(name);
+  if (cached) return cached;
 
   const promise = (async () => {
     try {

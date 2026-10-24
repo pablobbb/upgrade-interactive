@@ -118,21 +118,23 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
   const workspaceNames = new Set((discovered || []).map((p) => p.name).filter(Boolean));
   // `relPath` is already POSIX (see expandWorkspaces) and a package name never
   // needs normalizing, so only the user's side of the comparison was rewritten.
-  const included = (info) => !filterSet || filterSet.has(info.name) || filterSet.has(info.relPath);
+  const included = (info) =>
+    !filterSet || (info.name != null && filterSet.has(info.name)) || filterSet.has(info.relPath);
 
   const manifests = [];
   const descriptors = [];
   const matched = new Set();
   for (const info of infos) {
-    const manifest = await loadManifest(info.dir);
-    manifest.workspace = info.relPath === '.' ? null : info.name;
-    manifest.relPath = info.relPath;
+    const manifest = Object.assign(await loadManifest(info.dir), {
+      workspace: info.relPath === '.' ? null : info.name,
+      relPath: info.relPath,
+    });
     manifests.push(manifest);
     // A filtered-out workspace stays loaded (root overrides need it) but shows
     // no rows.
     if (!included(info)) continue;
     if (filterSet) {
-      if (filterSet.has(info.name)) matched.add(info.name);
+      if (info.name != null && filterSet.has(info.name)) matched.add(info.name);
       if (filterSet.has(info.relPath)) matched.add(info.relPath);
     }
     for (const d of manifest.descriptors) {
@@ -210,6 +212,7 @@ function writeOverrideSpec(json, name, spec, out, directField, applied, alreadyP
   // conflicting top-level override. Returns false if there's no section to write
   // to (only in isolated writer tests where `name` isn't really a direct dep).
   const pinDirect = (version) => {
+    if (!field) return false;
     const section = json[field];
     if (!section || typeof section !== 'object') return false;
     const from = section[name];
@@ -268,8 +271,9 @@ function writeOverrideSpec(json, name, spec, out, directField, applied, alreadyP
   const targetsByParent = new Map();
   for (const pin of spec.scoped) {
     if (!pin || !pin.version || pin.parentName == null) continue;
-    if (!targetsByParent.has(pin.parentName)) targetsByParent.set(pin.parentName, new Set());
-    targetsByParent.get(pin.parentName).add(pin.version);
+    let targets = targetsByParent.get(pin.parentName);
+    if (!targets) targetsByParent.set(pin.parentName, (targets = new Set()));
+    targets.add(pin.version);
   }
 
   for (const pin of spec.scoped) {
@@ -507,8 +511,9 @@ export async function applyProject(project, selections, overrides = {}, removals
   for (const d of project.descriptors) {
     const range = selections.get(d.id);
     if (range == null) continue;
-    if (!byRelPath.has(d.relPath)) byRelPath.set(d.relPath, new Map());
-    byRelPath.get(d.relPath).set(`${d.field} ${d.name}`, range);
+    let slots = byRelPath.get(d.relPath);
+    if (!slots) byRelPath.set(d.relPath, (slots = new Map()));
+    slots.set(`${d.field} ${d.name}`, range);
   }
 
   const applied = [];

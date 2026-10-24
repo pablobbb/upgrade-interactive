@@ -59,7 +59,7 @@ export function scopedOverrideSelection(instances, choices) {
         parentName: i.parentName,
         parentVersion: i.parentVersion,
         version: i.safeCandidates[choices?.[index] ?? defaultScopedChoiceIndex(i)],
-        ...(key !== i.parentName ? { parentSelector: key } : {}),
+        ...(key != null && key !== i.parentName ? { parentSelector: key } : {}),
       };
     }),
   };

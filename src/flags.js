@@ -12,7 +12,8 @@ export function resolveToggle({ args, env, config, onFlag, offFlag, envVar, conf
   if (envVal != null && envVal !== '') {
     return !/^(0|false|no|off)$/i.test(envVal.trim());
   }
-  if (config && typeof config[configKey] === 'boolean') return config[configKey];
+  const configVal = config ? config[configKey] : undefined;
+  if (typeof configVal === 'boolean') return configVal;
   return true;
 }
 
