@@ -6,6 +6,8 @@ import {
 import { windowSlice } from './rows.js';
 import { CURSOR, CHILD, BECOMES, SEPARATOR, UP, DOWN, LEFT, RIGHT } from '../icons.js';
 
+/** @import { PinInstance, ScopedSpec } from '../types.js' */
+
 const e = React.createElement;
 
 // How many candidate lines an overlay shows at once. `safeVersions` is every
@@ -22,6 +24,7 @@ const OTHERS_MAX_ROWS = 3;
 export const PICKER_MAX_HEIGHT = PICKER_MAX_ROWS + OTHERS_MAX_ROWS + 7;
 
 // The "↑ N more above" / "↓ N more below" hints, matching the main list's.
+/** @param {{ count: number, direction: 'up' | 'down' }} props */
 function ScrollHint({ count, direction }) {
   if (count <= 0) return null;
   return e(Text, { dimColor: true }, `  ${direction === 'up' ? UP : DOWN} ${count} more ${direction === 'up' ? 'above' : 'below'}`);
@@ -30,6 +33,8 @@ function ScrollHint({ count, direction }) {
 /**
  * A small overlay for choosing which safe version to pin a vulnerable package
  * to via npm `overrides`. ↑/↓ move, Enter selects, Esc cancels.
+ *
+ * @param {{ name: string, versions: string[], onSelect: (version: string) => void, onCancel: () => void }} props
  */
 export function OverridePicker({ name, versions, onSelect, onCancel }) {
   const [index, setIndex] = useState(0);
@@ -83,6 +88,13 @@ export function OverridePicker({ name, versions, onSelect, onCancel }) {
  * already-safe / no-in-range-fix / refused-pin instances read-only so it's
  * clear what's being left alone. Enter stages a { scoped: [...] } spec; Esc
  * cancels.
+ *
+ * @param {{
+ *   name: string,
+ *   instances: PinInstance[],
+ *   onSelect: (spec: ScopedSpec) => void,
+ *   onCancel: () => void,
+ * }} props
  */
 export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
   const pinnable = instances.filter(isPinnableInstance);
@@ -117,11 +129,13 @@ export function ScopedOverridePicker({ name, instances, onSelect, onCancel }) {
 
   // Show "pkg@version" when the same parent name appears more than once (its
   // copies are being pinned separately), so rows aren't ambiguous.
+  /** @type {Map<string, number>} */
   const parentCounts = new Map();
   for (const i of instances) {
     if (i.parentName == null) continue;
     parentCounts.set(i.parentName, (parentCounts.get(i.parentName) || 0) + 1);
   }
+  /** @param {PinInstance} i */
   const parentLabel = (i) => {
     if (i.parentName == null) return '(direct)';
     if ((parentCounts.get(i.parentName) || 0) > 1 && i.parentVersion) return `${i.parentName}@${i.parentVersion}`;

@@ -7,8 +7,11 @@ import {
 import { SEVERITY } from '../vulnerabilities.js';
 import { isPinBlocked, pinRefusalText } from '../override-select.js';
 
+/** @import { HeldPin, OverrideSpec, PinInstance, RemovableOverride, Span, Suggestion, Vuln } from '../types.js' */
+
 const e = React.createElement;
 
+/** @param {{ spans: Span[] | undefined, inverse?: boolean }} props */
 function Spans({ spans, inverse }) {
   if (!spans || spans.length === 0) return e(Text, null, '');
   return e(
@@ -18,6 +21,7 @@ function Spans({ spans, inverse }) {
   );
 }
 
+/** @param {{ suggestion: Suggestion | undefined, selected: boolean }} props */
 function Column({ suggestion, selected }) {
   const hasContent = suggestion && suggestion.spans.length > 0;
   return e(
@@ -37,6 +41,10 @@ function Column({ suggestion, selected }) {
 // partial fix reads as a whole one. Only the picker used to say so, which is how
 // "2 scoped pins" passed for a fix while two copies stayed vulnerable (the
 // 2026-10-17 field report, F1).
+/**
+ * @param {OverrideSpec | null | undefined} spec
+ * @param {Vuln | null | undefined} vuln
+ */
 export function overrideLabel(spec, vuln) {
   if (!spec) return null;
   if (typeof spec === 'string') return `${BECOMES} override ${spec}`;
@@ -56,11 +64,16 @@ export function overrideLabel(spec, vuln) {
 }
 
 // "a", "a and b", "a, b and c".
+/** @param {string[]} items */
 function listText(items) {
   return items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
 // `your overrides "minimatch@9.0.9" and "minimatch@5.1.9" pin brace-expansion to 2.1.4`
+/**
+ * @param {HeldPin[]} held
+ * @param {string} name
+ */
 function heldText(held, name) {
   const keys = listText([...new Set(held.map((h) => `"${h.key}"`))]);
   const pins = listText([...new Set(held.map((h) => h.pin))]);
@@ -80,11 +93,16 @@ function heldText(held, name) {
 // 10.9.9 and 11.13.0, test/fixtures/held-by-scoped-pins). So the note gives
 // both steps, and leads with the user's overrides when there are any, since they
 // are the real cause.
+/**
+ * @param {Vuln | null | undefined} vuln
+ * @param {string} name
+ */
 export function pinBlockedNote(vuln, name) {
   if (!vuln || !isPinBlocked(vuln)) return null;
   if (!vuln.pinConflict) {
     const held = vuln.heldBy || [];
-    const refused = (vuln.instances || []).find((i) => i.pinRefusal);
+    // Blocked without a conflict means some instance's pin was refused.
+    const refused = /** @type {PinInstance} */ ((vuln.instances || []).find((i) => i.pinRefusal));
     const lead = held.length > 0 ? heldText(held, name) : pinRefusalText(refused.pinRefusal);
     const route = vuln.inRangeFix && vuln.heldBy != null;
     if (!route) return `${INFO} ${lead} — edit overrides by hand`;
@@ -100,6 +118,7 @@ export function pinBlockedNote(vuln, name) {
 // The warning icon + severity + CVE link + affected/fixed-in summary shown on a flagged
 // row. `hideFixed` drops the "fixed in" suffix when the row already shows the
 // fixed version as a column (the override rows), to avoid saying it twice.
+/** @param {{ vuln: Vuln, override: OverrideSpec | undefined, hideFixed?: boolean }} props */
 function VulnInfo({ vuln, override, hideFixed }) {
   const sev = SEVERITY[vuln.severity] || SEVERITY.low;
   let text = `${WARN} ${sev.label} ${hyperlink(vuln.cve, vuln.url)} — affects ${vuln.affectedRange}`;
@@ -116,6 +135,7 @@ function VulnInfo({ vuln, override, hideFixed }) {
 // The current-to-fixed version pair for a row that has no upgrade columns of its
 // own (the override section). Echoes the deps table's columnar layout so the
 // two sections scan the same way; a missing side renders as a dim "?".
+/** @param {{ current: string | null, fixed: string | null }} props */
 function FixColumn({ current, fixed }) {
   return e(
     Box,
@@ -126,6 +146,7 @@ function FixColumn({ current, fixed }) {
   );
 }
 
+/** @param {{ name: string }} props */
 function NameCell({ name }) {
   const padLength = Math.max(1, 45 - name.length);
   return e(
@@ -136,6 +157,7 @@ function NameCell({ name }) {
   );
 }
 
+/** @param {{ title: string }} props */
 export function SectionHeader({ title }) {
   return e(Box, { marginTop: 1 }, e(Text, { bold: true, underline: true, color: 'gray' }, title));
 }
@@ -144,11 +166,23 @@ export function SectionHeader({ title }) {
 // inner field grouping) so the two levels read as different levels: bright and
 // unadorned versus the dim underlined field titles nested beneath it. The root
 // workspace is labelled "root"; others show "<relPath> (<package name>)".
+/** @param {{ relPath: string, workspace: string | null }} props */
 export function WorkspaceHeader({ relPath, workspace }) {
   const label = relPath === '.' ? 'root' : workspace ? `${relPath} (${workspace})` : relPath;
   return e(Box, { marginTop: 1 }, e(Text, { bold: true, color: 'magentaBright' }, `${WORKSPACE_BAR} ${label}`));
 }
 
+/**
+ * @param {{
+ *   name: string,
+ *   active: boolean,
+ *   suggestions: Suggestion[],
+ *   selectedColumn: number,
+ *   vuln: Vuln | null,
+ *   override: OverrideSpec | undefined,
+ *   overrideNote: string | null,
+ * }} props
+ */
 export function Row({ name, active, suggestions, selectedColumn, vuln, override, overrideNote }) {
   const main = e(
     Box,
@@ -181,6 +215,15 @@ export function Row({ name, active, suggestions, selectedColumn, vuln, override,
 // A vulnerable package fixed by an override (transitive, or direct with no
 // upgrade available): a current → fixed column pair on top, with the advisory
 // detail on its own indented line below — the same two-line shape as Row.
+/**
+ * @param {{
+ *   name: string,
+ *   active: boolean,
+ *   vuln: Vuln,
+ *   override: OverrideSpec | undefined,
+ *   overrideNote: string | null,
+ * }} props
+ */
 export function VulnRow({ name, active, vuln, override, overrideNote }) {
   const main = e(
     Box,
@@ -207,6 +250,9 @@ export function VulnRow({ name, active, vuln, override, overrideNote }) {
 }
 
 // An existing `overrides` entry that no longer appears to be needed.
+/**
+ * @param {{ name: string, active: boolean, pin: string, reason: RemovableOverride['reason'], staged: boolean }} props
+ */
 export function OverrideRow({ name, active, pin, reason, staged }) {
   const why =
     reason === 'dead' ? 'nothing depends on it anymore' : 'no longer prevents a known vulnerability';
@@ -234,6 +280,9 @@ export function OverrideRow({ name, active, pin, reason, staged }) {
 // and already in package.json, but resolution happened before it was added, so
 // npm never applied it. Read-only — see the `unapplied` branch in rows.js for
 // why no action is offered.
+/**
+ * @param {{ name: string, mandated: string, installed: string | null, parentName: string | null }} props
+ */
 export function UnappliedRow({ name, mandated, installed, parentName }) {
   const where = parentName ? `${parentName} ${CHILD} ${name}` : name;
   return e(

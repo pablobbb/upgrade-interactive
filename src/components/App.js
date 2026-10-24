@@ -12,25 +12,50 @@ import { computeVulnerabilities } from '../vulnerabilities.js';
 import { shouldScope, isPinBlocked } from '../override-select.js';
 import { INFO, UP, DOWN } from '../icons.js';
 
+/**
+ * @import {
+ *   AuditResult, Descriptor, DisplayRow, Entry, InputDescriptor, OverrideSpec, Overrides,
+ *   PinInstance, StagedOverride, Suggestion,
+ * } from '../types.js'
+ */
+
+/**
+ * @typedef {{ cwd: string, descriptors: Descriptor[], overrides: Overrides, manifestPaths: readonly string[] }} AuditArgs
+ * @typedef {AuditResult | null | undefined} AuditOutcome
+ * @typedef {{ name: string, originKey: string, originLabel: string | null }
+ *   & ({ mode: 'scoped', instances: PinInstance[] } | { mode: 'global', versions: string[] })} PickerState
+ *   The override picker that's open, and the row it stages for.
+ */
+
 const e = React.createElement;
 const CONCURRENCY = 8;
 // Stable reference so `overrides` defaulting doesn't allocate a fresh object
 // each render — otherwise the audit effect's deps change every commit and it
 // re-runs in an unbounded loop.
+/** @type {Overrides} */
 const EMPTY_OVERRIDES = Object.freeze({});
 // A standalone project's only manifest is the lockfile root. Stable reference
 // for the same reason EMPTY_OVERRIDES is one — it feeds the audit effect's deps.
 const ROOT_ONLY_MANIFESTS = Object.freeze(['']);
 
+/**
+ * @param {number} n
+ * @param {number} min
+ * @param {number} max
+ */
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+/** @param {DisplayRow} row */
 function isNavigable(row) {
   return row.kind === 'dep' || row.kind === 'vuln' || row.kind === 'override';
 }
 
-/** The package name a row stages an override for, or null if it stages none. */
+/**
+ * The package name a row stages an override for, or null if it stages none.
+ * @param {DisplayRow} row
+ */
 function overrideNameOf(row) {
   if (row.kind === 'dep') return row.descriptor.name;
   if (row.kind === 'vuln') return row.name;
@@ -41,15 +66,34 @@ function overrideNameOf(row) {
 // owned by its workspace (the root manifest has no display name, so label it
 // "root"); a shared vuln-section row has no owning workspace, and a null label
 // renders as "already staged above" instead.
+/** @param {DisplayRow} row */
 function originLabelOf(row) {
   return row.kind === 'dep' ? (row.descriptor.workspace ?? 'root') : null;
 }
 
+/**
+ * @param {AuditArgs} args
+ * @returns {Promise<AuditResult>}
+ */
 async function defaultRunAudit({ cwd, descriptors, overrides, manifestPaths }) {
   const installed = await loadInstalledVersions(cwd);
   return computeVulnerabilities({ descriptors, installed, overrides, manifestPaths });
 }
 
+/**
+ * @param {{
+ *   descriptors: InputDescriptor[],
+ *   onSubmit: (selections: Map<string, string>, overrides: Record<string, OverrideSpec>, removals: string[]) => void,
+ *   onAbort: () => void,
+ *   audit?: boolean,
+ *   section?: boolean,
+ *   cwd?: string,
+ *   overrides?: Overrides,
+ *   manifestPaths?: readonly string[],
+ *   runAudit?: (args: AuditArgs) => AuditOutcome | Promise<AuditOutcome>,
+ *   loadSuggestions?: (descriptor: Descriptor) => Promise<Suggestion[] | null>,
+ * }} props
+ */
 export function App({
   descriptors,
   onSubmit,
@@ -88,14 +132,14 @@ export function App({
       })),
     [descriptors]
   );
-  const [entries, setEntries] = useState(() => normDescriptors.map(() => null));
+  const [entries, setEntries] = useState(() => normDescriptors.map(() => /** @type {Entry | null} */ (null)));
   const [allLoaded, setAllLoaded] = useState(normDescriptors.length === 0);
-  const [focusedKey, setFocusedKey] = useState(null);
-  const [selectedColumns, setSelectedColumns] = useState({});
-  const [stagedOverrides, setStagedOverrides] = useState({});
-  const [stagedRemovals, setStagedRemovals] = useState({}); // { name: true }
-  const [auditState, setAuditState] = useState(null); // { offline, vulns, removableOverrides } | null
-  const [override, setOverride] = useState(null); // { name, versions } | null
+  const [focusedKey, setFocusedKey] = useState(/** @type {string | null} */ (null));
+  const [selectedColumns, setSelectedColumns] = useState(/** @type {Record<string, number>} */ ({}));
+  const [stagedOverrides, setStagedOverrides] = useState(/** @type {Record<string, StagedOverride>} */ ({}));
+  const [stagedRemovals, setStagedRemovals] = useState(/** @type {Record<string, boolean>} */ ({}));
+  const [auditState, setAuditState] = useState(/** @type {AuditResult | null} */ (null));
+  const [override, setOverride] = useState(/** @type {PickerState | null} */ (null));
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -240,6 +284,7 @@ export function App({
   }, [navKeyStr]);
 
   const cycleColumn = useCallback(
+    /** @param {number} direction */
     (direction) => {
       if (!focusedRow || focusedRow.kind !== 'dep') return;
       const { suggestions } = focusedRow.entry;
@@ -253,6 +298,7 @@ export function App({
   );
 
   const bulkSelect = useCallback(
+    /** @param {string} which */
     (which) => {
       setSelectedColumns((prev) => {
         const next = { ...prev };
@@ -273,7 +319,8 @@ export function App({
     if (!vuln) return;
     // Nothing is expressible for this package — the row says why.
     if (isPinBlocked(vuln)) return;
-    const name = overrideNameOf(focusedRow);
+    // A dep or vuln row always names its package.
+    const name = /** @type {string} */ (overrideNameOf(focusedRow));
     // Provenance: an override for this package staged from a *different* row can
     // only be edited from that origin row. Editing from the origin (or a first
     // stage) is allowed; `o` on any other matching row is a no-op — but only
@@ -307,6 +354,7 @@ export function App({
   }, [audit, focusedRow]);
 
   const moveFocus = useCallback(
+    /** @param {number} direction */
     (direction) => {
       setFocusedKey((cur) => {
         const idx = cur == null ? -1 : navKeys.indexOf(cur);
@@ -334,6 +382,7 @@ export function App({
       if (input === 'x') return toggleRemoval();
       if (input === 'c' || input === 'r' || input === 'l') return bulkSelect(input);
       if (key.return) {
+        /** @type {Map<string, string>} */
         const selections = new Map();
         for (const entry of entries) {
           if (!entry) continue;
@@ -344,6 +393,7 @@ export function App({
         const removals = Object.keys(stagedRemovals).filter((name) => stagedRemovals[name]);
         // Unwrap the provenance records back to the plain { name: spec } map the
         // writer expects — origin bookkeeping is a UI-only concern.
+        /** @type {Record<string, OverrideSpec>} */
         const overrideSpecs = {};
         for (const [name, record] of Object.entries(stagedOverrides)) overrideSpecs[name] = record.spec;
         onSubmit(selections, overrideSpecs, removals);

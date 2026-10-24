@@ -11,6 +11,14 @@ import { loadProject, applyProject } from './package-file.js';
 import { resolveToggles, parseWorkspaceOptions } from './flags.js';
 import { formatSummary, formatIgnoredConfigNote, isMonorepoProject, manifestPathsOf } from './summary.js';
 
+/** @import { OverrideSpec } from './types.js' */
+
+/**
+ * @typedef {{ type: 'submit', selections: Map<string, string>, overrides: Record<string, OverrideSpec>, removals: string[] }
+ *   | { type: 'abort' }} TuiResult
+ *   How the interactive session ended.
+ */
+
 const e = React.createElement;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -96,7 +104,7 @@ async function main() {
   try {
     project = await loadProject(cwd, { workspaces, filter });
   } catch (err) {
-    process.stderr.write(`${err.message}\n`);
+    process.stderr.write(`${/** @type {Error} */ (err).message}\n`);
     process.exitCode = 1;
     return;
   }
@@ -109,7 +117,7 @@ async function main() {
   const rootDir = path.dirname(project.root.filePath);
   const manifestPaths = manifestPathsOf(project, rootDir);
 
-  const result = await new Promise((resolve) => {
+  const result = await new Promise(/** @param {(result: TuiResult) => void} resolve */ (resolve) => {
     const { waitUntilExit } = render(
       e(App, {
         descriptors: project.descriptors,
@@ -200,8 +208,12 @@ async function main() {
   await runNpmInstall(rootDir);
 }
 
+/**
+ * @param {string} cwd
+ * @returns {Promise<void>}
+ */
 function runNpmInstall(cwd) {
-  return new Promise((resolve) => {
+  return new Promise(/** @param {() => void} resolve */ (resolve) => {
     const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
     const child = spawn(npmCmd, ['install'], { cwd, stdio: 'inherit' });
     child.on('exit', (code) => {

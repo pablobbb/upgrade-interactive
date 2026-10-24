@@ -1,12 +1,16 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 
+/** @import { ReactNode } from 'react' */
+
 const e = React.createElement;
 
+/** @param {{ children?: ReactNode }} props */
 function Key({ children }) {
   return e(Text, { bold: true, color: 'cyanBright' }, children);
 }
 
+/** @param {{ audit?: boolean }} props */
 export function Prompt({ audit = false }) {
   return e(
     Box,
