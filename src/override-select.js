@@ -50,8 +50,10 @@ export function defaultScopedChoiceIndex(instance) {
 // writer cannot tell that a bare parent key would also change a different
 // version we meant to leave alone.
 /**
+ * @template {string | null} P
  * @param {PinInstance[]} instances
- * @param {PinInstance} i
+ * @param {PinInstance & { parentName: P }} i
+ * @returns {string | P} never null for a named parent
  */
 export function parentOverrideKey(instances, i) {
   if (i.parentName == null || !i.parentVersion) return i.parentName;

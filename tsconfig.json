@@ -26,6 +26,8 @@
     "src/package-file.js",
     "src/registry.js",
     "src/semver-suggest.js",
-    "src/workspaces.js"
+    "src/workspaces.js",
+    "src/vulnerabilities.js",
+    "src/summary.js"
   ]
 }

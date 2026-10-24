@@ -6,8 +6,26 @@ import { fetchPackageMeta, fetchBulkAdvisories, mapWithConcurrency } from './reg
 import { parentOverrideKey, isPinnableInstance, defaultScopedChoiceIndex } from './override-select.js';
 import { overrideKeyName, overrideKeySpec, overrideBucketsConflict, risksEoverride } from './override-keys.js';
 
+/**
+ * @import {
+ *   Advisory, AuditResult, BulkAdvisories, Descriptor, HeldPin, InstalledTree, LockPackage,
+ *   LockPackages, OverrideObject, OverrideValue, Overrides, PackageMeta, PinInstance,
+ *   RemovableOverride, Severity, UnappliedEdge, UnappliedOverride, Vuln,
+ * } from './types.js'
+ */
+
+/**
+ * @typedef {{ label: string, color: string, rank: number }} SeverityLevel
+ * @typedef {PinInstance & { installedVersion: string }} RawPinInstance
+ *   An instance straight off the tree, before merging can leave it without a version.
+ * @typedef {PinInstance & { parentName: string }} NamedPinInstance
+ * @typedef {{ pin: string, reason?: 'dead', ranges?: string[], candidates: string[], resolvable: boolean }} OverrideInfo
+ */
+
 // The four standard npm/GitHub severity levels, ranked worst-first, with the
-// color used to render them. Centralized so Row.js and the picker agree.
+// color used to render them. Centralized so Row.js and the picker agree. Also
+// looked up by an advisory's free-form severity, which may name no level.
+/** @type {Record<Severity, SeverityLevel> & Record<string, SeverityLevel | undefined>} */
 export const SEVERITY = {
   critical: { label: 'critical', color: 'red', rank: 4 },
   high: { label: 'high', color: 'red', rank: 3 },
@@ -17,10 +35,15 @@ export const SEVERITY = {
 
 const CONCURRENCY = 8;
 
+/** @param {string} sev */
 function severityRank(sev) {
   return (SEVERITY[sev] && SEVERITY[sev].rank) || 0;
 }
 
+/**
+ * @param {string} version
+ * @param {Advisory} advisory
+ */
 function satisfiesAdvisory(version, advisory) {
   try {
     return semver.satisfies(version, advisory.vulnerable_versions, { includePrerelease: true });
@@ -29,12 +52,21 @@ function satisfiesAdvisory(version, advisory) {
   }
 }
 
+/**
+ * @param {string} version
+ * @param {Advisory[]} advisories
+ */
 function matchesAny(version, advisories) {
   return advisories.some((a) => satisfiesAdvisory(version, a));
 }
 
-/** Union two { name: Set<version> } maps into a fresh one. */
+/**
+ * Union two { name: Set<version> } maps into a fresh one.
+ * @param {Record<string, Set<string>>} a
+ * @param {Record<string, Set<string>>} b
+ */
 function mergeVersionSets(a, b) {
+  /** @type {Record<string, Set<string>>} */
   const merged = {};
   for (const source of [a, b]) {
     for (const [name, set] of Object.entries(source)) {
@@ -45,8 +77,12 @@ function mergeVersionSets(a, b) {
   return merged;
 }
 
-/** Highest valid semver in a list, or null. */
+/**
+ * Highest valid semver in a list, or null.
+ * @param {(string | null)[]} list
+ */
 function maxVersion(list) {
+  /** @type {string | null} */
   let max = null;
   for (const v of list) {
     if (!v || !semver.valid(v)) continue;
@@ -55,6 +91,7 @@ function maxVersion(list) {
   return max;
 }
 
+/** @param {Advisory | undefined} advisory */
 function advisoryCve(advisory) {
   if (advisory && Array.isArray(advisory.cves) && advisory.cves[0]) return advisory.cves[0];
   if (advisory && advisory.github_advisory_id) return advisory.github_advisory_id;
@@ -68,8 +105,13 @@ function advisoryCve(advisory) {
 
 // Every semver range that some package in the installed tree declares for
 // `name` — i.e. what would have to resolve if a manual override were removed.
-const RANGE_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
+const RANGE_FIELDS = /** @type {const} */ (['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']);
+/**
+ * @param {LockPackages | undefined} packages
+ * @param {string} name
+ */
 function requiredRangesFor(packages, name) {
+  /** @type {Set<string>} */
   const ranges = new Set();
   for (const info of Object.values(packages || {})) {
     if (!info || typeof info !== 'object') continue;
@@ -88,19 +130,30 @@ function requiredRangesFor(packages, name) {
 // (docs/2026-10-11-spike-override-keys.md, Finding 5). Null when the range isn't
 // semver or admits nothing. Both "is this override still needed?" and "would
 // re-resolving fix this without one?" ask where a range lands, and both use this.
+/**
+ * @param {string[]} versions
+ * @param {string} range
+ */
 function newestInRange(versions, range) {
   if (!semver.validRange(range)) return null;
   return semver.maxSatisfying(versions, range, { includePrerelease: false });
 }
 
-/** Package name from a lockfile path ("node_modules/@scope/x" -> "@scope/x"). */
+/**
+ * Package name from a lockfile path ("node_modules/@scope/x" -> "@scope/x").
+ * @param {string} pkgPath
+ */
 function nameFromLockPath(pkgPath) {
   const marker = 'node_modules/';
   const idx = pkgPath.lastIndexOf(marker);
   return idx === -1 ? null : pkgPath.slice(idx + marker.length) || null;
 }
 
-/** The range some parent declares for `name`, or null if it doesn't need it. */
+/**
+ * The range some parent declares for `name`, or null if it doesn't need it.
+ * @param {LockPackage} info
+ * @param {string} name
+ */
 function declaredRangeFor(info, name) {
   for (const field of RANGE_FIELDS) {
     const section = info[field];
@@ -112,6 +165,12 @@ function declaredRangeFor(info, name) {
 // Resolve which installed node a `name` dependency of the package at
 // `parentPath` points to, following node's "nearest node_modules, then walk up
 // to the root" resolution. Returns the winning lockfile path, or null.
+/**
+ * @param {LockPackages} packages
+ * @param {string} parentPath
+ * @param {string} name
+ * @returns {string | null}
+ */
 function resolveInstalledPath(packages, parentPath, name) {
   let prefix = parentPath;
   // Guard against a malformed tree causing an unbounded walk.
@@ -128,8 +187,12 @@ function resolveInstalledPath(packages, parentPath, name) {
 
 // The version of a lockfile entry known to have one: resolveInstalledPath and
 // the unappliedOverrides index only ever yield entries with a version.
+/**
+ * @param {LockPackages} packages
+ * @param {string} at
+ */
 function versionAt(packages, at) {
-  return packages[at].version;
+  return /** @type {string} */ (packages[at].version);
 }
 
 // npm override keys are either a bare package name or a version-qualified
@@ -137,6 +200,7 @@ function versionAt(packages, at) {
 // range-intersection logic, and guessing at one risks calling a live pin
 // unapplied. `null` means "can't say", which every caller treats as "not
 // unapplied" — the conservative direction.
+/** @param {string} key */
 function bareOverrideKeyName(key) {
   // Index 0 is a scope ("@scope/pkg"), not a selector separator.
   return key.lastIndexOf('@') > 0 ? null : key;
@@ -144,6 +208,7 @@ function bareOverrideKeyName(key) {
 
 // Split a *parent* override key, which the writer already emits qualified
 // ("vite@5.0.0") when one parent needs two different pins.
+/** @param {string} key */
 function splitParentKey(key) {
   const at = key.lastIndexOf('@');
   if (at <= 0) return { name: key, version: null };
@@ -152,7 +217,12 @@ function splitParentKey(key) {
 
 // Every installed copy of `name`, with the ranges its dependents (the root
 // manifest included) declare for it.
+/**
+ * @param {LockPackages} packages
+ * @param {string} name
+ */
 function installedCopies(packages, name) {
+  /** @type {Map<string, { path: string, version: string, ranges: string[] }>} */
   const copies = new Map();
   for (const [from, info] of Object.entries(packages)) {
     if (!info || typeof info !== 'object') continue;
@@ -176,7 +246,14 @@ function installedCopies(packages, name) {
 // range for `name`, and no downgrade — and is refused when none are. A copy
 // already covered by an existing key of the parent isn't reached: npm uses the
 // first matching key, and existing keys come first.
+/**
+ * @param {string} name
+ * @param {PinInstance[]} instances
+ * @param {(parent: string) => string[]} keysOf
+ * @param {LockPackages} packages
+ */
 function limitToCopiesReached(name, instances, keysOf, packages) {
+  /** @type {Map<string, ReturnType<typeof installedCopies>>} */
   const copiesByParent = new Map();
   for (const i of instances) {
     if (!isPinnableInstance(i) || i.parentName == null || !i.parentVersion) continue;
@@ -185,6 +262,7 @@ function limitToCopiesReached(name, instances, keysOf, packages) {
     if (!instances.some((o) => o.parentName === parent && o.parentVersion !== parentVersion)) continue;
     let copies = copiesByParent.get(parent);
     if (!copies) copiesByParent.set(parent, (copies = installedCopies(packages, parent)));
+    /** @param {string} version */
     const covered = (version) =>
       keysOf(parent).some((k) => {
         const spec = overrideKeySpec(k);
@@ -218,15 +296,33 @@ function limitToCopiesReached(name, instances, keysOf, packages) {
 // instance records why as `pinRefusal`, which makes it unpinnable. The tool used
 // to write such pins: npm then either ignored them while the tool reported them
 // applied, or failed the install.
+/**
+ * @param {string} name
+ * @param {PinInstance[]} instances
+ * @param {Overrides | null | undefined} overrides
+ * @param {LockPackages | null | undefined} packages
+ */
 function markPinRefusals(name, instances, overrides, packages) {
+  /** @type {Overrides} */
   const existing = overrides && typeof overrides === 'object' ? overrides : {};
+  /** @param {string} parent */
   const keysOf = (parent) => Object.keys(existing).filter((k) => overrideKeyName(k) === parent);
+  /**
+   * @param {string} key
+   * @returns {OverrideObject}
+   */
   const bucketOf = (key) => (existing[key] && typeof existing[key] === 'object' ? existing[key] : {});
 
   if (packages) limitToCopiesReached(name, instances, keysOf, packages);
 
   const pins = instances
-    .filter((i) => i.parentName != null && isPinnableInstance(i))
+    .filter(
+      /**
+       * @param {PinInstance} i
+       * @returns {i is NamedPinInstance}
+       */
+      (i) => i.parentName != null && isPinnableInstance(i)
+    )
     .map((i) => ({ i, key: parentOverrideKey(instances, i), version: i.safeCandidates[defaultScopedChoiceIndex(i)] }));
 
   // Refusals that hold whatever else gets staged: the key's form clashes with an
@@ -251,6 +347,7 @@ function markPinRefusals(name, instances, overrides, packages) {
   const live = pins.filter((p) => !p.i.pinRefusal && p.key !== p.i.parentName);
   for (const pin of live) {
     const parent = pin.i.parentName;
+    /** @type {Map<string, OverrideObject>} */
     const layout = new Map(keysOf(parent).filter((k) => k !== parent).map((k) => [k, bucketOf(k)]));
     for (const p of live) {
       if (p.i.parentName === parent) layout.set(p.key, { ...(layout.get(p.key) || {}), [name]: p.version });
@@ -288,8 +385,13 @@ function markPinRefusals(name, instances, overrides, packages) {
  * Returns Map<topLevelOverrideKey, { mandates: [{ name, mandated, found }] }>,
  * keyed so `collectRemovableOverrides` can gate on it directly. `found` lists
  * the offending edges: { parentName, parentVersion, path, installedVersion }.
+ *
+ * @param {LockPackages | null | undefined} packages
+ * @param {Overrides | null | undefined} overrides
+ * @returns {Map<string, UnappliedOverride>}
  */
 function unappliedOverrides(packages, overrides) {
+  /** @type {Map<string, UnappliedOverride>} */
   const out = new Map();
   if (!packages || !overrides || typeof overrides !== 'object') return out;
 
@@ -298,6 +400,7 @@ function unappliedOverrides(packages, overrides) {
   // have both. Skips the "" root, and any entry with no `version` of its own:
   // a workspace link is versionless, and comparing `undefined` to a mandate
   // would invent a finding for every workspace in the project.
+  /** @type {Map<string, string[]>} */
   const pathsByName = new Map();
   for (const [pkgPath, info] of Object.entries(packages)) {
     if (!pkgPath || !info || typeof info !== 'object' || !info.version || info.link) continue;
@@ -308,6 +411,12 @@ function unappliedOverrides(packages, overrides) {
     paths.push(pkgPath);
   }
 
+  /**
+   * @param {string} key
+   * @param {string} name
+   * @param {string} mandated
+   * @param {UnappliedEdge[]} found
+   */
   const add = (key, name, mandated, found) => {
     if (found.length === 0) return;
     let entry = out.get(key);
@@ -316,7 +425,13 @@ function unappliedOverrides(packages, overrides) {
   };
 
   // A top-level pin governs every copy of the package.
+  /**
+   * @param {string} key
+   * @param {string} name
+   * @param {string} pin
+   */
   const checkTopLevel = (key, name, pin) => {
+    /** @type {UnappliedEdge[]} */
     const found = [];
     for (const pkgPath of pathsByName.get(name) || []) {
       const installedVersion = versionAt(packages, pkgPath);
@@ -329,8 +444,14 @@ function unappliedOverrides(packages, overrides) {
 
   // A scoped pin governs only the edges leaving that parent. The parent key is
   // also the entry's identity, so it doubles as the map key.
+  /**
+   * @param {string} parentKey
+   * @param {string} name
+   * @param {string} pin
+   */
   const checkScoped = (parentKey, name, pin) => {
     const parent = splitParentKey(parentKey);
+    /** @type {UnappliedEdge[]} */
     const found = [];
     for (const parentPath of pathsByName.get(parent.name) || []) {
       const info = packages[parentPath];
@@ -403,7 +524,14 @@ function unappliedOverrides(packages, overrides) {
 // divergent-range local dependency can still take a pin aimed at the root. The
 // fix is to classify a non-manifest, non-`node_modules` path as a named parent
 // (its own `overrides` key) instead of a root edge.
+/**
+ * @param {LockPackages} packages
+ * @param {string} name
+ * @param {Advisory[]} advisoryList
+ * @param {string[]} publishedSafe
+ */
 function collectPinInstances(packages, name, advisoryList, publishedSafe) {
+  /** @type {RawPinInstance[]} */
   const instances = [];
   for (const [parentPath, info] of Object.entries(packages || {})) {
     if (!info || typeof info !== 'object') continue;
@@ -438,6 +566,11 @@ function collectPinInstances(packages, name, advisoryList, publishedSafe) {
 // downgrading any of them. If any instance is already safe (a global pin would
 // disturb it) or the vulnerable instances need different safe versions, we go
 // scoped.
+/**
+ * @param {RawPinInstance[]} instances
+ * @param {string[]} publishedSafe
+ * @returns {Vuln['pinStrategy']}
+ */
 function decidePinStrategy(instances, publishedSafe) {
   if (instances.length === 0) return 'global';
   if (new Set(instances.map((i) => i.installedVersion)).size <= 1) return 'global';
@@ -460,6 +593,7 @@ function decidePinStrategy(instances, publishedSafe) {
 // parent@version to a different child version than another copy of the *same*
 // parent@version. The key never leaves this module; "#" is only a separator that
 // can't appear in a package name (the written keys come from writeOverrideSpec).
+/** @param {PinInstance} i */
 function overrideKeyOf(i) {
   return i.parentName == null ? '#root' : `${i.parentName}#${i.parentVersion ?? ''}`;
 }
@@ -470,7 +604,12 @@ function overrideKeyOf(i) {
 // so they become one row pinned to a single version that fixes every vulnerable
 // copy without downgrading any of them. Instances with distinct keys (including
 // the same parent name at *different* versions) are left untouched.
+/**
+ * @param {RawPinInstance[]} instances
+ * @param {Set<string> | null} manifestPaths
+ */
 function mergeInstancesByOverrideKey(instances, manifestPaths) {
+  /** @type {Map<string, RawPinInstance[]>} */
   const groups = new Map();
   for (const i of instances) {
     const key = overrideKeyOf(i);
@@ -478,6 +617,7 @@ function mergeInstancesByOverrideKey(instances, manifestPaths) {
     if (!group) groups.set(key, (group = []));
     group.push(i);
   }
+  /** @type {PinInstance[]} */
   const merged = [];
   for (const copies of groups.values()) {
     if (copies.length === 1) {
@@ -507,6 +647,7 @@ function mergeInstancesByOverrideKey(instances, manifestPaths) {
     // Pin no lower than the highest installed copy so none is downgraded, and
     // only to a version safe for every copy.
     const floor = maxVersion(copies.map((c) => c.installedVersion));
+    /** @type {Set<string>} */
     const candidateSet = new Set();
     if (!conflict) for (const c of copies) for (const v of c.safeCandidates || []) candidateSet.add(v);
     const safeCandidates = [...candidateSet]
@@ -526,6 +667,7 @@ function mergeInstancesByOverrideKey(instances, manifestPaths) {
   return merged;
 }
 
+/** @param {Advisory | undefined} advisory */
 function advisoryUrl(advisory) {
   if (advisory && advisory.url) return advisory.url;
   if (advisory && advisory.github_advisory_id) {
@@ -540,7 +682,15 @@ function advisoryUrl(advisory) {
 // (`ok`) and resolve every version its dependents would fall back to. We never
 // flag when we couldn't check or resolve, to avoid suggesting the removal of an
 // override that's still protecting the tree.
+/**
+ * @param {Map<string, OverrideInfo>} overrideInfo
+ * @param {boolean} ok
+ * @param {Map<string, Advisory[]>} advisories
+ * @param {Map<string, UnappliedOverride>} unapplied
+ * @returns {Map<string, RemovableOverride>}
+ */
 function collectRemovableOverrides(overrideInfo, ok, advisories, unapplied) {
+  /** @type {Map<string, RemovableOverride>} */
   const removable = new Map();
   for (const [name, info] of overrideInfo) {
     // An override the tree never applied can't be judged by looking at the tree.
@@ -570,15 +720,30 @@ function collectRemovableOverrides(overrideInfo, ok, advisories, unapplied) {
 // report, F1). Not matched to edges, since npm matches a key by declared range,
 // not by installed version (docs/2026-10-11-spike-override-keys.md, Finding 4).
 // Null when some entry can't be judged: a "$" reference, or `name` nested deeper.
+/**
+ * @param {Overrides | null | undefined} overrides
+ * @param {string} name
+ * @param {(pin: string) => boolean} isSafe
+ * @returns {HeldPin[] | null}
+ */
 function unsafePinsOf(overrides, name, isSafe) {
   if (!overrides || typeof overrides !== 'object') return [];
+  /** @type {HeldPin[]} */
   const pins = [];
   let unreadable = false;
+  /**
+   * @param {string} key
+   * @param {OverrideValue | undefined} pin
+   */
   const consider = (key, pin) => {
     if (typeof pin !== 'string') return;
     if (pin.startsWith('$')) unreadable = true;
     else if (!isSafe(pin)) pins.push({ key, pin });
   };
+  /**
+   * @param {OverrideValue} value
+   * @returns {boolean}
+   */
   const mentions = (value) =>
     !!value && typeof value === 'object' &&
     Object.entries(value).some(([k, v]) => overrideKeyName(k) === name || mentions(v));
@@ -607,14 +772,20 @@ function unsafePinsOf(overrides, name, isSafe) {
  * Given the direct descriptors and the installed tree (from the lockfile),
  * check every relevant version against npm's advisory database.
  *
- * @returns {Promise<{ offline, vulns, removableOverrides, unappliedOverrides }>}
- *   Each vuln entry: { advisories, severity, cve, url, affectedRange,
- *   firstPatched, safeVersions, instances, pinStrategy, pinConflict,
- *   inRangeFix, heldBy }.
- *   `removableOverrides` maps an existing `overrides` package name ->
- *   { pin, reason: 'dead' | 'redundant' }.
- *   `unappliedOverrides` maps an `overrides` key -> { mandates } for pins the
- *   installed tree does not reflect (see `unappliedOverrides` above).
+ * @param {{
+ *   descriptors?: Pick<Descriptor, 'name' | 'range'>[],
+ *   installed?: InstalledTree | null,
+ *   overrides?: Overrides | null,
+ *   manifestPaths?: readonly string[] | null,
+ * }} [project]
+ * @param {{
+ *   fetchPackageMeta?: (name: string) => Promise<PackageMeta | null>,
+ *   fetchBulkAdvisories?: (versionsByName: Record<string, Iterable<string>>) => Promise<BulkAdvisories>,
+ * }} [deps]
+ * @returns {Promise<Required<AuditResult>>}
+ *   `removableOverrides` maps an existing `overrides` package name to why it can
+ *   go. `unappliedOverrides` maps an `overrides` key to the pins the installed
+ *   tree does not reflect (see `unappliedOverrides` above).
  */
 export async function computeVulnerabilities(
   { descriptors = [], installed = null, overrides = {}, manifestPaths = null } = {},
@@ -639,8 +810,14 @@ export async function computeVulnerabilities(
   // safe version is not vulnerable, however bad the version its dependents would
   // fall back to. Merged, it would resurface in "Override to a safe version"
   // labelled with a version installed nowhere in the tree.
+  /** @type {Record<string, Set<string>>} */
   const versionsByName = {};
+  /** @type {Record<string, Set<string>>} */
   const probeVersions = {};
+  /**
+   * @param {Record<string, Set<string>>} bucket
+   * @returns {(name: string, version: string | null | undefined) => void}
+   */
   const adder = (bucket) => (name, version) => {
     if (!version) return;
     if (!bucket[name]) bucket[name] = new Set();
@@ -676,9 +853,13 @@ export async function computeVulnerabilities(
   // key ("pkg@^1") is a selector, not a dependency name: looking it up verbatim
   // would misclassify an active pin as dead. Leave these entries untouched until
   // removability can evaluate selector intersections.
-  const overrideEntries = Object.entries(overrides || {}).filter(
-    ([name, pin]) => bareOverrideKeyName(name) && typeof pin === 'string' && !pin.startsWith('$')
+  // The filter keeps only string pins.
+  const overrideEntries = /** @type {[string, string][]} */ (
+    Object.entries(overrides || {}).filter(
+      ([name, pin]) => bareOverrideKeyName(name) && typeof pin === 'string' && !pin.startsWith('$')
+    )
   );
+  /** @type {Map<string, OverrideInfo>} */
   const overrideInfo = new Map();
   await mapWithConcurrency(overrideEntries, CONCURRENCY, async ([name, pin]) => {
     // Without a lockfile we can't see the tree, so we can't conclude the
@@ -698,6 +879,7 @@ export async function computeVulnerabilities(
       overrideInfo.set(name, { pin, ranges, candidates: [], resolvable: false });
       return;
     }
+    /** @type {string[]} */
     const candidates = [];
     let resolvable = true;
     for (const r of ranges) {
@@ -727,16 +909,19 @@ export async function computeVulnerabilities(
 
   const { ok, advisories } = await getAdvisories(queryVersions);
 
+  // Every name from here on comes out of `advisories`, so looking it up there never misses.
   const vulnNames = [...advisories.keys()].filter((name) => {
     const versions = versionsByName[name] ? [...versionsByName[name]] : [];
-    return versions.some((v) => matchesAny(v, advisories.get(name)));
+    return versions.some((v) => matchesAny(v, /** @type {Advisory[]} */ (advisories.get(name))));
   });
 
   // The bulk endpoint returns only advisories affecting a submitted version.
   // A fix for the current advisory can have a different advisory of its own,
   // so audit candidate versions too before calling them safe. Keep this query
   // separate: candidate-only advisories must not flag the installed tree.
+  /** @type {Record<string, string[]>} */
   const candidatesByName = {};
+  /** @type {Record<string, string[]>} */
   const publishedByName = {};
   await mapWithConcurrency(vulnNames, CONCURRENCY, async (name) => {
     const meta = await getMeta(name);
@@ -744,17 +929,19 @@ export async function computeVulnerabilities(
     publishedByName[name] = meta.versions;
     const candidates = meta.versions
       .filter((v) => semver.valid(v) && !semver.prerelease(v))
-      .filter((v) => !matchesAny(v, advisories.get(name)))
+      .filter((v) => !matchesAny(v, /** @type {Advisory[]} */ (advisories.get(name))))
       .sort(semver.compare);
     if (candidates.length > 0) candidatesByName[name] = candidates;
   });
+  /** @type {BulkAdvisories} */
   const { ok: candidatesOk, advisories: candidateAdvisories } = Object.keys(candidatesByName).length > 0
     ? await getAdvisories(candidatesByName)
     : { ok: true, advisories: new Map() };
 
+  /** @type {Map<string, Vuln>} */
   const vulns = new Map();
   await mapWithConcurrency(vulnNames, CONCURRENCY, async (name) => {
-    const list = advisories.get(name);
+    const list = /** @type {Advisory[]} */ (advisories.get(name));
     const versions = versionsByName[name] ? [...versionsByName[name]] : [];
     const flagged = versions.filter((v) => matchesAny(v, list));
     if (flagged.length === 0) return;
@@ -819,6 +1006,8 @@ export async function computeVulnerabilities(
     // This is the question collectRemovableOverrides asks of a pin, asked
     // before one is written (the 2026-10-17 field report, F2).
     const published = publishedByName[name] || [];
+    // Queried with where a range lands, which is null when it admits nothing: never safe.
+    /** @type {Set<string | null>} */
     const safeSet = new Set(publishedSafe);
     const inRangeFix =
       rawInstances.length > 0 &&
@@ -829,7 +1018,7 @@ export async function computeVulnerabilities(
 
     vulns.set(name, {
       advisories: matching,
-      severity,
+      severity: /** @type {Severity} */ (severity), // normalized to a SEVERITY level above
       cve: advisoryCve(primary),
       url: advisoryUrl(primary),
       affectedRange: (primary && primary.vulnerable_versions) || '',
