@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Latest no longer offers a downgrade.** npm's `latest` dist-tag can be older
+  than what a declared range already allows, for example when a newer release
+  line is published under another tag, as `electron-builder`'s `v26` was. The
+  Latest column showed that older version, and `l` would write it. yarn behaves
+  the same way, so this is a deliberate divergence. A package with nothing newer
+  now drops out of the list, as the README already said it would.
+
 ## 2.2.0 — 2026-10-12
 
 ### Added

@@ -100,18 +100,18 @@ export async function fetchSuggestions(descriptor, deps = {}) {
   const meta = await getMeta(name);
   if (!meta) return null;
 
+  const referenceRange = !compound && semver.valid(range) ? `^${range}` : range;
+  const latest = meta.distTags && meta.distTags.latest;
+  const resolved = semver.maxSatisfying(meta.versions, referenceRange, { includePrerelease: false });
   let rangeResolution = null;
   let latestResolution = null;
   if (compound) {
     // Collapse to a caret: Range = the highest version the compound range
     // already allows, Latest = the newest published version. Both re-formatted
     // with `^`, since the original range carries no single modifier.
-    const best = semver.maxSatisfying(meta.versions, range, { includePrerelease: false });
-    rangeResolution = best ? `^${best}` : null;
-    const latest = meta.distTags && meta.distTags.latest;
+    rangeResolution = resolved ? `^${resolved}` : null;
     latestResolution = latest ? `^${latest}` : null;
   } else {
-    const referenceRange = semver.valid(range) ? `^${range}` : range;
     try {
       rangeResolution = resolveAgainstMeta(meta, range, referenceRange);
     } catch {
@@ -123,6 +123,14 @@ export async function fetchSuggestions(descriptor, deps = {}) {
       latestResolution = null;
     }
   }
+
+  // npm's `latest` tag can trail what the range already allows: a release line
+  // published under another tag, as electron-builder's `v26` was. yarn offers it
+  // anyway. Here it is dropped, because a Latest below the range's own resolution
+  // is a downgrade, and bulk `l` would write it. A dist-tag range (`beta`) follows
+  // its tag rather than a version, so it isn't compared. Documented in the
+  // README's Notes.
+  if (resolved && latest && semver.valid(latest) && semver.lt(latest, resolved)) latestResolution = null;
 
   const suggestions = [
     { key: 'current', value: null, spans: [{ text: range, color: null }] },
