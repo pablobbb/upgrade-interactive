@@ -10,10 +10,18 @@ npm ci
 npm test              # unit + integration
 npm run test:unit     # test/unit/*.test.mjs
 npm run test:integration
+npm run typecheck     # JSDoc types, checked by tsc
 ```
 
-CI runs `npm test` on Node 18, 20, 22 and 24. The package declares
+CI runs `npm test` on Node 18, 20, 22, 24 and 26. The package declares
 `engines.node >= 18`, so don't reach for syntax or APIs newer than that.
+
+Types are JSDoc in the `.js` sources, checked by `tsc` under `strict`. There is
+no build step: the package ships `src/` as written. Shapes shared between
+modules live in `src/types.d.ts`, and a test fixture that sets only some fields
+wraps them in a helper from `test/typed-fixtures.mjs`, which checks the fields it
+sets and fills in nothing. The Node types are pinned to 18, so an API newer than
+that fails the check. CI runs it once, in its own job.
 
 ## Keep the README in sync — every change
 

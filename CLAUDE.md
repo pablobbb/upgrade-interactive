@@ -6,6 +6,11 @@ support. Source lives in `src/`, unit tests in `test/unit/` (`npm run test:unit`
 integration tests in `test/integration/` plus the TUI smoke test
 `test/app.test.mjs` (`npm run test:integration`). `npm test` runs both.
 
+Types are JSDoc in the `.js` sources, checked by `tsc` under `strict` with no
+build step (`npm run typecheck`, also a CI job). Shapes shared between modules
+live in `src/types.d.ts`. Keep the check at zero errors. A partial test fixture
+goes through a helper in `test/typed-fixtures.mjs` rather than a cast.
+
 `test/app.test.mjs` drives the real TUI, and parts of it hit the live registry.
 Never gate an assertion on a fixed `wait(ms)` there — poll with `waitForFrame` /
 `rowsLoaded`, and inject `loadSuggestions` / `runAudit` when the *ordering* of
