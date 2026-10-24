@@ -7,6 +7,8 @@ import semver from 'semver';
 import { computeVulnerabilities } from '../../src/vulnerabilities.js';
 import { defaultOverrideSelection, isPinBlocked } from '../../src/override-select.js';
 import { loadManifest, applyUpgrades } from '../../src/package-file.js';
+import { pinBlockedNote } from '../../src/components/Row.js';
+import { FIXTURES_DIR, stageFixture, auditFixture, readJson } from '../fixture-helpers.mjs';
 
 const dirs = [];
 afterEach(async () => {
@@ -214,10 +216,71 @@ describe('override safety — pins npm would drop or reject', () => {
   it('refuses two copies of a parent pinned to the same version beside a copy left alone', async () => {
     const v = (await computeVulnerabilities({ installed: threeParents() }, deps())).vulns.get('child');
     assert.deepEqual(refusals(v), {
-      '1.0.0': { kind: 'shadowed', by: 'parent@1.1.0' },
-      '1.1.0': { kind: 'shadowed', by: 'parent@1.0.0' },
+      '1.0.0': { kind: 'shadowed', by: 'parent@1.1.0', proposed: true, key: 'parent@1.0.0', name: 'child', version: '1.1.0' },
+      '1.1.0': { kind: 'shadowed', by: 'parent@1.0.0', proposed: true, key: 'parent@1.1.0', name: 'child', version: '1.1.0' },
     });
     assert.equal(isPinBlocked(v), true);
+  });
+
+  // Neither key is in package.json: the note must not read as "an existing key
+  // is in the way" (the 2026-10-17 field report, F1 c). Every dependent's
+  // newest in-range child is safe, so re-resolving fixes it with no pin.
+  it('names both proposed pins in the note, not an existing key', async () => {
+    const v = (await computeVulnerabilities({ installed: threeParents() }, deps())).vulns.get('child');
+    assert.equal(
+      pinBlockedNote(v, 'child'),
+      'ⓘ npm keeps only one of the identical pins "parent@1.0.0" and "parent@1.1.0" (child 1.1.0) — run npm update child instead'
+    );
+  });
+
+  it('calls an existing key the user\'s own override', async () => {
+    const overrides = { 'parent@2.0.0': { other: '1.0.0' } };
+    const installed = { ...threeParents(), packages: { ...threeParents().packages } };
+    delete installed.packages['node_modules/x/node_modules/parent'];
+    const v = (await computeVulnerabilities({ installed, overrides }, deps())).vulns.get('child');
+    assert.equal(
+      pinBlockedNote(v, 'child'),
+      'ⓘ npm would ignore a pin beside your override "parent@2.0.0" — run npm update child instead'
+    );
+  });
+
+  // child 1.2.0, the newest ^1.0.0, is vulnerable too: only a pin at 1.1.0
+  // fixes the parent@1.x copies, so there is no route around the refusal.
+  it('leaves the overrides to the user when re-resolving would not fix it', async () => {
+    const reg = registry(['1.0.0', '1.1.0', '1.2.0', '2.0.0'], [
+      currentAdvisory,
+      { vulnerable_versions: '>=1.2.0 <2.0.0', severity: 'high' },
+    ]);
+    const v = (await computeVulnerabilities({ installed: threeParents() }, reg)).vulns.get('child');
+    assert.equal(v.inRangeFix, false);
+    assert.equal(
+      pinBlockedNote(v, 'child'),
+      'ⓘ npm keeps only one of the identical pins "parent@1.0.0" and "parent@1.1.0" (child 1.1.0) — edit overrides by hand'
+    );
+  });
+
+  // The shape of the 2026-10-17 field report's brace-expansion: two copies of a
+  // parent whose existing keys both pin the vulnerable child. Refusing a new
+  // pair is right; the way out is to drop those pins and re-resolve.
+  it('names the user\'s own pins that hold the vulnerable version, and the way out', async () => {
+    const overrides = { 'parent@1.0.0': { child: '1.0.0' }, 'parent@1.1.0': { child: '1.0.0' } };
+    const v = (await computeVulnerabilities({ installed: threeParents(), overrides }, deps())).vulns.get('child');
+    assert.equal(isPinBlocked(v), true);
+    assert.deepEqual(v.heldBy, [
+      { key: 'parent@1.0.0', pin: '1.0.0' },
+      { key: 'parent@1.1.0', pin: '1.0.0' },
+    ]);
+    assert.equal(
+      pinBlockedNote(v, 'child'),
+      'ⓘ your overrides "parent@1.0.0" and "parent@1.1.0" pin child to 1.0.0 — remove those pins, then run npm update child'
+    );
+  });
+
+  it('offers no route when an override can\'t be judged', async () => {
+    const overrides = { 'parent@1.0.0': { child: '$child' } };
+    const v = (await computeVulnerabilities({ installed: threeParents(), overrides }, deps())).vulns.get('child');
+    assert.equal(v.heldBy, null);
+    assert.match(pinBlockedNote(v, 'child'), /— edit overrides by hand$/);
   });
 
   it('pins both copies when their versions differ', async () => {
@@ -304,5 +367,28 @@ describe('override safety — pins that reach another copy of the parent', () =>
     const overrides = { 'parent@1.2.0': { child: '1.2.0' } };
     const v = await audit(overlap({ range: '>=1.0.0 <1.2.0', child: '1.2.0' }), overrides);
     assert.deepEqual(defaultOverrideSelection(v).scoped.map((p) => [p.parentSelector, p.version]), [['parent@1.0.0', '1.1.0']]);
+  });
+});
+
+// The 2026-10-17 field report's brace-expansion, on an npm-built lockfile: the
+// user's own identical keys hold both 2.x copies on a vulnerable version.
+describe('override safety — overrides that hold a vulnerable version', () => {
+  it('names the held pins and the in-range way out on a real lockfile', async () => {
+    const fixtureDir = path.join(FIXTURES_DIR, 'held-by-scoped-pins');
+    const work = await stageFixture(fixtureDir);
+    dirs.push(work);
+    const { vulns } = await auditFixture(work, await readJson(path.join(fixtureDir, 'registry.snapshot.json')));
+    const v = vulns.get('brace-expansion');
+
+    assert.equal(isPinBlocked(v), true, 'two identical new pins would be refused');
+    assert.equal(v.inRangeFix, true);
+    assert.deepEqual(v.heldBy, [
+      { key: 'minimatch@5.1.9', pin: '2.1.4' },
+      { key: 'minimatch@9.0.9', pin: '2.1.4' },
+    ]);
+    assert.equal(
+      pinBlockedNote(v, 'brace-expansion'),
+      'ⓘ your overrides "minimatch@5.1.9" and "minimatch@9.0.9" pin brace-expansion to 2.1.4 — remove those pins, then run npm update brace-expansion'
+    );
   });
 });

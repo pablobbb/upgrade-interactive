@@ -1,0 +1,8 @@
+{
+  "minimatch@5.1.9": {
+    "brace-expansion": "2.1.4"
+  },
+  "minimatch@9.0.9": {
+    "brace-expansion": "2.1.4"
+  }
+}

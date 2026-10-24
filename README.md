@@ -33,7 +33,9 @@ Requires Node 18+ and an interactive terminal.
   link, affected range and first fixed version.
 - **Fix them with `o`**: pins a safe version via npm `overrides` — per dependent
   when the package is installed at several versions, or a range bump when it's
-  one of your direct dependencies.
+  one of your direct dependencies. When no pin can be written, the row says why.
+  If your own overrides hold the vulnerable version, it names them and the
+  `npm update <pkg>` that fixes it once they're removed.
 - **Clean up with `x`**: removes an override that's no longer needed.
 - In a workspace repo, **see overrides npm never applied** (see [Notes](#notes)).
 

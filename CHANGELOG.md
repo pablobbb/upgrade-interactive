@@ -11,6 +11,28 @@
   the same way, so this is a deliberate divergence. A package with nothing newer
   now drops out of the list, as the README already said it would.
 
+### Fixed
+
+- **A blocked row names the overrides that hold the vulnerable version, and the
+  way out.** When the tool refused to write new per-dependent pins (npm keeps
+  only one of two identical `parent@version` pins), the row said no fix could be
+  written. That held even when the cause was the user's own overrides pinning the
+  vulnerable version, and a safe version sat inside every dependent's range. The
+  row now names those overrides and says to remove them, then run
+  `npm update <pkg>`. With nothing to remove, it suggests `npm update <pkg>`
+  directly. Both steps are needed: measured on npm 10.9.9 and 11.13.0,
+  `npm update` honours the pins it is left with, and `npm install` alone keeps
+  the locked version. The tool still writes nothing for these rows
+  (`docs/2026-10-17-field-report.md`, F1).
+- **A refused pin's reason names the right key.** `npm would ignore a pin beside
+  "minimatch@5.1.9"` read as if an existing key were in the way, when the clash
+  was between two pins the tool itself was proposing and no such key existed.
+  Such a refusal now names both proposed pins and the version they share. An
+  existing key is called "your override".
+- **A partial fix shows as partial.** Per-dependent pins covering only some of
+  the vulnerable dependents read `→ 2 scoped pins`, like a full fix. The row now
+  adds how many dependents are still vulnerable.
+
 ## 2.2.0 — 2026-10-12
 
 ### Added
