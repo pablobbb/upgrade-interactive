@@ -21,14 +21,18 @@
 //   every release measured.
 import semver from 'semver';
 
+/** @import { OverrideValue } from './types.js' */
+
 // The package an `overrides` key names: "pkg@1.0.0" and "@scope/pkg" both name
 // a package, and index 0 is a scope, not a selector separator.
+/** @param {string} key */
 export function overrideKeyName(key) {
   const at = key.lastIndexOf('@');
   return at > 0 ? key.slice(0, at) : key;
 }
 
 // The selector of a qualified key ("1.0.0" in "pkg@1.0.0"), or null when bare.
+/** @param {string} key */
 export function overrideKeySpec(key) {
   const at = key.lastIndexOf('@');
   return at > 0 ? key.slice(at + 1) : null;
@@ -36,6 +40,11 @@ export function overrideKeySpec(key) {
 
 // The version an entry pins, as npm reads it: a string value, an object's "."
 // value, or else the key's own selector ("*" for a bare key).
+/**
+ * @param {string} key
+ * @param {OverrideValue | undefined} value
+ * @returns {string}
+ */
 function pinnedSpec(key, value) {
   if (typeof value === 'string') return value || '*';
   if (value && typeof value === 'object' && typeof value['.'] === 'string') return value['.'] || '*';
@@ -45,6 +54,10 @@ function pinnedSpec(key, value) {
 // npm's test for whether two sibling override sets conflict: some package is
 // pinned in both, to ranges that don't intersect. References ("$pkg") and
 // non-semver specs never conflict, and a string value pins only the parent.
+/**
+ * @param {OverrideValue | undefined} a
+ * @param {OverrideValue | undefined} b
+ */
 export function overrideBucketsConflict(a, b) {
   if (!a || typeof a !== 'object' || !b || typeof b !== 'object') return false;
   for (const [key, value] of Object.entries(a)) {
@@ -63,6 +76,11 @@ export function overrideBucketsConflict(a, b) {
 // the key to the root's own edge whenever that spec admits the key's selector
 // (or isn't a semver range at all), and then rejects the edge as overridden
 // unless the pinned value is the identical string.
+/**
+ * @param {string} key
+ * @param {OverrideValue | undefined} bucket
+ * @param {string | null} rootSpec
+ */
 export function risksEoverride(key, bucket, rootSpec) {
   const selector = overrideKeySpec(key);
   if (rootSpec == null || selector == null) return false;

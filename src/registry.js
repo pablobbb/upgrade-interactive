@@ -1,9 +1,13 @@
 // Minimal npm registry client.
 // Uses the "abbreviated" metadata format (much smaller / faster than full docs).
 
+/** @import { Advisory, BulkAdvisories, PackageMeta } from './types.js' */
+
 const REGISTRY = 'https://registry.npmjs.org';
+/** @type {Map<string, Promise<PackageMeta | null>>} */
 const cache = new Map();
 
+/** @param {string} name */
 function encodePackageName(name) {
   // Scoped packages (@scope/name) keep the slash un-encoded for the
   // registry.npmjs.org convention, everything else is encoded normally.
@@ -17,6 +21,9 @@ function encodePackageName(name) {
 /**
  * Fetch { versions: string[], distTags: Record<string,string> } for a package.
  * Returns null if the package can't be resolved (404, network error, etc).
+ *
+ * @param {string} name
+ * @returns {Promise<PackageMeta | null>}
  */
 export async function fetchPackageMeta(name) {
   const cached = cache.get(name);
@@ -31,7 +38,9 @@ export async function fetchPackageMeta(name) {
         },
       });
       if (!res.ok) return null;
-      const json = await res.json();
+      const json = /** @type {{ versions?: Record<string, unknown>, 'dist-tags'?: Record<string, string> }} */ (
+        await res.json()
+      );
       const versions = Object.keys(json.versions || {});
       const distTags = json['dist-tags'] || {};
       if (versions.length === 0) return null;
@@ -50,13 +59,14 @@ export async function fetchPackageMeta(name) {
  * advisories endpoint (the same one `npm audit` uses; no auth required).
  *
  * @param {Record<string, Iterable<string>>} versionsByName
- * @returns {Promise<{ ok: boolean, advisories: Map<string, object[]> }>}
+ * @returns {Promise<BulkAdvisories>}
  *   `advisories` maps package name -> advisory objects that affect at least one
  *   submitted version. `ok` is false when a network/HTTP error occurred, so
  *   callers can distinguish "no vulnerabilities" from "couldn't check".
  */
 export async function fetchBulkAdvisories(versionsByName) {
   const names = Object.keys(versionsByName);
+  /** @type {Map<string, Advisory[]>} */
   const advisories = new Map();
   if (names.length === 0) return { ok: true, advisories };
 
@@ -65,6 +75,7 @@ export async function fetchBulkAdvisories(versionsByName) {
 
   for (let i = 0; i < names.length; i += CHUNK) {
     const slice = names.slice(i, i + CHUNK);
+    /** @type {Record<string, string[]>} */
     const body = {};
     for (const name of slice) body[name] = Array.from(versionsByName[name]);
 
@@ -82,9 +93,9 @@ export async function fetchBulkAdvisories(versionsByName) {
         ok = false;
         continue;
       }
-      const json = await res.json();
+      const json = /** @type {Record<string, unknown> | null} */ (await res.json());
       for (const [name, list] of Object.entries(json || {})) {
-        if (Array.isArray(list) && list.length > 0) advisories.set(name, list);
+        if (Array.isArray(list) && list.length > 0) advisories.set(name, /** @type {Advisory[]} */ (list));
       }
     } catch {
       ok = false;
@@ -97,6 +108,13 @@ export async function fetchBulkAdvisories(versionsByName) {
 /**
  * Run `worker` over `items` with at most `limit` in flight at once.
  * Calls `onEach(result, item, index)` as each one resolves (out of order).
+ *
+ * @template T, R
+ * @param {readonly T[]} items
+ * @param {number} limit
+ * @param {(item: T, index: number) => Promise<R>} worker
+ * @param {(result: R, item: T, index: number) => void} [onEach]
+ * @returns {Promise<void>}
  */
 export async function mapWithConcurrency(items, limit, worker, onEach) {
   let cursor = 0;

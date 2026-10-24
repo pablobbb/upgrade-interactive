@@ -4,7 +4,12 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-/** Derive a package name from a lockfile path like "node_modules/@scope/name". */
+/** @import { InstalledTree, LockPackages } from './types.js' */
+
+/**
+ * Derive a package name from a lockfile path like "node_modules/@scope/name".
+ * @param {string} pkgPath
+ */
 function nameFromPath(pkgPath) {
   const marker = 'node_modules/';
   const idx = pkgPath.lastIndexOf(marker);
@@ -19,6 +24,9 @@ function nameFromPath(pkgPath) {
  * range-resolved-only checks for direct deps). `packages` is the raw npm
  * lockfile `packages` map, used to see which ranges dependents declare for a
  * package (for spotting no-longer-needed overrides).
+ *
+ * @param {string} cwd
+ * @returns {Promise<InstalledTree | null>}
  */
 export async function loadInstalledVersions(cwd) {
   const filePath = path.join(cwd, 'package-lock.json');
@@ -36,9 +44,11 @@ export async function loadInstalledVersions(cwd) {
     return null;
   }
 
+  /** @type {LockPackages} */
   const packages = json.packages;
   if (!packages || typeof packages !== 'object') return null;
 
+  /** @type {Map<string, Set<string>>} */
   const versions = new Map();
   for (const [pkgPath, info] of Object.entries(packages)) {
     if (!pkgPath || !info || !info.version) continue; // skip the "" root entry
