@@ -6,7 +6,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { colorizeVersionDiff, fetchSuggestions } from '../../src/semver-suggest.js';
 
+/** @import { PackageMeta, Span, Suggestion } from '../../src/types.js' */
+
 // The colored text is what the eye is drawn to; collapse the spans down to it.
+/** @param {Span[]} spans */
 const colored = (spans) => spans.filter((s) => s.color).map((s) => s.text).join('');
 
 describe('colorizeVersionDiff', () => {
@@ -41,11 +44,19 @@ describe('colorizeVersionDiff', () => {
 
 // A registry double: fetchPackageMeta returns the given { versions, distTags }
 // regardless of package name.
+/** @param {PackageMeta} meta */
 function stubMeta(meta) {
   return { fetchPackageMeta: async () => meta };
 }
 
-const valueOf = (suggestions, key) => suggestions.find((s) => s.key === key)?.value ?? null;
+/**
+ * @param {Suggestion[] | null} suggestions
+ * @param {Suggestion['key']} key
+ */
+const valueOf = (suggestions, key) => {
+  assert.ok(suggestions, 'expected suggestions, got none');
+  return suggestions.find((s) => s.key === key)?.value ?? null;
+};
 
 describe('fetchSuggestions — compound ranges collapse to caret', () => {
   it('offers ^highest-in-range and ^latest for an AND range', async () => {

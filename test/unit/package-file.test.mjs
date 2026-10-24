@@ -10,11 +10,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadManifest, applyUpgrades, loadProject, applyProject } from '../../src/package-file.js';
 
+/** @import { OverrideSpec, PackageJson } from '../../src/types.js' */
+
+/** @type {string[]} */
 const tmpDirs = [];
 afterEach(async () => {
   for (const dir of tmpDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
+/** @param {Record<string, string>} files */
 async function project(files) {
   const dir = await mkdtemp(path.join(tmpdir(), 'nui-pkg-'));
   tmpDirs.push(dir);
@@ -24,12 +28,19 @@ async function project(files) {
   return dir;
 }
 
+/**
+ * @param {PackageJson} obj
+ * @param {number | string} [indent]
+ * @param {boolean} [trailingNewline]
+ */
 const pkg = (obj, indent = 2, trailingNewline = true) =>
   JSON.stringify(obj, null, indent) + (trailingNewline ? '\n' : '');
 
+/** @param {string} dir */
 async function readJson(dir) {
   return JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'));
 }
+/** @param {string} dir */
 async function readRaw(dir) {
   return readFile(path.join(dir, 'package.json'), 'utf8');
 }
@@ -45,7 +56,7 @@ describe('loadManifest', () => {
     const m = await loadManifest(dir);
 
     assert.deepEqual(m.descriptors.map((d) => d.name), ['axios', 'chalk', 'zod']);
-    assert.equal(m.descriptors.find((d) => d.name === 'zod').field, 'devDependencies');
+    assert.equal(m.descriptors.find((d) => d.name === 'zod')?.field, 'devDependencies');
   });
 
   it('detects the tab indentation used by the manifest', async () => {
@@ -234,6 +245,7 @@ describe('applyUpgrades', () => {
     const original = pkg({});
     const dir = await project({ 'package.json': original });
     const m = await loadManifest(dir);
+    /** @param {string} parentVersion */
     const pin = (parentVersion) => ({
       parentName: 'pkg-a', parentVersion, parentSelector: `pkg-a@${parentVersion}`, version: '1.3.0',
     });
@@ -607,6 +619,7 @@ describe('applyUpgrades', () => {
     const dir = await project({ 'package.json': original });
     const m = await loadManifest(dir);
 
+    // @ts-expect-error a malformed spec, on purpose
     const res = await applyUpgrades(m, new Map(), { 'dependency-a': { bogus: true } });
 
     assert.equal(res.overrides.length, 0);
@@ -639,14 +652,27 @@ describe('applyUpgrades', () => {
 // --- loadProject / applyProject (workspaces) --------------------------------
 
 // Write a package.json into `dir/rel`, creating directories as needed.
+/**
+ * @param {string} dir
+ * @param {string} rel
+ * @param {PackageJson} obj
+ */
 async function writePkg(dir, rel, obj) {
   const target = path.join(dir, rel);
   await mkdir(target, { recursive: true });
   await writeFile(path.join(target, 'package.json'), pkg(obj), 'utf8');
 }
+/**
+ * @param {string} dir
+ * @param {string} rel
+ */
 async function readJsonAt(dir, rel) {
   return JSON.parse(await readFile(path.join(dir, rel, 'package.json'), 'utf8'));
 }
+/**
+ * @param {string} dir
+ * @param {string} rel
+ */
 async function readRawAt(dir, rel) {
   return readFile(path.join(dir, rel, 'package.json'), 'utf8');
 }
@@ -716,6 +742,7 @@ describe('loadProject', () => {
     const proj = await loadProject(dir, { workspaces: false });
 
     assert.equal(proj.workspaces, null, 'the display scope is narrowed');
+    assert.ok(proj.discovered);
     assert.deepEqual(
       proj.discovered.map((w) => w.relPath),
       ['.', path.join('packages', 'a'), path.join('packages', 'b')],
@@ -788,6 +815,7 @@ describe('loadProject', () => {
 
     const proj = await loadProject(dir);
     const dev = proj.descriptors.find((d) => d.field === 'devDependencies');
+    assert.ok(dev);
     await applyProject(proj, new Map([[dev.id, '^5.0.0']]));
 
     const json = await readJsonAt(dir, '.');
@@ -869,6 +897,18 @@ describe('applyProject', () => {
   // id. These cases are the guarantee that a single-package project still lands
   // on exactly the bytes the pre-workspaces writer produced, across every kind
   // of edit and every formatting variant the writer preserves.
+  /**
+   * @type {{
+   *   what: string,
+   *   json: PackageJson,
+   *   indent?: number | string,
+   *   trailingNewline?: boolean,
+   *   legacy?: Map<string, string>,
+   *   project?: Map<string, string>,
+   *   overrides?: Record<string, OverrideSpec>,
+   *   removals?: string[],
+   * }[]}
+   */
   const standaloneCases = [
     {
       what: 'a devDependencies selection',

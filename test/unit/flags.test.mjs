@@ -3,13 +3,21 @@ import assert from 'node:assert/strict';
 
 import { resolveToggle, resolveToggles, parseWorkspaceOptions, TOGGLES } from '../../src/flags.js';
 
-const specs = Object.entries(TOGGLES); // [ ['install', {onFlag,...}], ... ]
+/** @import { ToggleName, ToggleSpec } from '../../src/flags.js' */
+
+// [ ['install', {onFlag,...}], ... ]. Object.entries types every key as a plain string.
+const specs = /** @type {[ToggleName, ToggleSpec][]} */ (Object.entries(TOGGLES));
 
 // ---------------------------------------------------------------------------
 // resolveToggle — run the same precedence suite against EVERY toggle spec, so
 // --install / --audit / --section are all proven to behave identically.
 // ---------------------------------------------------------------------------
 for (const [name, spec] of specs) {
+  /**
+   * @param {string[]} args
+   * @param {Record<string, string>} [env]
+   * @param {Record<string, unknown> | null} [config]
+   */
   const toggle = (args, env = {}, config = null) =>
     resolveToggle({ args, env, config, ...spec });
 

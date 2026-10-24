@@ -23,13 +23,15 @@ import { computeVulnerabilities } from '../../src/vulnerabilities.js';
 import { loadProject } from '../../src/package-file.js';
 import { manifestPathsOf } from '../../src/summary.js';
 
+/** @type {string[]} */
 const tmpDirs = [];
 afterEach(async () => {
   for (const dir of tmpDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
+/** @param {string} cwd */
 function runNpm(cwd) {
-  return new Promise((resolve) => {
+  return new Promise(/** @param {(result: { ran: boolean, ok: boolean, output: string }) => void} resolve */ (resolve) => {
     execFile(
       'npm',
       ['install', '--package-lock-only', '--no-audit', '--no-fund'],
@@ -108,6 +110,7 @@ describe('local path (file:) dependencies — real npm lockfile shape', () => {
     // properly against controlled advisory data in the unit tests; here the
     // point is only that the real lockfile yields a single-manifest project.
     const installed = await loadInstalledVersions(dir);
+    assert.ok(installed, 'the lockfile loads');
     assert.ok(installed.packages.lib, 'the local package is in the lockfile');
     assert.ok(installed.versions.has('left-pad'), 'its installed versions are still collected');
   });

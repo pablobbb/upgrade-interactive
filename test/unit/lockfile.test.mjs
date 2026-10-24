@@ -7,11 +7,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadInstalledVersions } from '../../src/lockfile.js';
 
+/** @type {string[]} */
 const tmpDirs = [];
 afterEach(async () => {
   for (const dir of tmpDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
+/** @param {unknown} [lock] a lockfile object, raw text, or undefined for none */
 async function projectWithLock(lock) {
   const dir = await mkdtemp(path.join(tmpdir(), 'nui-lock-'));
   tmpDirs.push(dir);
@@ -33,9 +35,10 @@ describe('loadInstalledVersions', () => {
     });
 
     const res = await loadInstalledVersions(dir);
+    assert.ok(res);
 
-    assert.deepEqual([...res.versions.get('chalk')].sort(), ['4.1.2', '5.3.0']);
-    assert.deepEqual([...res.versions.get('@babel/core')], ['7.24.0']);
+    assert.deepEqual([...(res.versions.get('chalk') ?? [])].sort(), ['4.1.2', '5.3.0']);
+    assert.deepEqual([...(res.versions.get('@babel/core') ?? [])], ['7.24.0']);
   });
 
   it('exposes the raw packages map for override analysis', async () => {
@@ -44,8 +47,9 @@ describe('loadInstalledVersions', () => {
     });
 
     const res = await loadInstalledVersions(dir);
+    assert.ok(res);
 
-    assert.equal(res.packages['node_modules/x'].dependencies.y, '^1.0.0');
+    assert.equal(res.packages['node_modules/x'].dependencies?.y, '^1.0.0');
   });
 
   it('skips the root entry when collecting versions', async () => {
@@ -54,6 +58,7 @@ describe('loadInstalledVersions', () => {
     });
 
     const res = await loadInstalledVersions(dir);
+    assert.ok(res);
 
     assert.deepEqual([...res.versions.keys()], ['x']);
   });
@@ -64,6 +69,7 @@ describe('loadInstalledVersions', () => {
     });
 
     const res = await loadInstalledVersions(dir);
+    assert.ok(res);
 
     assert.deepEqual([...res.versions.keys()], ['x']);
   });
@@ -86,12 +92,13 @@ describe('loadInstalledVersions', () => {
     });
 
     const res = await loadInstalledVersions(dir);
+    assert.ok(res);
 
     // Link entries carry no version, so they never pollute the version map...
     assert.equal(res.versions.has('@acme/a'), false);
     // ...while both hoisted and workspace-local installs are collected.
-    assert.deepEqual([...res.versions.get('lodash')], ['4.17.21']);
-    assert.deepEqual([...res.versions.get('left-pad')], ['1.3.0']);
+    assert.deepEqual([...(res.versions.get('lodash') ?? [])], ['4.17.21']);
+    assert.deepEqual([...(res.versions.get('left-pad') ?? [])], ['1.3.0']);
   });
 
   it('returns null when there is no lockfile', async () => {

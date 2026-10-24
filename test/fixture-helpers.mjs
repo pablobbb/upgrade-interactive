@@ -16,8 +16,24 @@ import { loadInstalledVersions } from '../src/lockfile.js';
 import { computeVulnerabilities } from '../src/vulnerabilities.js';
 import { defaultOverrideSelection } from '../src/override-select.js';
 
+/**
+ * @import {
+ *   Advisory, BulkAdvisories, OverrideSpec, PackageMeta, RemovableOverride, Vuln,
+ * } from '../src/types.js'
+ */
+
+/**
+ * A fixture's frozen registry: `registry.snapshot.json`.
+ * @typedef {{ meta: Record<string, PackageMeta>, advisories: Record<string, Advisory[]> }} RegistrySnapshot
+ */
+
 export const FIXTURES_DIR = fileURLToPath(new URL('./fixtures/', import.meta.url));
 
+/**
+ * Parsed JSON, typed by the caller (annotate the variable it lands in).
+ * @param {string} file
+ * @returns {Promise<any>}
+ */
 export async function readJson(file) {
   return JSON.parse(await readFile(file, 'utf8'));
 }
@@ -29,10 +45,17 @@ export async function listFixtures() {
 
 // A registry double backed by a fixture's frozen snapshot (real published
 // versions + real advisories), so tests are offline and deterministic.
+/** @param {RegistrySnapshot} snapshot */
 export function stubFromSnapshot(snapshot) {
   return {
+    /** @param {string} name */
     fetchPackageMeta: async (name) => snapshot.meta[name] || null,
+    /**
+     * @param {Record<string, Iterable<string>>} versionsByName
+     * @returns {Promise<BulkAdvisories>}
+     */
     fetchBulkAdvisories: async (versionsByName) => {
+      /** @type {Map<string, Advisory[]>} */
       const advisories = new Map();
       for (const [name, versions] of Object.entries(versionsByName)) {
         const matching = (snapshot.advisories[name] || []).filter((a) =>
@@ -49,7 +72,9 @@ export function stubFromSnapshot(snapshot) {
 // exactly the defaults the UI's pickers stage — via `defaultOverrideSelection`,
 // the same helper the pickers use for their initial state, so the fixtures
 // assert against the real default rather than a copy that could drift from it.
+/** @param {Map<string, Vuln>} vulns */
 export function overridesFromVulns(vulns) {
+  /** @type {Record<string, OverrideSpec>} */
   const overrides = {};
   for (const [name, vuln] of vulns) {
     const spec = defaultOverrideSelection(vuln);
@@ -62,6 +87,7 @@ export function overridesFromVulns(vulns) {
 // a `.tool-versions` pinned to the running Node so `npm` works when the tests run
 // under a version manager (asdf) in an otherwise unpinned temp dir; harmless in
 // CI, which has no version manager.
+/** @param {string} fixtureDir */
 export async function stageFixture(fixtureDir) {
   const work = await mkdtemp(path.join(tmpdir(), 'nui-fixture-'));
   await copyFile(path.join(fixtureDir, 'manifest.json'), path.join(work, 'package.json'));
@@ -73,6 +99,7 @@ export async function stageFixture(fixtureDir) {
 // The override names the tool would offer to drop (the `x` removal flow): every
 // existing override flagged dead or redundant. Kept (unverifiable / still-needed)
 // overrides are never in this map, so they survive.
+/** @param {Map<string, RemovableOverride> | null | undefined} removableOverrides */
 export function removalsFromRemovable(removableOverrides) {
   return removableOverrides ? [...removableOverrides.keys()] : [];
 }
@@ -81,6 +108,10 @@ export function removalsFromRemovable(removableOverrides) {
 // the computed vulns, the removable existing overrides, and the overrides the
 // installed tree never applied, so callers can build + apply both additions and
 // removals and assert on what npm's own resolution left un-honoured.
+/**
+ * @param {string} work
+ * @param {RegistrySnapshot} snapshot
+ */
 export async function auditFixture(work, snapshot) {
   const manifest = await loadManifest(work);
   // Every fixture is a single-package project, so the root is the only manifest

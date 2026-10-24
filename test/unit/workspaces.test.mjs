@@ -7,6 +7,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expandWorkspaces, findProjectRoot, discoverWorkspaces } from '../../src/workspaces.js';
 
+/** @import { PackageJson } from '../../src/types.js' */
+
+/** @type {string[]} */
 const tmpDirs = [];
 afterEach(async () => {
   for (const dir of tmpDirs.splice(0)) await rm(dir, { recursive: true, force: true });
@@ -14,6 +17,7 @@ afterEach(async () => {
 
 // Build a directory tree from a { relPath: manifestObjectOrNull } spec. A null
 // value creates the directory without a package.json; a string is written raw.
+/** @param {Record<string, PackageJson | string | null>} tree */
 async function scaffold(tree) {
   const root = await mkdtemp(path.join(tmpdir(), 'nui-ws-'));
   tmpDirs.push(root);
@@ -191,6 +195,7 @@ describe('expandWorkspaces', () => {
 
     assert.deepEqual(await expandWorkspaces(root, []), []);
     assert.deepEqual(await expandWorkspaces(root, undefined), []);
+    // @ts-expect-error a malformed `workspaces` field, on purpose
     assert.deepEqual(await expandWorkspaces(root, { nope: 1 }), []);
   });
 
@@ -248,6 +253,7 @@ describe('findProjectRoot', () => {
 
     const found = await findProjectRoot(root);
 
+    assert.ok(found);
     assert.equal(found.rootDir, root);
     assert.deepEqual(found.workspaces.map((w) => w.name), ['a']);
   });
@@ -261,6 +267,7 @@ describe('findProjectRoot', () => {
 
     const found = await findProjectRoot(path.join(root, 'packages', 'a', 'src'));
 
+    assert.ok(found);
     assert.equal(found.rootDir, root);
   });
 
@@ -294,6 +301,7 @@ describe('discoverWorkspaces', () => {
 
     const list = await discoverWorkspaces(root);
 
+    assert.ok(list);
     assert.deepEqual(
       list.map((p) => ({ name: p.name, relPath: p.relPath })),
       [
