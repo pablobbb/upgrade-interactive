@@ -49,7 +49,7 @@ function mergeVersionSets(a, b) {
 function maxVersion(list) {
   let max = null;
   for (const v of list) {
-    if (!semver.valid(v)) continue;
+    if (!v || !semver.valid(v)) continue;
     if (!max || semver.gt(v, max)) max = v;
   }
   return max;
@@ -126,6 +126,12 @@ function resolveInstalledPath(packages, parentPath, name) {
   return null;
 }
 
+// The version of a lockfile entry known to have one: resolveInstalledPath and
+// the unappliedOverrides index only ever yield entries with a version.
+function versionAt(packages, at) {
+  return packages[at].version;
+}
+
 // npm override keys are either a bare package name or a version-qualified
 // "name@range". Only the bare form is understood here: a selector needs
 // range-intersection logic, and guessing at one risks calling a live pin
@@ -154,8 +160,9 @@ function installedCopies(packages, name) {
     if (range == null) continue;
     const at = resolveInstalledPath(packages, from, name);
     if (!at) continue;
-    if (!copies.has(at)) copies.set(at, { path: at, version: packages[at].version, ranges: [] });
-    copies.get(at).ranges.push(range);
+    let copy = copies.get(at);
+    if (!copy) copies.set(at, (copy = { path: at, version: versionAt(packages, at), ranges: [] }));
+    copy.ranges.push(range);
   }
   return [...copies.values()];
 }
@@ -173,24 +180,27 @@ function limitToCopiesReached(name, instances, keysOf, packages) {
   const copiesByParent = new Map();
   for (const i of instances) {
     if (!isPinnableInstance(i) || i.parentName == null || !i.parentVersion) continue;
-    if (!instances.some((o) => o.parentName === i.parentName && o.parentVersion !== i.parentVersion)) continue;
-    if (!copiesByParent.has(i.parentName)) copiesByParent.set(i.parentName, installedCopies(packages, i.parentName));
+    const parent = i.parentName;
+    const parentVersion = i.parentVersion;
+    if (!instances.some((o) => o.parentName === parent && o.parentVersion !== parentVersion)) continue;
+    let copies = copiesByParent.get(parent);
+    if (!copies) copiesByParent.set(parent, (copies = installedCopies(packages, parent)));
     const covered = (version) =>
-      keysOf(i.parentName).some((k) => {
+      keysOf(parent).some((k) => {
         const spec = overrideKeySpec(k);
         return spec != null && semver.validRange(spec) && semver.satisfies(version, spec);
       });
     let fits = i.safeCandidates;
-    for (const copy of copiesByParent.get(i.parentName)) {
-      if (copy.version === i.parentVersion || covered(copy.version)) continue;
-      if (!copy.ranges.some((r) => !semver.validRange(r) || semver.intersects(r, i.parentVersion))) continue;
+    for (const copy of copies) {
+      if (copy.version === parentVersion || covered(copy.version)) continue;
+      if (!copy.ranges.some((r) => !semver.validRange(r) || semver.intersects(r, parentVersion))) continue;
       const range = declaredRangeFor(packages[copy.path], name);
       if (range == null) continue;
       const resolved = resolveInstalledPath(packages, copy.path, name);
       const floor = resolved ? packages[resolved].version : null;
       fits = fits.filter((v) => semver.validRange(range) && semver.satisfies(v, range) && (!floor || semver.gte(v, floor)));
       if (fits.length === 0) {
-        i.pinRefusal = { kind: 'reaches', copy: `${i.parentName}@${copy.version}` };
+        i.pinRefusal = { kind: 'reaches', copy: `${parent}@${copy.version}` };
         break;
       }
     }
@@ -293,21 +303,23 @@ function unappliedOverrides(packages, overrides) {
     if (!pkgPath || !info || typeof info !== 'object' || !info.version || info.link) continue;
     const name = nameFromLockPath(pkgPath);
     if (!name) continue;
-    if (!pathsByName.has(name)) pathsByName.set(name, []);
-    pathsByName.get(name).push(pkgPath);
+    let paths = pathsByName.get(name);
+    if (!paths) pathsByName.set(name, (paths = []));
+    paths.push(pkgPath);
   }
 
   const add = (key, name, mandated, found) => {
     if (found.length === 0) return;
-    if (!out.has(key)) out.set(key, { mandates: [] });
-    out.get(key).mandates.push({ name, mandated, found });
+    let entry = out.get(key);
+    if (!entry) out.set(key, (entry = { mandates: [] }));
+    entry.mandates.push({ name, mandated, found });
   };
 
   // A top-level pin governs every copy of the package.
   const checkTopLevel = (key, name, pin) => {
     const found = [];
     for (const pkgPath of pathsByName.get(name) || []) {
-      const installedVersion = packages[pkgPath].version;
+      const installedVersion = versionAt(packages, pkgPath);
       if (installedVersion !== pin) {
         found.push({ parentName: null, parentVersion: null, path: pkgPath, installedVersion });
       }
@@ -326,11 +338,11 @@ function unappliedOverrides(packages, overrides) {
       if (declaredRangeFor(info, name) == null) continue;
       const resolved = resolveInstalledPath(packages, parentPath, name);
       if (!resolved) continue;
-      const installedVersion = packages[resolved].version;
+      const installedVersion = versionAt(packages, resolved);
       if (installedVersion !== pin) {
         found.push({
           parentName: parent.name,
-          parentVersion: info.version,
+          parentVersion: versionAt(packages, parentPath),
           path: resolved,
           installedVersion,
         });
@@ -462,8 +474,9 @@ function mergeInstancesByOverrideKey(instances, manifestPaths) {
   const groups = new Map();
   for (const i of instances) {
     const key = overrideKeyOf(i);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(i);
+    let group = groups.get(key);
+    if (!group) groups.set(key, (group = []));
+    group.push(i);
   }
   const merged = [];
   for (const copies of groups.values()) {

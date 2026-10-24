@@ -117,8 +117,9 @@ export function formatSummary({
     // WorkspaceHeader already shows the path in that case, so the two displays
     // would disagree within one run.
     const label = change.workspace || (change.relPath && change.relPath !== '.' ? change.relPath : 'root');
-    if (!groups.has(label)) groups.set(label, { dependencies: [], devDependencies: [] });
-    groups.get(label)[change.field].push(change);
+    let group = groups.get(label);
+    if (!group) groups.set(label, (group = { dependencies: [], devDependencies: [] }));
+    group[change.field].push(change);
   }
   const pad = isMonorepo ? '  ' : '';
   for (const [label, byField] of groups) {
