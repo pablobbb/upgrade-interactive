@@ -26,3 +26,21 @@ jobs:
 
       - name: Run tests
         run: npm run test
+
+  # Types don't vary by Node version, so this runs once rather than per matrix entry.
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
