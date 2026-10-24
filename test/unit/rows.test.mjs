@@ -4,6 +4,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDisplayRows, overrideView, nextColumn, bulkColumn, windowSlice } from '../../src/components/rows.js';
+import { overrideLabel } from '../../src/components/Row.js';
 
 // A normalized descriptor, as App produces before building rows.
 const d = (name, field, relPath = '.', workspace = null) => ({
@@ -379,5 +380,35 @@ describe('buildDisplayRows — overrides not in effect', () => {
     });
 
     assert.deepEqual(rows, []);
+  });
+});
+
+// A staged set of scoped pins can cover only some of the vulnerable dependents;
+// the row has to say so, not only the picker (the 2026-10-17 field report, F1).
+describe('overrideLabel — partial fixes', () => {
+  const vuln = (vulnerable, safe = 0) => ({
+    instances: [
+      ...Array.from({ length: vulnerable }, () => ({ vulnerable: true })),
+      ...Array.from({ length: safe }, () => ({ vulnerable: false })),
+    ],
+  });
+  const pins = (n) => ({
+    scoped: Array.from({ length: n }, (_, i) => ({ parentName: `p${i}`, parentVersion: '1.0.0', version: '2.0.0' })),
+  });
+
+  it('counts the vulnerable dependents the pins leave behind', () => {
+    assert.equal(overrideLabel(pins(2), vuln(4)), '→ 2 scoped pins, 2 dependents still vulnerable');
+  });
+
+  it('says nothing more when every vulnerable dependent is pinned', () => {
+    assert.equal(overrideLabel(pins(2), vuln(2, 3)), '→ 2 scoped pins', 'already-safe dependents are not left behind');
+  });
+
+  it('counts for a single pin too', () => {
+    assert.equal(overrideLabel(pins(1), vuln(2)), '→ pin p0 › 2.0.0, 1 dependent still vulnerable');
+  });
+
+  it('leaves a global pin alone', () => {
+    assert.equal(overrideLabel('2.0.0', vuln(3)), '→ override 2.0.0');
   });
 });

@@ -900,3 +900,71 @@ describe('computeVulnerabilities — unapplied overrides', () => {
     assert.equal(unappliedOverrides.size, 0);
   });
 });
+
+// --- Fixes that need no override --------------------------------------------
+
+// Whether re-resolving alone would fix every copy, and which of the user's own
+// overrides stand in the way (the 2026-10-17 field report, F1 and F2).
+describe('computeVulnerabilities — fixable in range', () => {
+  const twoDependents = (pkgBRange = '^1.2.0') => ({
+    versions: new Map([['dependency-a', new Set(['1.2.0'])]]),
+    direct: new Set(['pkg-a', 'pkg-b']),
+    packages: {
+      '': { dependencies: { 'pkg-a': '^1.0.0', 'pkg-b': '^1.0.0' } },
+      'node_modules/pkg-a': { version: '1.0.0', dependencies: { 'dependency-a': '^1.2.0' } },
+      'node_modules/pkg-b': { version: '1.0.0', dependencies: { 'dependency-a': pkgBRange } },
+      'node_modules/dependency-a': { version: '1.2.0' },
+    },
+  });
+  const registry = (extra = {}) =>
+    stubRegistry({
+      meta: { 'dependency-a': { versions: ['1.2.0', '1.3.0'], distTags: {} } },
+      advisories: { 'dependency-a': [advisory({ vulnerable_versions: '<1.3.0', severity: 'high' })] },
+      ...extra,
+    });
+  const audit = async (installed, overrides, reg = registry()) =>
+    (await computeVulnerabilities({ installed, overrides }, reg)).vulns.get('dependency-a');
+
+  // The F2 shape: the next run would call a pin here "not needed".
+  it('reports a fix every dependent\'s range already allows', async () => {
+    const v = await audit(twoDependents());
+
+    assert.equal(v.inRangeFix, true);
+    assert.deepEqual(v.heldBy, []);
+    assert.equal(defaultOverrideSelection(v), '1.3.0', 'what `o` stages is unchanged until v3');
+  });
+
+  it('is false when one dependent\'s newest in-range version is still vulnerable', async () => {
+    const v = await audit(twoDependents('~1.2.0'));
+
+    assert.equal(v.inRangeFix, false, 'pkg-b can only reach 1.2.x');
+  });
+
+  it('is false, and judges no override, when candidates could not be verified', async () => {
+    const v = await audit(twoDependents(), { 'dependency-a': '1.2.0' }, registry({ ok: false }));
+
+    assert.equal(v.inRangeFix, false);
+    assert.equal(v.heldBy, null);
+  });
+
+  it('names a top-level or scoped pin that holds a vulnerable version', async () => {
+    const v = await audit(twoDependents(), { 'dependency-a': '1.2.0', 'pkg-b': { 'dependency-a': '~1.2.0' } });
+
+    assert.deepEqual(v.heldBy, [
+      { key: 'dependency-a', pin: '1.2.0' },
+      { key: 'pkg-b', pin: '~1.2.0' },
+    ]);
+  });
+
+  it('leaves out a pin that lands on a safe version', async () => {
+    const v = await audit(twoDependents(), { 'pkg-a': { 'dependency-a': '^1.3.0' }, 'pkg-b': { '.': '1.0.0' } });
+
+    assert.deepEqual(v.heldBy, []);
+  });
+
+  it('cannot judge a pin nested deeper than the writer puts one', async () => {
+    const v = await audit(twoDependents(), { 'pkg-a': { other: { 'dependency-a': '1.2.0' } } });
+
+    assert.equal(v.heldBy, null);
+  });
+});

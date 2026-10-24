@@ -31,19 +31,40 @@ function Column({ suggestion, selected }) {
 
 // Human-readable summary of a staged override for a row: a plain version for a
 // global pin, or a per-parent / count summary for scoped pins.
-export function overrideLabel(spec) {
+//
+// Scoped pins can cover only some of the vulnerable dependents: the others were
+// refused, or have no in-range fix. The label says how many are left, or a
+// partial fix reads as a whole one. Only the picker used to say so, which is how
+// "2 scoped pins" passed for a fix while two copies stayed vulnerable (the
+// 2026-10-17 field report, F1).
+export function overrideLabel(spec, vuln) {
   if (!spec) return null;
   if (typeof spec === 'string') return `${BECOMES} override ${spec}`;
   if (Array.isArray(spec.scoped) && spec.scoped.length > 0) {
+    const vulnerable = vuln ? (vuln.instances || []).filter((i) => i.vulnerable).length : 0;
+    const left = vulnerable - spec.scoped.length;
+    const rest = left > 0 ? `, ${left} ${left === 1 ? 'dependent' : 'dependents'} still vulnerable` : '';
     if (spec.scoped.length === 1) {
       const p = spec.scoped[0];
       return p.parentName
-        ? `${BECOMES} pin ${p.parentName} ${CHILD} ${p.version}`
-        : `${BECOMES} override ${p.version}`;
+        ? `${BECOMES} pin ${p.parentName} ${CHILD} ${p.version}${rest}`
+        : `${BECOMES} override ${p.version}${rest}`;
     }
-    return `${BECOMES} ${spec.scoped.length} scoped pins`;
+    return `${BECOMES} ${spec.scoped.length} scoped pins${rest}`;
   }
   return null;
+}
+
+// "a", "a and b", "a, b and c".
+function listText(items) {
+  return items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+// `your overrides "minimatch@9.0.9" and "minimatch@5.1.9" pin brace-expansion to 2.1.4`
+function heldText(held, name) {
+  const keys = listText([...new Set(held.map((h) => `"${h.key}"`))]);
+  const pins = listText([...new Set(held.map((h) => h.pin))]);
+  return held.length > 1 ? `your overrides ${keys} pin ${name} to ${pins}` : `your override ${keys} pins ${name} to ${pins}`;
 }
 
 // Why `o` is refused on a flagged row, or null when it isn't. Either two
@@ -51,11 +72,24 @@ export function overrideLabel(spec) {
 // honors `overrides` only at the root, so no single entry can fix both —
 // upgrading each workspace's own row is the way out — or npm would ignore or
 // reject every fixable pin.
-export function pinBlockedNote(vuln) {
+//
+// In the second case, a fix inside every dependent's declared range needs no
+// pin: `npm update <name>` lands it once no override of the user's holds the
+// package back. With those pins left in place `npm update` moves nothing, and
+// without `npm update` npm keeps the locked version (both measured on npm
+// 10.9.9 and 11.13.0, test/fixtures/held-by-scoped-pins). So the note gives
+// both steps, and leads with the user's overrides when there are any, since they
+// are the real cause.
+export function pinBlockedNote(vuln, name) {
   if (!vuln || !isPinBlocked(vuln)) return null;
   if (!vuln.pinConflict) {
+    const held = vuln.heldBy || [];
     const refused = (vuln.instances || []).find((i) => i.pinRefusal);
-    return `${INFO} ${pinRefusalText(refused.pinRefusal)} — edit overrides by hand`;
+    const lead = held.length > 0 ? heldText(held, name) : pinRefusalText(refused.pinRefusal);
+    const route = vuln.inRangeFix && vuln.heldBy != null;
+    if (!route) return `${INFO} ${lead} — edit overrides by hand`;
+    if (held.length === 0) return `${INFO} ${lead} — run npm update ${name} instead`;
+    return `${INFO} ${lead} — remove ${held.length > 1 ? 'those pins' : 'that pin'}, then run npm update ${name}`;
   }
   const conflicted = (vuln.instances || []).find((i) => i.conflict);
   const ranges = conflicted && conflicted.conflictRanges ? conflicted.conflictRanges.join(' vs ') : null;
@@ -70,7 +104,7 @@ function VulnInfo({ vuln, override, hideFixed }) {
   const sev = SEVERITY[vuln.severity] || SEVERITY.low;
   let text = `${WARN} ${sev.label} ${hyperlink(vuln.cve, vuln.url)} — affects ${vuln.affectedRange}`;
   if (!hideFixed && vuln.firstPatched) text += ` ${SEPARATOR} fixed in ${vuln.firstPatched}`;
-  const label = overrideLabel(override);
+  const label = overrideLabel(override, vuln);
   return e(
     Box,
     { marginLeft: 1 },
@@ -130,7 +164,7 @@ export function Row({ name, active, suggestions, selectedColumn, vuln, override,
   // stays readable instead of wrapping past the version columns. `overrideNote`
   // (set only on non-origin rows) explains the staged override lives elsewhere;
   // the blocked note explains why `o` does nothing here.
-  const note = overrideNote || pinBlockedNote(vuln);
+  const note = overrideNote || pinBlockedNote(vuln, name);
   return e(
     Box,
     { flexDirection: 'column' },
@@ -158,7 +192,7 @@ export function VulnRow({ name, active, vuln, override, overrideNote }) {
   // Hint precedence: nothing to override yet → "press o", or why we can't;
   // staged here → the green badge alone; staged from another row → the
   // read-only "elsewhere" note.
-  const blocked = pinBlockedNote(vuln);
+  const blocked = pinBlockedNote(vuln, name);
   const hint = override
     ? overrideNote
       ? e(Text, { dimColor: true }, `  ${overrideNote}`)

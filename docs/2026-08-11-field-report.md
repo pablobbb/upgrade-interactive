@@ -4,7 +4,7 @@ First real-world run of `upgrade-interactive` v2.1.0 (`main` @ `ddb9e98`) agains
 project outside the test suite. This records what happened, what was verified, and
 the prioritized follow-up work that came out of it.
 
-**Target project:** `giovanepersempre` — a static Astro 5 site (`output: 'static'`;
+**Target project:** a static Astro 5 site (`output: 'static'`;
 no SSR adapter installed, only `@astrojs/mdx`, `@astrojs/rss`, `@astrojs/sitemap`),
 `sharp` as a build-time devDependency for image optimization.
 

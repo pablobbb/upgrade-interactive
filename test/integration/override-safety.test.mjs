@@ -12,7 +12,7 @@ import { loadManifest, applyUpgrades } from '../../src/package-file.js';
 import { loadInstalledVersions } from '../../src/lockfile.js';
 import { computeVulnerabilities } from '../../src/vulnerabilities.js';
 import { defaultOverrideSelection } from '../../src/override-select.js';
-import { FIXTURES_DIR, stageFixture, stubFromSnapshot } from '../fixture-helpers.mjs';
+import { FIXTURES_DIR, stageFixture, stubFromSnapshot, auditFixture } from '../fixture-helpers.mjs';
 
 const exec = promisify(execFile);
 const dirs = [];
@@ -87,6 +87,36 @@ describe('override safety — real npm resolution', () => {
     });
     await install(dir);
     assert.deepEqual(await braceExpansion(), { '3.1.5': '1.1.12', '9.0.9': '2.1.4' }, 'the safe branch must stay on its own major');
+  });
+
+  // The way out a blocked row gives when the user's own pins hold the vulnerable
+  // version (held-by-scoped-pins). Both steps are needed: npm update honours the
+  // pins it is left with, and npm install alone keeps the locked version.
+  // Measured on npm 10.9.9 and 11.13.0.
+  it('reaches the in-range fix once the pins the note names are gone', async () => {
+    const fixture = path.join(FIXTURES_DIR, 'held-by-scoped-pins');
+    const snapshot = await readJson(path.join(fixture, 'registry.snapshot.json'));
+    const update = (cwd) => npm(cwd, ['update', 'brace-expansion', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund']);
+    const vulnerableCopies = async (dir) =>
+      (await copiesOf(dir, 'minimatch', 'brace-expansion'))
+        .filter((c) => snapshot.advisories['brace-expansion'].some((a) => semver.satisfies(c['brace-expansion'], a.vulnerable_versions)))
+        .map((c) => `minimatch@${c.version} > brace-expansion@${c['brace-expansion']}`)
+        .sort();
+    const held = ['minimatch@5.1.9 > brace-expansion@2.1.4', 'minimatch@9.0.9 > brace-expansion@2.1.4'];
+
+    const kept = await stageFixture(fixture);
+    dirs.push(kept);
+    await update(kept);
+    assert.deepEqual(await vulnerableCopies(kept), held, 'with the pins in place, npm update moves nothing');
+
+    const dir = await stageFixture(fixture);
+    dirs.push(dir);
+    const { manifest, vulns } = await auditFixture(dir, snapshot);
+    for (const { key } of vulns.get('brace-expansion').heldBy) delete manifest.json.overrides[key]['brace-expansion'];
+    for (const [key, bucket] of Object.entries(manifest.json.overrides)) if (Object.keys(bucket).length === 0) delete manifest.json.overrides[key];
+    await writeJson(path.join(dir, 'package.json'), manifest.json);
+    await update(dir);
+    assert.deepEqual(await vulnerableCopies(dir), []);
   });
 
   it('refuses a scoped pin that an existing bare parent key would shadow', async () => {

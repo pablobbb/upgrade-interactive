@@ -21,7 +21,10 @@ export function pinRefusalText(refusal) {
     return `npm rejects "${refusal.key}" beside the root's ${refusal.name} ${refusal.rootSpec} (EOVERRIDE)`;
   }
   if (refusal.kind === 'reaches') return `npm would also apply the pin to ${refusal.copy}, and no fix suits both`;
-  return `npm would ignore a pin beside "${refusal.by}"`;
+  if (refusal.proposed) {
+    return `npm keeps only one of the identical pins "${refusal.key}" and "${refusal.by}" (${refusal.name} ${refusal.version})`;
+  }
+  return `npm would ignore a pin beside your override "${refusal.by}"`;
 }
 
 export function pinnableInstances(vuln) {

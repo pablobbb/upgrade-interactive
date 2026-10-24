@@ -83,6 +83,16 @@ function requiredRangesFor(packages, name) {
   return [...ranges];
 }
 
+// The version a fresh resolve of `range` lands on, which is also what
+// `npm update` picks: the newest published non-prerelease version it admits
+// (docs/2026-10-11-spike-override-keys.md, Finding 5). Null when the range isn't
+// semver or admits nothing. Both "is this override still needed?" and "would
+// re-resolving fix this without one?" ask where a range lands, and both use this.
+function newestInRange(versions, range) {
+  if (!semver.validRange(range)) return null;
+  return semver.maxSatisfying(versions, range, { includePrerelease: false });
+}
+
 /** Package name from a lockfile path ("node_modules/@scope/x" -> "@scope/x"). */
 function nameFromLockPath(pkgPath) {
   const marker = 'node_modules/';
@@ -238,7 +248,13 @@ function markPinRefusals(name, instances, overrides, packages) {
     const mine = layout.get(pin.key);
     for (const [key, bucket] of layout) {
       if (key === pin.key || overrideBucketsConflict(mine, bucket)) continue;
-      pin.i.pinRefusal = { kind: 'shadowed', by: key };
+      // Say which side the other key is on. A pin this run proposes isn't in
+      // package.json yet, and naming it like an existing key sent the user
+      // looking for one that wasn't there. Two proposed pins for `name` that
+      // don't conflict pin the same version.
+      pin.i.pinRefusal = live.some((p) => p.key === key)
+        ? { kind: 'shadowed', by: key, proposed: true, key: pin.key, name, version: pin.version }
+        : { kind: 'shadowed', by: key };
       break;
     }
   }
@@ -532,13 +548,56 @@ function collectRemovableOverrides(overrideInfo, ok, advisories, unapplied) {
   return removable;
 }
 
+// Existing `overrides` entries that pin `name` somewhere a fix can't land, as
+// [{ key, pin }]: a top-level pin (a string, or the "." of an object), or a pin
+// one level down under a parent key, the only depths the writer uses. Each
+// counts unless it resolves to a verified-safe version. A scoped pin holding a
+// vulnerable version used to go unnamed: the row said no fix was possible while
+// the user's own override was what held it in place (the 2026-10-17 field
+// report, F1). Not matched to edges, since npm matches a key by declared range,
+// not by installed version (docs/2026-10-11-spike-override-keys.md, Finding 4).
+// Null when some entry can't be judged: a "$" reference, or `name` nested deeper.
+function unsafePinsOf(overrides, name, isSafe) {
+  if (!overrides || typeof overrides !== 'object') return [];
+  const pins = [];
+  let unreadable = false;
+  const consider = (key, pin) => {
+    if (typeof pin !== 'string') return;
+    if (pin.startsWith('$')) unreadable = true;
+    else if (!isSafe(pin)) pins.push({ key, pin });
+  };
+  const mentions = (value) =>
+    !!value && typeof value === 'object' &&
+    Object.entries(value).some(([k, v]) => overrideKeyName(k) === name || mentions(v));
+  for (const [key, value] of Object.entries(overrides)) {
+    const self = overrideKeyName(key) === name;
+    if (typeof value === 'string') {
+      if (self) consider(key, value);
+      continue;
+    }
+    if (!value || typeof value !== 'object') continue;
+    if (self) consider(key, value['.']);
+    for (const [child, pin] of Object.entries(value)) {
+      if (child === '.') continue;
+      if (overrideKeyName(child) === name) {
+        if (typeof pin === 'string') consider(key, pin);
+        else unreadable = true;
+      } else if (mentions(pin)) {
+        unreadable = true;
+      }
+    }
+  }
+  return unreadable ? null : pins;
+}
+
 /**
  * Given the direct descriptors and the installed tree (from the lockfile),
  * check every relevant version against npm's advisory database.
  *
  * @returns {Promise<{ offline, vulns, removableOverrides, unappliedOverrides }>}
  *   Each vuln entry: { advisories, severity, cve, url, affectedRange,
- *   firstPatched, safeVersions, instances, pinStrategy, pinConflict }.
+ *   firstPatched, safeVersions, instances, pinStrategy, pinConflict,
+ *   inRangeFix, heldBy }.
  *   `removableOverrides` maps an existing `overrides` package name ->
  *   { pin, reason: 'dead' | 'redundant' }.
  *   `unappliedOverrides` maps an `overrides` key -> { mandates } for pins the
@@ -629,11 +688,7 @@ export async function computeVulnerabilities(
     const candidates = [];
     let resolvable = true;
     for (const r of ranges) {
-      if (!semver.validRange(r)) {
-        resolvable = false;
-        continue;
-      }
-      const best = semver.maxSatisfying(meta.versions, r, { includePrerelease: false });
+      const best = newestInRange(meta.versions, r);
       if (best) candidates.push(best);
       else resolvable = false;
     }
@@ -669,9 +724,11 @@ export async function computeVulnerabilities(
   // so audit candidate versions too before calling them safe. Keep this query
   // separate: candidate-only advisories must not flag the installed tree.
   const candidatesByName = {};
+  const publishedByName = {};
   await mapWithConcurrency(vulnNames, CONCURRENCY, async (name) => {
     const meta = await getMeta(name);
     if (!meta) return;
+    publishedByName[name] = meta.versions;
     const candidates = meta.versions
       .filter((v) => semver.valid(v) && !semver.prerelease(v))
       .filter((v) => !matchesAny(v, advisories.get(name)))
@@ -743,6 +800,20 @@ export async function computeVulnerabilities(
     const instances = mergeInstancesByOverrideKey(rawInstances, manifestSet);
     markPinRefusals(name, instances, overrides, installed && installed.packages);
 
+    // Would re-resolving fix every copy with no override at all? Each
+    // dependent's newest in-range version must be verified safe and no
+    // downgrade. `npm update` moves already-safe copies too, so they count.
+    // This is the question collectRemovableOverrides asks of a pin, asked
+    // before one is written (the 2026-10-17 field report, F2).
+    const published = publishedByName[name] || [];
+    const safeSet = new Set(publishedSafe);
+    const inRangeFix =
+      rawInstances.length > 0 &&
+      rawInstances.every((i) => {
+        const newest = newestInRange(published, i.declaredRange);
+        return !!newest && safeSet.has(newest) && !!semver.valid(i.installedVersion) && semver.gte(newest, i.installedVersion);
+      });
+
     vulns.set(name, {
       advisories: matching,
       severity,
@@ -761,6 +832,10 @@ export async function computeVulnerabilities(
       // root. `o` is refused entirely — including the global path, which would
       // otherwise rewrite whichever manifest happens to declare it directly.
       pinConflict: instances.some((i) => i.conflict),
+      inRangeFix,
+      // The user's own overrides that pin this package where no fix lands, or
+      // null when they can't be judged (unverified candidates included).
+      heldBy: candidatesOk ? unsafePinsOf(overrides, name, (pin) => safeSet.has(newestInRange(published, pin))) : null,
     });
   });
 

@@ -1,0 +1,10 @@
+{
+  "name": "held-brace-expansion",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": { "filelist": "1.0.4", "glob": "7.2.3", "rimraf": "5.0.5" },
+  "overrides": {
+    "minimatch@5.1.9": { "brace-expansion": "2.1.4" },
+    "minimatch@9.0.9": { "brace-expansion": "2.1.4" }
+  }
+}

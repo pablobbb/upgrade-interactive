@@ -33,7 +33,9 @@ Requires Node 18+ and an interactive terminal.
   link, affected range and first fixed version.
 - **Fix them with `o`**: pins a safe version via npm `overrides` — per dependent
   when the package is installed at several versions, or a range bump when it's
-  one of your direct dependencies.
+  one of your direct dependencies. When no pin can be written, the row says why.
+  If your own overrides hold the vulnerable version, it names them and the
+  `npm update <pkg>` that fixes it once they're removed.
 - **Clean up with `x`**: removes an override that's no longer needed.
 - In a workspace repo, **see overrides npm never applied** (see [Notes](#notes)).
 
@@ -101,6 +103,8 @@ trailing `**` and `!` exclusions — not `?`, `[a-z]`, `{a,b}` or a non-trailing
 - **Compound ranges** (`>=1.0.0 <2.0.0`, `1.x || 2.x`) have no single modifier to
   re-apply, so they collapse to a caret. Protocol ranges (git/file/link/workspace,
   npm aliases) are skipped.
+- Unlike yarn, **Latest** isn't offered when npm's `latest` tag is older than
+  what your range already allows, since that would be a downgrade.
 - Only `dependencies` and `devDependencies` are scanned.
 - Pinning a package **and** something under it share one entry, using npm's
   `"."` key: `"vite": { ".": "7.3.6", "picomatch": "4.0.5" }`.

@@ -157,3 +157,37 @@ describe('fetchSuggestions — simple ranges', () => {
     assert.equal(await fetchSuggestions({ name: 'x', range: '^1.0.0' }, deps), null);
   });
 });
+
+// electron-builder on 2026-10-17: the newest 26.x went out under `v26` while
+// `latest` stayed on an older 26.x, so "Latest" was a downgrade.
+describe('fetchSuggestions — a `latest` tag behind the range', () => {
+  const laggingLatest = stubMeta({
+    versions: ['26.10.0', '26.15.3', '26.17.0', '27.0.0-alpha.10', '27.0.0-alpha.12'],
+    distTags: { latest: '26.15.3', v26: '26.17.0', next: '27.0.0-alpha.12' },
+  });
+
+  it('drops a package whose only offer would be a downgrade', async () => {
+    assert.equal(await fetchSuggestions({ name: 'x', range: '^26.17.0' }, laggingLatest), null);
+  });
+
+  it('keeps the Range upgrade and leaves Latest empty', async () => {
+    const s = await fetchSuggestions({ name: 'x', range: '^26.10.0' }, laggingLatest);
+
+    assert.equal(valueOf(s, 'range'), '^26.17.0');
+    assert.equal(valueOf(s, 'latest'), null, '^26.15.3 is below what the range already allows');
+  });
+
+  it('applies to a compound range too', async () => {
+    const s = await fetchSuggestions({ name: 'x', range: '>=26.10.0 <27.0.0' }, laggingLatest);
+
+    assert.equal(valueOf(s, 'range'), '^26.17.0');
+    assert.equal(valueOf(s, 'latest'), null);
+  });
+
+  it('does not offer the older stable line to a prerelease range', async () => {
+    const s = await fetchSuggestions({ name: 'x', range: '^27.0.0-alpha.10' }, laggingLatest);
+
+    assert.equal(valueOf(s, 'range'), '^27.0.0-alpha.12');
+    assert.equal(valueOf(s, 'latest'), null, 'bulk `l` must not move a prerelease back to 26.x');
+  });
+});
