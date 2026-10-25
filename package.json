@@ -19,13 +19,15 @@
   "scripts": {
     "test:unit": "node --test test/unit/*.test.mjs",
     "test:integration": "node test/app.test.mjs && node --test test/integration/*.test.mjs",
-    "test": "npm run test:unit && npm run test:integration"
+    "test": "npm run test:unit && npm run test:integration",
+    "typecheck": "tsc -p ."
   },
   "engines": {
     "node": ">=18"
   },
   "files": [
     "src",
+    "!src/types.d.ts",
     "CHANGELOG.md"
   ],
   "keywords": [
@@ -59,7 +61,11 @@
     "semver": "^7.8.5"
   },
   "devDependencies": {
+    "@types/node": "^18.19.130",
+    "@types/react": "^18.3.31",
+    "@types/semver": "^7.8.0",
     "ink-testing-library": "^4.0.0",
-    "string-width": "^7.2.0"
+    "string-width": "^7.2.0",
+    "typescript": "^7.0.2"
   }
 }

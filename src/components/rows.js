@@ -11,15 +11,24 @@
 import { INFO } from '../icons.js';
 
 /**
- * @param descriptors  normalized descriptors ({ name, field, id, workspace, relPath, ... })
- * @param entries      suggestion results aligned to `descriptors` by index (null = still loading)
- * @param allLoaded    once true, still-null entries are dropped instead of shown as loading rows
- * @param vulns        Map<name, vuln> | null
- * @param section      group each workspace's rows by field when true
- * @param overrideVulns  [name, vuln][] for the shared "Override to a safe version" section
- * @param removableList  [name, info][] for the shared "Unused overrides" section
- * @param unappliedList  [{ key, name, mandated, installed }] for "Overrides not in effect"
- * @param auditPending  audit still in flight — show loading placeholders for the two audit sections
+ * @import {
+ *   Descriptor, DisplayRow, Entry, OverrideSpec, RemovableOverride, StagedOverride, Suggestion,
+ *   UnappliedListItem, Vuln,
+ * } from '../types.js'
+ */
+
+/**
+ * @param {object} options
+ * @param {Descriptor[]} options.descriptors  normalized descriptors
+ * @param {(Entry | null)[]} options.entries  suggestion results aligned to `descriptors` by index (null = still loading)
+ * @param {boolean} options.allLoaded  once true, still-null entries are dropped instead of shown as loading rows
+ * @param {Map<string, Vuln> | null} options.vulns
+ * @param {boolean} options.section  group each workspace's rows by field when true
+ * @param {[string, Vuln][]} [options.overrideVulns]  for the shared "Override to a safe version" section
+ * @param {[string, RemovableOverride][]} [options.removableList]  for the shared "Unused overrides" section
+ * @param {UnappliedListItem[]} [options.unappliedList]  for "Overrides not in effect"
+ * @param {boolean} [options.auditPending]  audit still in flight — show loading placeholders for the two audit sections
+ * @returns {DisplayRow[]}
  */
 export function buildDisplayRows({
   descriptors,
@@ -35,6 +44,10 @@ export function buildDisplayRows({
   const depItems = descriptors.map((descriptor, i) => ({ descriptor, entry: entries[i], i }));
   const visibleDeps = allLoaded ? depItems.filter((x) => x.entry !== null) : depItems;
 
+  /**
+   * @param {(typeof depItems)[number]} x
+   * @returns {DisplayRow}
+   */
   const depRow = (x) =>
     x.entry === null
       ? { kind: 'loading', key: `loading:${x.i}` }
@@ -48,7 +61,10 @@ export function buildDisplayRows({
 
   // Group by workspace (relPath), preserving first-seen (project) order: root
   // first because loadProject emits the root's descriptors ahead of the rest.
+  /** @typedef {{ relPath: string, workspace: string | null, items: typeof depItems }} WorkspaceGroup */
+  /** @type {WorkspaceGroup[]} */
   const groups = [];
+  /** @type {Map<string, WorkspaceGroup>} */
   const byRel = new Map();
   for (const x of visibleDeps) {
     const rel = x.descriptor.relPath ?? '.';
@@ -65,6 +81,7 @@ export function buildDisplayRows({
   // header-free so single-package output is unchanged.
   const isMonorepo = groups.some((g) => g.relPath !== '.' || g.workspace != null);
 
+  /** @type {DisplayRow[]} */
   const rows = [];
   for (const group of groups) {
     if (isMonorepo) {
@@ -132,6 +149,10 @@ export function buildDisplayRows({
 // A column is selectable only when it actually shows a version. Column 0
 // (Current) always does — fetchSuggestions fills it with the declared range —
 // so it is the guaranteed floor when moving left.
+/**
+ * @param {Suggestion[]} suggestions
+ * @param {number} index
+ */
 function hasColumn(suggestions, index) {
   const suggestion = suggestions[index];
   return !!suggestion && suggestion.spans.length > 0;
@@ -142,6 +163,10 @@ function hasColumn(suggestions, index) {
  * doesn't offer. Returns `current` unchanged when there is nothing further that
  * way: a marker parked on an empty column looks like a selection but carries no
  * version, so <enter> would silently drop the row and lose the real pick.
+ *
+ * @param {Suggestion[]} suggestions
+ * @param {number} current
+ * @param {number} direction  -1 for left, 1 for right
  */
 export function nextColumn(suggestions, current, direction) {
   let next = current + direction;
@@ -155,6 +180,9 @@ export function nextColumn(suggestions, current, direction) {
  * that doesn't offer the requested column falls back to the nearest *lower*
  * one, never a higher: "select every Range" must not quietly stage a major bump
  * on the rows that had no in-range upgrade to give.
+ *
+ * @param {Suggestion[]} suggestions
+ * @param {string} which  the key pressed: 'c', 'r' or 'l'
  */
 export function bulkColumn(suggestions, which) {
   const wanted = which === 'l' ? 2 : which === 'r' ? 1 : 0;
@@ -170,6 +198,11 @@ export function bulkColumn(suggestions, which) {
  * above" / "↓ N more below" hints. The focused item stays centered until the
  * list runs out at either end. Shared by the main list and the override
  * overlays so both scroll — and describe their scrolling — identically.
+ *
+ * @template T
+ * @param {T[]} items
+ * @param {number} focusedIndex
+ * @param {number} maxRows
  */
 export function windowSlice(items, focusedIndex, maxRows) {
   const lastStart = Math.max(0, items.length - maxRows);
@@ -191,6 +224,11 @@ export function windowSlice(items, focusedIndex, maxRows) {
  * origin row, or when nothing is staged). `originLabel` null means the origin is
  * the shared vulnerability section ("already staged above"); otherwise it's the
  * origin workspace's display name ("staged under <label>").
+ *
+ * @param {Record<string, StagedOverride>} stagedOverrides
+ * @param {string} name
+ * @param {string} rowKey
+ * @returns {{ spec: OverrideSpec | undefined, note: string | null }}
  */
 export function overrideView(stagedOverrides, name, rowKey) {
   const record = stagedOverrides[name];

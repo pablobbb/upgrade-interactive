@@ -5,8 +5,18 @@ import React from 'react';
 import { render as inkRender } from 'ink-testing-library';
 import { App } from '../src/components/App.js';
 import { fetchSuggestions } from '../src/semver-suggest.js';
+import { vulnFixture } from './typed-fixtures.mjs';
+
+/**
+ * @import { ReactElement } from 'react'
+ * @import { InputDescriptor, OverrideSpec, PackageMeta, RemovableOverride, ScopedSpec, Vuln } from '../src/types.js'
+ */
 
 const e = React.createElement;
+/**
+ * @param {number} ms
+ * @returns {Promise<void>}
+ */
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Whether ink colorizes depends on the terminal the suite was launched from: a
@@ -16,13 +26,15 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // rather than teaching 50-odd substring checks about color. The app still
 // renders colored — only what we read back is normalized.
 const SGR = /\u001B\[[0-9;]*m/g;
+/** @param {ReactElement} tree */
 function render(tree) {
   const instance = inkRender(tree);
   return {
     ...instance,
     lastFrame: () => {
       const frame = instance.lastFrame();
-      return typeof frame === 'string' ? frame.replace(SGR, '') : frame;
+      // render() draws synchronously, so there is always a frame; '' only types the impossible case.
+      return typeof frame === 'string' ? frame.replace(SGR, '') : '';
     },
   };
 }
@@ -31,6 +43,11 @@ function render(tree) {
 // registry, so a fixed sleep is a bet on latency: too short and the assertion
 // races the network (this file's historical flakiness), too long and every run
 // pays for the worst case. Returns as soon as the frame is ready.
+/**
+ * @param {() => string} lastFrame
+ * @param {(frame: string) => boolean} predicate
+ * @param {{ timeout?: number, label?: string }} [options]
+ */
 async function waitForFrame(lastFrame, predicate, { timeout = 15000, label = '' } = {}) {
   const deadline = Date.now() + timeout;
   for (;;) {
@@ -46,10 +63,19 @@ async function waitForFrame(lastFrame, predicate, { timeout = 15000, label = '' 
 
 // The rows are loaded once no Loading… placeholder remains. Used wherever a test
 // previously slept ~3s hoping the registry had answered.
+/**
+ * @param {() => string} lastFrame
+ * @param {string} [label]
+ */
 const rowsLoaded = (lastFrame, label) =>
   waitForFrame(lastFrame, (f) => !f.includes('Loading...'), { label: label || 'rows to load' });
 
 let failures = 0;
+// Counts a failure and carries on, so one broken check doesn't hide the rest.
+/**
+ * @param {unknown} condition
+ * @param {string} message
+ */
 function assert(condition, message) {
   if (!condition) {
     failures++;
@@ -60,13 +86,14 @@ function assert(condition, message) {
 }
 
 async function testBasicFlow() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [
     { name: 'chalk', range: '^4.0.0', field: 'dependencies' },
     { name: 'eslint', range: '^7.0.0', field: 'devDependencies' },
     { name: 'left-pad', range: '1.3.0', field: 'dependencies' }, // no upgrade available
   ];
 
-  let submitted = null;
+  let submitted = /** @type {Map<string, string> | null} */ (null);
   const { stdin, lastFrame, unmount } = render(
     e(App, {
       descriptors,
@@ -96,8 +123,9 @@ async function testBasicFlow() {
 }
 
 async function testAbort() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
-  let submitted = 'untouched';
+  let submitted = /** @type {Map<string, string> | string} */ ('untouched');
   let aborted = false;
   const { stdin, lastFrame, unmount } = render(
     e(App, {
@@ -120,11 +148,12 @@ async function testAbort() {
 }
 
 async function testBulkLatest() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [
     { name: 'chalk', range: '^4.0.0', field: 'dependencies' },
     { name: 'eslint', range: '^7.0.0', field: 'devDependencies' },
   ];
-  let submitted = null;
+  let submitted = /** @type {Map<string, string> | null} */ (null);
   const { stdin, lastFrame, unmount } = render(
     e(App, { descriptors, onSubmit: (sel) => (submitted = sel), onAbort: () => {} })
   );
@@ -140,8 +169,9 @@ async function testBulkLatest() {
 
 // Build a fake audit result so these tests don't hit the advisory network.
 function fakeAudit() {
+  /** @type {Map<string, Vuln>} */
   const vulns = new Map();
-  vulns.set('chalk', {
+  vulns.set('chalk', vulnFixture({
     advisories: [],
     severity: 'high',
     cve: 'CVE-2021-0001',
@@ -150,8 +180,8 @@ function fakeAudit() {
     current: '4.0.0',
     firstPatched: '4.1.2',
     safeVersions: ['4.1.2', '5.0.0'],
-  });
-  vulns.set('minimist', {
+  }));
+  vulns.set('minimist', vulnFixture({
     advisories: [],
     severity: 'critical',
     cve: 'CVE-2021-44906',
@@ -160,11 +190,12 @@ function fakeAudit() {
     current: '1.2.0',
     firstPatched: '1.2.6',
     safeVersions: ['1.2.6', '1.2.8'],
-  });
+  }));
   return { offline: false, vulns };
 }
 
 async function testAuditWarnings() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [
     { name: 'chalk', range: '^4.0.0', field: 'dependencies' },
     { name: 'eslint', range: '^7.0.0', field: 'devDependencies' },
@@ -200,10 +231,11 @@ async function testAuditWarnings() {
 }
 
 async function testAuditPendingLoading() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
   // Gate the audit so it stays pending long enough to observe the placeholders,
   // then release it and confirm the sections resolve.
-  let release;
+  let release = /** @type {((value?: unknown) => void) | undefined} */ (undefined);
   const gate = new Promise((r) => (release = r));
   const { lastFrame, unmount } = render(
     e(App, {
@@ -216,7 +248,7 @@ async function testAuditPendingLoading() {
         return {
           offline: false,
           vulns: new Map(),
-          removableOverrides: new Map([['left-pad', { pin: '1.3.0', reason: 'dead' }]]),
+          removableOverrides: new Map([['left-pad', { pin: '1.3.0', reason: /** @type {const} */ ('dead') }]]),
         };
       },
       onSubmit: () => {},
@@ -235,7 +267,8 @@ async function testAuditPendingLoading() {
     'each pending audit section shows a Loading… placeholder'
   );
 
-  release();
+  // Assigned by the Promise executor above, which runs synchronously.
+  /** @type {(value?: unknown) => void} */ (release)();
   await wait(200);
   const resolved = lastFrame();
   unmount();
@@ -252,6 +285,7 @@ async function testAuditPendingLoading() {
 }
 
 async function testAuditDisabled() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
   const { lastFrame, unmount } = render(
     e(App, {
@@ -272,6 +306,7 @@ async function testAuditDisabled() {
 }
 
 async function testOfflineNotice() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
   const { lastFrame, unmount } = render(
     e(App, {
@@ -291,9 +326,10 @@ async function testOfflineNotice() {
 }
 
 async function testOverrideFlow() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
-  let submitted = null;
-  let overrides = null;
+  let submitted = /** @type {Map<string, string> | null} */ (null);
+  let overrides = /** @type {Record<string, OverrideSpec> | null} */ (null);
   const { stdin, lastFrame, unmount } = render(
     e(App, {
       descriptors,
@@ -336,9 +372,11 @@ async function testOverrideFlow() {
 // cache happened to be warm, silently turned it into a test of the ordinary
 // same-row flow.
 async function testOverrideOriginRehomed() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [{ name: 'lodash', range: '^4.17.0', field: 'dependencies' }];
+  /** @type {Map<string, Vuln>} */
   const vulns = new Map();
-  vulns.set('lodash', {
+  vulns.set('lodash', vulnFixture({
     advisories: [],
     severity: 'high',
     cve: 'CVE-2021-7777',
@@ -347,12 +385,12 @@ async function testOverrideOriginRehomed() {
     current: '4.17.15',
     firstPatched: '4.17.20',
     safeVersions: ['4.17.20', '4.17.21'],
-  });
+  }));
 
-  let releaseSuggestions;
+  let releaseSuggestions = /** @type {((value?: unknown) => void) | undefined} */ (undefined);
   const suggestionGate = new Promise((r) => (releaseSuggestions = r));
 
-  let overrides = null;
+  let overrides = /** @type {Record<string, OverrideSpec> | null} */ (null);
   const { stdin, lastFrame, unmount } = render(
     e(App, {
       descriptors,
@@ -389,7 +427,8 @@ async function testOverrideOriginRehomed() {
   stdin.write('\r'); // take the first safe version (4.17.20)
   await wait(50);
 
-  releaseSuggestions(); // the vuln row is now replaced by a dep row
+  // Assigned by the Promise executor above, which runs synchronously.
+  /** @type {(value?: unknown) => void} */ (releaseSuggestions)(); // the vuln row is now replaced by a dep row
   await wait(150);
   const loaded = lastFrame().replace(/\s+/g, ' ');
   assert(!loaded.includes('already staged above'), 'the note pointing at the vanished origin row is gone');
@@ -446,6 +485,7 @@ function unappliedAudit() {
 }
 
 async function testUnappliedOverrideShownInWorkspace() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [{ name: "chalk", range: "^4.0.0", field: "dependencies" }];
   const { lastFrame, unmount } = render(
     e(App, {
@@ -471,6 +511,7 @@ async function testUnappliedOverrideShownInWorkspace() {
 }
 
 async function testUnappliedOverrideHiddenWhenStandalone() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [{ name: "chalk", range: "^4.0.0", field: "dependencies" }];
   const { lastFrame, unmount } = render(
     e(App, {
@@ -492,10 +533,12 @@ async function testUnappliedOverrideHiddenWhenStandalone() {
 }
 
 async function testRemovableOverride() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
+  /** @type {Map<string, RemovableOverride>} */
   const removableOverrides = new Map([['left-pad', { pin: '1.3.0', reason: 'dead' }]]);
-  let submitted = null;
-  let removals = null;
+  let submitted = /** @type {Map<string, string> | null} */ (null);
+  let removals = /** @type {string[] | null} */ (null);
   const { stdin, lastFrame, unmount } = render(
     e(App, {
       descriptors,
@@ -527,9 +570,11 @@ async function testRemovableOverride() {
 }
 
 async function testScopedOverrideFlow() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [];
+  /** @type {Map<string, Vuln>} */
   const vulns = new Map();
-  vulns.set('dependency-a', {
+  vulns.set('dependency-a', vulnFixture({
     advisories: [],
     severity: 'high',
     cve: 'CVE-2021-9999',
@@ -561,9 +606,9 @@ async function testScopedOverrideFlow() {
         bestSafeInRange: null,
       },
     ],
-  });
+  }));
 
-  let overrides = null;
+  let overrides = /** @type {Record<string, OverrideSpec> | null} */ (null);
   const { stdin, lastFrame, unmount } = render(
     e(App, {
       descriptors,
@@ -589,7 +634,7 @@ async function testScopedOverrideFlow() {
   await waitForFrame(lastFrame, () => overrides !== null, { label: 'the scoped submission' });
   unmount();
 
-  const spec = overrides && overrides['dependency-a'];
+  const spec = /** @type {ScopedSpec | null | undefined} */ (overrides && overrides['dependency-a']);
   assert(spec && Array.isArray(spec.scoped), 'a scoped override spec is staged and passed to onSubmit');
   assert(spec && spec.scoped.length === 1, 'only the vulnerable instance is pinned (the safe one is left out)');
   assert(
@@ -603,9 +648,11 @@ async function testScopedOverrideFlow() {
 }
 
 async function testScopedOverrideDisambiguation() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
+  /** @type {Map<string, Vuln>} */
   const vulns = new Map();
-  vulns.set('dependency-a', {
+  vulns.set('dependency-a', vulnFixture({
     advisories: [],
     severity: 'high',
     cve: 'CVE-2021-8888',
@@ -639,9 +686,9 @@ async function testScopedOverrideDisambiguation() {
         bestSafeInRange: '2.5.0',
       },
     ],
-  });
+  }));
 
-  let overrides = null;
+  let overrides = /** @type {Record<string, OverrideSpec> | null} */ (null);
   const { stdin, lastFrame, unmount } = render(
     e(App, {
       descriptors,
@@ -672,7 +719,7 @@ async function testScopedOverrideDisambiguation() {
   await wait(100);
   unmount();
 
-  const spec = overrides && overrides['dependency-a'];
+  const spec = /** @type {ScopedSpec | null | undefined} */ (overrides && overrides['dependency-a']);
   assert(spec && spec.scoped.length === 2, 'both vulnerable copies of the duplicated parent are pinned');
   assert(
     spec && spec.scoped.every((p) => p.parentName === 'pkg-a' && p.parentVersion),
@@ -685,16 +732,19 @@ async function testScopedOverrideDisambiguation() {
 // already reaches the newest version); `outdated` gets no Range column (it is
 // already at the top of its range, and the only upgrade is a new major). Those
 // are the two shapes where a column is missing from the end / the middle.
+/** @type {Record<string, PackageMeta>} */
 const COLUMN_SHAPES = {
   maxed: { versions: ['1.0.0', '1.4.0'], distTags: { latest: '1.4.0' } },
   outdated: { versions: ['1.0.0', '2.0.0'], distTags: { latest: '2.0.0' } },
 };
+/** @param {{ name: string, range: string }} descriptor */
 const shapedSuggestions = (descriptor) =>
   fetchSuggestions(descriptor, { fetchPackageMeta: async (name) => COLUMN_SHAPES[name] });
 
 async function testArrowStopsAtLastColumn() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [{ name: 'maxed', range: '^1.0.0', field: 'dependencies' }];
-  let submitted = null;
+  let submitted = /** @type {Map<string, string> | null} */ (null);
   const { stdin, lastFrame, unmount } = render(
     e(App, {
       descriptors,
@@ -720,11 +770,12 @@ async function testArrowStopsAtLastColumn() {
 }
 
 async function testBulkRangeSkipsMissingColumn() {
+  /** @type {InputDescriptor[]} */
   const descriptors = [
     { name: 'maxed', range: '^1.0.0', field: 'dependencies' },
     { name: 'outdated', range: '^1.0.0', field: 'dependencies' },
   ];
-  let submitted = null;
+  let submitted = /** @type {Map<string, string> | null} */ (null);
   const { stdin, lastFrame, unmount } = render(
     e(App, {
       descriptors,
@@ -760,8 +811,9 @@ async function testBulkRangeSkipsMissingColumn() {
 // once — the shape that used to render straight past the bottom of the terminal.
 function manyCandidatesAudit() {
   const safeVersions = Array.from({ length: 30 }, (_, i) => `1.${i + 10}.0`);
+  /** @type {Map<string, Vuln>} */
   const vulns = new Map();
-  vulns.set('chalk', {
+  vulns.set('chalk', vulnFixture({
     advisories: [],
     severity: 'high',
     cve: 'CVE-2021-0001',
@@ -770,15 +822,16 @@ function manyCandidatesAudit() {
     current: '1.0.0',
     firstPatched: safeVersions[0],
     safeVersions,
-  });
+  }));
   return { offline: false, vulns, safeVersions };
 }
 
 async function testOverridePickerScrolls() {
   const { safeVersions, ...audit } = manyCandidatesAudit();
   const last = safeVersions[safeVersions.length - 1];
+  /** @type {InputDescriptor[]} */
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
-  let overrides = null;
+  let overrides = /** @type {Record<string, OverrideSpec> | null} */ (null);
   const { stdin, lastFrame, unmount } = render(
     e(App, {
       descriptors,

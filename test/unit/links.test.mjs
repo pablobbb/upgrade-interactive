@@ -5,6 +5,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { hyperlink } from '../../src/links.js';
 
+/**
+ * @template T
+ * @param {boolean} isTTY
+ * @param {() => T} fn
+ */
 function withTTY(isTTY, fn) {
   const original = process.stdout.isTTY;
   process.stdout.isTTY = isTTY;

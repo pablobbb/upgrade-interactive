@@ -4,10 +4,13 @@
 // fixture test harness import these, so the test can't quietly assert against a
 // stale copy of the picker's default while the real app diverges.
 
+/** @import { OverrideSpec, PinInstance, PinRefusal, ScopedSpec, Vuln } from './types.js' */
+
 // A vulnerable instance is "pinnable" when it's actually vulnerable, its
 // declared range can accept at least one safe version without a downgrade, and
 // npm would neither ignore nor reject the key its pin lands on (`pinRefusal`,
 // see markPinRefusals in vulnerabilities.js).
+/** @param {PinInstance | null | undefined} i */
 export function isPinnableInstance(i) {
   return !!(
     i && i.vulnerable && !i.pinRefusal && Array.isArray(i.safeCandidates) && i.safeCandidates.length > 0
@@ -15,6 +18,7 @@ export function isPinnableInstance(i) {
 }
 
 // Why a pin was refused, worded for the picker and the row note.
+/** @param {PinRefusal | null | undefined} refusal */
 export function pinRefusalText(refusal) {
   if (!refusal) return null;
   if (refusal.kind === 'eoverride') {
@@ -27,12 +31,14 @@ export function pinRefusalText(refusal) {
   return `npm would ignore a pin beside your override "${refusal.by}"`;
 }
 
+/** @param {Partial<Pick<Vuln, 'instances'>>} vuln */
 export function pinnableInstances(vuln) {
   return (vuln.instances || []).filter(isPinnableInstance);
 }
 
 // The scoped picker defaults each row to the newest in-range safe version; this
 // is the index of that choice within an instance's `safeCandidates`.
+/** @param {PinInstance} instance */
 export function defaultScopedChoiceIndex(instance) {
   return instance.safeCandidates.length - 1;
 }
@@ -43,6 +49,12 @@ export function defaultScopedChoiceIndex(instance) {
 // safe/no-fix instances that won't be staged — once those are discarded, the
 // writer cannot tell that a bare parent key would also change a different
 // version we meant to leave alone.
+/**
+ * @template {string | null} P
+ * @param {PinInstance[]} instances
+ * @param {PinInstance & { parentName: P }} i
+ * @returns {string | P} never null for a named parent
+ */
 export function parentOverrideKey(instances, i) {
   if (i.parentName == null || !i.parentVersion) return i.parentName;
   const versions = new Set();
@@ -51,6 +63,11 @@ export function parentOverrideKey(instances, i) {
 }
 
 // `choices`, when supplied by the picker, is aligned to the pinnable instances.
+/**
+ * @param {PinInstance[]} instances
+ * @param {number[]} [choices]
+ * @returns {ScopedSpec}
+ */
 export function scopedOverrideSelection(instances, choices) {
   return {
     scoped: instances.filter(isPinnableInstance).map((i, index) => {
@@ -59,7 +76,7 @@ export function scopedOverrideSelection(instances, choices) {
         parentName: i.parentName,
         parentVersion: i.parentVersion,
         version: i.safeCandidates[choices?.[index] ?? defaultScopedChoiceIndex(i)],
-        ...(key !== i.parentName ? { parentSelector: key } : {}),
+        ...(key != null && key !== i.parentName ? { parentSelector: key } : {}),
       };
     }),
   };
@@ -69,6 +86,7 @@ export function scopedOverrideSelection(instances, choices) {
 // single global pin would be wrong and we offer per-parent scoped pins instead
 // (as long as at least one vulnerable instance has an in-range fix). Mirrors the
 // scoped-vs-global branch in App.openOverride.
+/** @param {Vuln} vuln */
 export function shouldScope(vuln) {
   return vuln.pinStrategy === 'scoped' && pinnableInstances(vuln).length > 0;
 }
@@ -81,6 +99,7 @@ export function shouldScope(vuln) {
 // paths — clearing the scoped candidates alone would just fall through to the
 // global one, which would also pin the copies the scoped strategy exists to
 // leave alone.
+/** @param {Vuln} vuln */
 export function isPinBlocked(vuln) {
   if (vuln.pinConflict) return true;
   return (
@@ -94,6 +113,10 @@ export function isPinBlocked(vuln) {
 // vuln and hit <enter> without changing anything: a { scoped: [...] } spec for a
 // multi-version package, a single global version string, or null when there's no
 // safe fix to offer. This is the value that flows into applyUpgrades.
+/**
+ * @param {Vuln} vuln
+ * @returns {OverrideSpec | null}
+ */
 export function defaultOverrideSelection(vuln) {
   if (isPinBlocked(vuln)) return null;
   if (shouldScope(vuln)) {

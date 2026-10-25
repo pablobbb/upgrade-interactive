@@ -16,6 +16,15 @@ import {
   manifestPathsOf,
 } from '../../src/summary.js';
 
+/** @import { DependencyField } from '../../src/types.js' */
+
+/**
+ * @param {string} name
+ * @param {DependencyField} field
+ * @param {string} from
+ * @param {string} to
+ * @param {string | null} [workspace]
+ */
 const up = (name, field, from, to, workspace = null) => ({ name, field, from, to, workspace });
 
 describe('formatSummary — standalone output', () => {
@@ -118,10 +127,15 @@ describe('formatSummary — monorepo output', () => {
 describe('formatIgnoredConfigNote', () => {
   // A project as loadProject returns it: manifests[0] is the root, and `root` is
   // that same object (identity is what separates root from workspace here).
+  /** @param {...ReturnType<typeof ws>} workspaces */
   const project = (...workspaces) => {
     const root = { relPath: '.', json: {} };
     return { root, manifests: [root, ...workspaces] };
   };
+  /**
+   * @param {string} relPath
+   * @param {Record<string, unknown>} [config]
+   */
   const ws = (relPath, config) => ({
     relPath,
     json: config ? { 'upgrade-interactive': config } : {},
@@ -200,6 +214,10 @@ describe('formatIgnoredConfigNote', () => {
 });
 
 describe('isMonorepoProject', () => {
+  /**
+   * @param {string} relPath
+   * @param {string | null} workspace
+   */
   const d = (relPath, workspace) => ({ name: 'chalk', field: 'dependencies', relPath, workspace });
 
   it('is false for a standalone project', () => {

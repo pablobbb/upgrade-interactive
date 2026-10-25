@@ -4,18 +4,32 @@ import path from 'node:path';
 import { discoverWorkspaces } from './workspaces.js';
 import { overrideKeyName, overrideBucketsConflict, risksEoverride } from './override-keys.js';
 
-const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies'];
+/**
+ * @import {
+ *   AppliedUpgrade, ApplyResult, DependencyField, DependencyMap, Descriptor, Manifest,
+ *   ManifestDescriptor, OverrideSpec, PackageJson, Project, ProjectAppliedUpgrade,
+ *   ProjectManifest, WorkspaceInfo, WrittenOverride,
+ * } from './types.js'
+ */
+
+const DEPENDENCY_FIELDS = /** @type {const} */ (['dependencies', 'devDependencies']);
 
 /**
  * A `-w` value in the form `relPath` is stored in: backslashes folded to `/` and
  * any trailing slash dropped. Package names pass through untouched — a scoped
  * name's `/` is not a separator, and nothing else here alters one.
+ *
+ * @param {string} value
  */
 function normalizeFilter(value) {
   const posix = value.split('\\').join('/');
   return posix.length > 1 ? posix.replace(/\/+$/, '') : posix;
 }
 
+/**
+ * @param {string} cwd
+ * @returns {Promise<Manifest>}
+ */
 export async function loadManifest(cwd) {
   const filePath = path.join(cwd, 'package.json');
   let raw;
@@ -25,17 +39,19 @@ export async function loadManifest(cwd) {
     throw new Error(`No package.json found in ${cwd}`);
   }
 
+  /** @type {PackageJson} */
   let json;
   try {
     json = JSON.parse(raw);
   } catch (err) {
-    throw new Error(`Could not parse package.json: ${err.message}`);
+    throw new Error(`Could not parse package.json: ${/** @type {Error} */ (err).message}`);
   }
 
   const indentMatch = raw.match(/^[ \t]+/m);
   const indent = indentMatch ? indentMatch[0] : '  ';
   const trailingNewline = raw.endsWith('\n');
 
+  /** @type {ManifestDescriptor[]} */
   const descriptors = [];
   for (const field of DEPENDENCY_FIELDS) {
     const section = json[field];
@@ -94,6 +110,10 @@ export async function loadManifest(cwd) {
  *
  * Throws when the options can't select anything: a `filter` value that matches
  * no package, or a `filter` combined with `workspaces: false`.
+ *
+ * @param {string} cwd
+ * @param {{ workspaces?: boolean, filter?: string[] | null }} [options]
+ * @returns {Promise<Project>}
  */
 export async function loadProject(cwd, { workspaces = true, filter = null } = {}) {
   // Keyed by the normalized form, valued by what the user actually typed, so the
@@ -118,21 +138,27 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
   const workspaceNames = new Set((discovered || []).map((p) => p.name).filter(Boolean));
   // `relPath` is already POSIX (see expandWorkspaces) and a package name never
   // needs normalizing, so only the user's side of the comparison was rewritten.
-  const included = (info) => !filterSet || filterSet.has(info.name) || filterSet.has(info.relPath);
+  /** @param {WorkspaceInfo} info */
+  const included = (info) =>
+    !filterSet || (info.name != null && filterSet.has(info.name)) || filterSet.has(info.relPath);
 
+  /** @type {ProjectManifest[]} */
   const manifests = [];
+  /** @type {Descriptor[]} */
   const descriptors = [];
+  /** @type {Set<string>} */
   const matched = new Set();
   for (const info of infos) {
-    const manifest = await loadManifest(info.dir);
-    manifest.workspace = info.relPath === '.' ? null : info.name;
-    manifest.relPath = info.relPath;
+    const manifest = Object.assign(await loadManifest(info.dir), {
+      workspace: info.relPath === '.' ? null : info.name,
+      relPath: info.relPath,
+    });
     manifests.push(manifest);
     // A filtered-out workspace stays loaded (root overrides need it) but shows
     // no rows.
     if (!included(info)) continue;
     if (filterSet) {
-      if (filterSet.has(info.name)) matched.add(info.name);
+      if (info.name != null && filterSet.has(info.name)) matched.add(info.name);
       if (filterSet.has(info.relPath)) matched.add(info.relPath);
     }
     for (const d of manifest.descriptors) {
@@ -190,12 +216,22 @@ export async function loadProject(cwd, { workspaces = true, filter = null } = {}
 // one decision before we get here (see mergeInstancesByOverrideKey), so this
 // writer never faces that conflict in the real flow. If a caller passes such a
 // pair anyway, the later pin wins.
+/**
+ * @param {PackageJson} json
+ * @param {string} name
+ * @param {OverrideSpec | null | undefined} spec
+ * @param {WrittenOverride[]} out
+ * @param {Map<string, DependencyField>} directField
+ * @param {AppliedUpgrade[]} applied
+ * @param {WrittenOverride[]} [alreadyPresent]
+ */
 function writeOverrideSpec(json, name, spec, out, directField, applied, alreadyPresent) {
   // An accepted pin whose value is already in the manifest. Not writing it is
   // correct — but discarding the fact is what makes the tool answer "no changes"
   // to a user who just accepted a fix, which reads as "you were already fine"
   // when the tree may still be unpatched. Recorded so the summary can say which
   // it was. See `unappliedOverrides` in vulnerabilities.js.
+  /** @param {WrittenOverride} entry */
   const notePresent = (entry) => {
     if (!alreadyPresent) return;
     const at = alreadyPresent.findIndex(
@@ -209,7 +245,9 @@ function writeOverrideSpec(json, name, spec, out, directField, applied, alreadyP
   // Bump a direct dependency's declared range to `version` instead of writing a
   // conflicting top-level override. Returns false if there's no section to write
   // to (only in isolated writer tests where `name` isn't really a direct dep).
+  /** @param {string} version */
   const pinDirect = (version) => {
+    if (!field) return false;
     const section = json[field];
     if (!section || typeof section !== 'object') return false;
     const from = section[name];
@@ -229,6 +267,7 @@ function writeOverrideSpec(json, name, spec, out, directField, applied, alreadyP
   // same slot (same key, same name) when they can't be told apart — the last
   // write wins in the file, so it has to win here too, or the summary would
   // list a version that no longer exists in the manifest.
+  /** @param {WrittenOverride} entry */
   const record = (entry) => {
     const at = out.findIndex((o) => o.name === entry.name && (o.parent ?? null) === (entry.parent ?? null));
     if (at === -1) out.push(entry);
@@ -242,6 +281,7 @@ function writeOverrideSpec(json, name, spec, out, directField, applied, alreadyP
   // display order (the child's advisory first) is exactly that order. The
   // self-pin goes under "." instead, which is the same shape the opposite order
   // already produces via the string→object promotion below.
+  /** @param {string} version */
   const pinTopLevel = (version) => {
     const root = overridesRoot();
     const existing = root[name];
@@ -265,11 +305,13 @@ function writeOverrideSpec(json, name, spec, out, directField, applied, alreadyP
 
   // A parent needs a version-qualified key only when it's being pinned to more
   // than one distinct target across its installed copies.
+  /** @type {Map<string, Set<string>>} */
   const targetsByParent = new Map();
   for (const pin of spec.scoped) {
     if (!pin || !pin.version || pin.parentName == null) continue;
-    if (!targetsByParent.has(pin.parentName)) targetsByParent.set(pin.parentName, new Set());
-    targetsByParent.get(pin.parentName).add(pin.version);
+    let targets = targetsByParent.get(pin.parentName);
+    if (!targets) targetsByParent.set(pin.parentName, (targets = new Set()));
+    targets.add(pin.version);
   }
 
   for (const pin of spec.scoped) {
@@ -305,6 +347,10 @@ function writeOverrideSpec(json, name, spec, out, directField, applied, alreadyP
 // outcome. This reconciles the two against the finished object. It runs before
 // the write, so a failure leaves package.json untouched; nothing here should
 // ever fire, which is exactly why it must be loud rather than silent.
+/**
+ * @param {PackageJson} json
+ * @param {WrittenOverride[]} appliedOverrides
+ */
 function assertOverridesLanded(json, appliedOverrides) {
   const root = json.overrides;
   for (const entry of appliedOverrides) {
@@ -324,8 +370,12 @@ function assertOverridesLanded(json, appliedOverrides) {
 }
 
 // The spec the root manifest declares for `name`, in any dependency field.
+/**
+ * @param {PackageJson} json
+ * @param {string} name
+ */
 function rootDeclaredSpec(json, name) {
-  for (const field of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
+  for (const field of /** @type {const} */ (['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'])) {
     const section = json[field];
     if (section && typeof section === 'object' && section[name] != null) return section[name];
   }
@@ -337,10 +387,19 @@ function rootDeclaredSpec(json, name) {
 // different packages under the same parent, or versions changed in the picker —
 // can still produce one between them. Only parents this run wrote under are
 // checked, so a layout already in the user's file doesn't block unrelated changes.
+/**
+ * @param {PackageJson} json
+ * @param {WrittenOverride[]} appliedOverrides
+ */
 function assertParentKeysApply(json, appliedOverrides) {
   const root = json.overrides;
   if (!root || typeof root !== 'object') return;
   const written = new Set(appliedOverrides.map((o) => o.parent ?? o.name));
+  /**
+   * @param {string} why
+   * @param {string} name
+   * @returns {never}
+   */
   const refuse = (why, name) => {
     throw new Error(`${why} Nothing was written. Stage fewer pins under ${name}, or edit the overrides by hand.`);
   };
@@ -386,8 +445,15 @@ function assertParentKeysApply(json, appliedOverrides) {
  *
  * Returns { applied: {name,field,from,to}[], overrides: {name,to,parent?}[],
  * removed: {name}[] }.
+ *
+ * @param {Manifest} manifest
+ * @param {Map<string, string>} selections
+ * @param {Record<string, OverrideSpec | null>} [overrides]  a null spec writes nothing
+ * @param {string[]} [removals]
+ * @returns {Promise<ApplyResult>}
  */
 export async function applyUpgrades(manifest, selections, overrides = {}, removals = []) {
+  /** @type {AppliedUpgrade[]} */
   const applied = [];
 
   for (const descriptor of manifest.descriptors) {
@@ -397,7 +463,8 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
     const newRange = selections.get(descriptor.key) ?? selections.get(descriptor.name);
     if (!newRange || newRange === descriptor.range) continue;
 
-    manifest.json[descriptor.field][descriptor.name] = newRange;
+    // The descriptor was read out of this very section, so it exists.
+    /** @type {DependencyMap} */ (manifest.json[descriptor.field])[descriptor.name] = newRange;
     applied.push({ name: descriptor.name, field: descriptor.field, from: descriptor.range, to: newRange });
   }
 
@@ -409,13 +476,16 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
   // that is the one to bump — bumping devDependencies would leave the runtime
   // dependency on the vulnerable range. Explicit rather than relying on the
   // order descriptors happen to arrive in.
+  /** @type {Map<string, DependencyField>} */
   const directField = new Map();
   for (const d of manifest.descriptors) {
     if (directField.get(d.name) === 'dependencies') continue;
     directField.set(d.name, d.field);
   }
 
+  /** @type {WrittenOverride[]} */
   const appliedOverrides = [];
+  /** @type {WrittenOverride[]} */
   const alreadyPresent = [];
   for (const [name, spec] of Object.entries(overrides || {})) {
     // writeOverrideSpec creates manifest.json.overrides lazily, only if it writes
@@ -424,6 +494,7 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
     writeOverrideSpec(manifest.json, name, spec, appliedOverrides, directField, applied, alreadyPresent);
   }
 
+  /** @type {{ name: string }[]} */
   const removed = [];
   if (removals && removals.length > 0 && manifest.json.overrides && typeof manifest.json.overrides === 'object') {
     // A removal drops a *top-level* override entry (the only kind the audit
@@ -497,23 +568,35 @@ export async function applyUpgrades(manifest, selections, overrides = {}, remova
  * Returns { applied, overrides, removed } aggregated across manifests; each
  * `applied` entry gains `workspace` (the display name, null for the root) for the
  * per-workspace post-submit summary.
+ *
+ * @param {Project} project
+ * @param {Map<string, string>} selections
+ * @param {Record<string, OverrideSpec | null>} [overrides]  a null spec writes nothing
+ * @param {string[]} [removals]
+ * @returns {Promise<ApplyResult<ProjectAppliedUpgrade>>}
  */
 export async function applyProject(project, selections, overrides = {}, removals = []) {
   // Route each id-keyed selection to its owning manifest, re-keyed by the
   // "<field> <name>" slot the per-file writer addresses. Keying by bare name
   // would fan one row's selection out to both fields when a package is declared
   // in dependencies *and* devDependencies.
+  /** @type {Map<string, Map<string, string>>} */
   const byRelPath = new Map();
   for (const d of project.descriptors) {
     const range = selections.get(d.id);
     if (range == null) continue;
-    if (!byRelPath.has(d.relPath)) byRelPath.set(d.relPath, new Map());
-    byRelPath.get(d.relPath).set(`${d.field} ${d.name}`, range);
+    let slots = byRelPath.get(d.relPath);
+    if (!slots) byRelPath.set(d.relPath, (slots = new Map()));
+    slots.set(`${d.field} ${d.name}`, range);
   }
 
+  /** @type {ProjectAppliedUpgrade[]} */
   const applied = [];
+  /** @type {WrittenOverride[]} */
   const appliedOverrides = [];
+  /** @type {{ name: string }[]} */
   const removed = [];
+  /** @type {WrittenOverride[]} */
   const alreadyPresent = [];
   for (const manifest of project.manifests) {
     const isRoot = manifest === project.root;

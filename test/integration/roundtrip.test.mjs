@@ -38,8 +38,11 @@ import {
   auditFixture,
 } from '../fixture-helpers.mjs';
 
+/** @import { RegistrySnapshot } from '../fixture-helpers.mjs' */
+
+/** @param {string} cwd */
 function runNpmInstall(cwd) {
-  return new Promise((resolve) => {
+  return new Promise(/** @param {(result: { ran: boolean, code: number | string | null | undefined, output: string }) => void} resolve */ (resolve) => {
     execFile(
       'npm',
       ['install', '--package-lock-only', '--no-audit', '--no-fund'],
@@ -63,6 +66,7 @@ function runNpmInstall(cwd) {
   });
 }
 
+/** @param {string} file */
 async function exists(file) {
   try {
     await access(file);
@@ -72,6 +76,10 @@ async function exists(file) {
   }
 }
 
+/**
+ * @param {string} fixtureDir
+ * @returns {Promise<{ expect: 'accepted' | 'rejected', code?: string }>}
+ */
 async function readRoundtripConfig(fixtureDir) {
   const file = path.join(fixtureDir, 'roundtrip.json');
   try {
@@ -82,6 +90,7 @@ async function readRoundtripConfig(fixtureDir) {
   return readJson(file);
 }
 
+/** @type {string[]} */
 const tmpDirs = [];
 afterEach(async () => {
   for (const dir of tmpDirs.splice(0)) await rm(dir, { recursive: true, force: true });
@@ -94,6 +103,7 @@ describe('real-world fixtures — npm round-trip', async () => {
   for (const name of fixtures) {
     it(`${name}: npm accepts/rejects the written overrides as expected`, async () => {
       const fixtureDir = path.join(FIXTURES_DIR, name);
+      /** @type {RegistrySnapshot} */
       const snapshot = await readJson(path.join(fixtureDir, 'registry.snapshot.json'));
       const config = await readRoundtripConfig(fixtureDir);
 

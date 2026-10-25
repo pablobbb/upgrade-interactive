@@ -32,6 +32,9 @@ import {
   auditFixture,
 } from '../fixture-helpers.mjs';
 
+/** @import { RegistrySnapshot } from '../fixture-helpers.mjs' */
+
+/** @param {string} file */
 async function exists(file) {
   try {
     await access(file);
@@ -41,6 +44,7 @@ async function exists(file) {
   }
 }
 
+/** @type {string[]} */
 const tmpDirs = [];
 afterEach(async () => {
   for (const dir of tmpDirs.splice(0)) await rm(dir, { recursive: true, force: true });
@@ -53,6 +57,7 @@ describe('real-world fixtures — full pipeline to written overrides', async () 
   for (const name of fixtures) {
     it(`${name}: writes the expected overrides`, async () => {
       const fixtureDir = path.join(FIXTURES_DIR, name);
+      /** @type {RegistrySnapshot} */
       const snapshot = await readJson(path.join(fixtureDir, 'registry.snapshot.json'));
       const expected = await readJson(path.join(fixtureDir, 'expected-overrides.json'));
 

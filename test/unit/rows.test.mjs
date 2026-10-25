@@ -5,16 +5,26 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDisplayRows, overrideView, nextColumn, bulkColumn, windowSlice } from '../../src/components/rows.js';
 import { overrideLabel } from '../../src/components/Row.js';
+import { descriptorFixture, entryFixture, suggestionFixture, vulnFixture } from '../typed-fixtures.mjs';
+
+/** @import { DependencyField } from '../../src/types.js' */
 
 // A normalized descriptor, as App produces before building rows.
-const d = (name, field, relPath = '.', workspace = null) => ({
+/**
+ * @param {string} name
+ * @param {DependencyField} field
+ * @param {string} [relPath]
+ * @param {string | null} [workspace]
+ */
+const d = (name, field, relPath = '.', workspace = null) => descriptorFixture({
   name,
   field,
   relPath,
   workspace,
   id: `${relPath} ${field} ${name}`,
 });
-const loaded = (descriptors) => descriptors.map(() => ({})); // truthy = suggestion loaded
+/** @param {unknown[]} descriptors */
+const loaded = (descriptors) => descriptors.map(() => entryFixture({})); // truthy = suggestion loaded
 
 describe('buildDisplayRows', () => {
   it('renders a standalone project with field headers and no workspace header', () => {
@@ -92,7 +102,7 @@ describe('buildDisplayRows', () => {
       allLoaded: true,
       vulns: null,
       section: false,
-      overrideVulns: [['minimist', { severity: 'high' }]],
+      overrideVulns: [['minimist', vulnFixture({ severity: 'high' })]],
       removableList: [['leftpad', { pin: '1.3.0', reason: 'dead' }]],
     });
 
@@ -115,7 +125,7 @@ describe('buildDisplayRows', () => {
       vulns: null,
       section: false,
       // Pending wins even if lists somehow arrive — they're empty mid-audit anyway.
-      overrideVulns: [['minimist', { severity: 'high' }]],
+      overrideVulns: [['minimist', vulnFixture({ severity: 'high' })]],
       removableList: [['leftpad', { pin: '1.3.0', reason: 'dead' }]],
       auditPending: true,
     });
@@ -135,7 +145,7 @@ describe('buildDisplayRows', () => {
     const descriptors = [d('a', 'dependencies'), d('b', 'dependencies')];
     const rows = buildDisplayRows({
       descriptors,
-      entries: [null, {}], // 'a' still loading, 'b' loaded
+      entries: [null, entryFixture({})], // 'a' still loading, 'b' loaded
       allLoaded: false,
       vulns: null,
       section: false,
@@ -180,7 +190,7 @@ describe('buildDisplayRows', () => {
 
   it('shows loading rows for not-yet-loaded descriptors before allLoaded', () => {
     const descriptors = [d('a', 'dependencies'), d('b', 'dependencies')];
-    const rows = buildDisplayRows({ descriptors, entries: [null, {}], allLoaded: false, vulns: null, section: false });
+    const rows = buildDisplayRows({ descriptors, entries: [null, entryFixture({})], allLoaded: false, vulns: null, section: false });
 
     assert.deepEqual(rows.map((r) => r.kind), ['loading', 'dep']);
     assert.equal(rows[0].key, 'loading:0');
@@ -188,7 +198,7 @@ describe('buildDisplayRows', () => {
 
   it('attaches a vuln to a dep row by package name', () => {
     const descriptors = [d('chalk', 'dependencies')];
-    const vuln = { severity: 'high', cve: 'CVE-x' };
+    const vuln = vulnFixture({ severity: 'high', cve: 'CVE-x' });
     const rows = buildDisplayRows({
       descriptors,
       entries: loaded(descriptors),
@@ -197,6 +207,7 @@ describe('buildDisplayRows', () => {
       section: false,
     });
 
+    assert.ok(rows[0].kind === 'dep');
     assert.equal(rows[0].vuln, vuln);
   });
 });
@@ -236,7 +247,8 @@ describe('overrideView (override provenance)', () => {
 // it drops any package with fewer than two usable slots, exactly three shapes
 // reach the UI — all three are covered below.
 
-const col = (text) => ({ spans: text ? [{ text, color: null }] : [] });
+/** @param {string} text */
+const col = (text) => suggestionFixture({ spans: text ? [{ text, color: null }] : [] });
 const ALL = [col('^1.0.0'), col('^1.4.0'), col('^2.0.0')]; // current / range / latest
 const NO_LATEST = [col('^1.0.0'), col('^1.4.0'), col('')]; // already on the newest major
 const NO_RANGE = [col('^1.0.0'), col(''), col('^2.0.0')]; // maxed inside its range
@@ -386,12 +398,17 @@ describe('buildDisplayRows — overrides not in effect', () => {
 // A staged set of scoped pins can cover only some of the vulnerable dependents;
 // the row has to say so, not only the picker (the 2026-10-17 field report, F1).
 describe('overrideLabel — partial fixes', () => {
-  const vuln = (vulnerable, safe = 0) => ({
+  /**
+   * @param {number} vulnerable
+   * @param {number} [safe]
+   */
+  const vuln = (vulnerable, safe = 0) => vulnFixture({
     instances: [
       ...Array.from({ length: vulnerable }, () => ({ vulnerable: true })),
       ...Array.from({ length: safe }, () => ({ vulnerable: false })),
     ],
   });
+  /** @param {number} n */
   const pins = (n) => ({
     scoped: Array.from({ length: n }, (_, i) => ({ parentName: `p${i}`, parentVersion: '1.0.0', version: '2.0.0' })),
   });

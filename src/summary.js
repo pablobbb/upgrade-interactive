@@ -7,11 +7,17 @@ import path from 'node:path';
 import { TOGGLES } from './flags.js';
 import { INFO, CHILD, BECOMES } from './icons.js';
 
+/** @import { AppliedUpgrade, DependencyField, Project, ProjectManifest, WrittenOverride } from './types.js' */
+
+/** @typedef {Pick<ProjectManifest, 'json'> & Partial<Pick<ProjectManifest, 'relPath'>>} ManifestConfig */
+
 /**
  * Does this project have manifests beyond the root? Derived from the descriptors
  * exactly as buildDisplayRows does, so a `workspaces` field that expands to
  * nothing can't print a "root" heading for a run whose TUI showed no workspace
  * header.
+ *
+ * @param {{ descriptors: Pick<Project['descriptors'][number], 'relPath' | 'workspace'>[] }} project
  */
 export function isMonorepoProject(project) {
   return project.descriptors.some((d) => d.relPath !== '.' || d.workspace != null);
@@ -39,6 +45,9 @@ export function isMonorepoProject(project) {
  * the root manifest is that workspace's own) describes a different tree and must
  * not be used. Omitting it throws rather than defaulting, because the wrong
  * answer here is silent — it re-enables the very bug this argument prevents.
+ *
+ * @param {Pick<Project, 'discovered'>} project
+ * @param {string} lockfileDir
  */
 export function manifestPathsOf(project, lockfileDir) {
   if (typeof lockfileDir !== 'string') {
@@ -70,8 +79,12 @@ export function manifestPathsOf(project, lockfileDir) {
  *
  * `--no-workspaces` loads a single manifest as the root, so this is silent there,
  * exactly as it is for a standalone project.
+ *
+ * @param {{ root: ManifestConfig, manifests?: ManifestConfig[] }} project
+ * @param {Record<string, boolean>} [resolved]
  */
 export function formatIgnoredConfigNote(project, resolved = {}) {
+  /** @type {{ relPath: string, keys: string[] }[]} */
   const ignored = [];
   for (const manifest of project.manifests || []) {
     if (manifest === project.root) continue;
@@ -100,6 +113,14 @@ export function formatIgnoredConfigNote(project, resolved = {}) {
  * in the order applyProject wrote them), then by field. A standalone project has
  * a single (root) group and `isMonorepo` false, so it renders exactly the
  * pre-workspaces output: no workspace heading, field headers flush-left.
+ *
+ * @param {{
+ *   applied?: (AppliedUpgrade & { workspace?: string | null, relPath?: string })[],
+ *   overrides?: WrittenOverride[],
+ *   removed?: { name: string }[],
+ *   alreadyPresent?: WrittenOverride[],
+ *   isMonorepo?: boolean,
+ * }} [result]
  */
 export function formatSummary({
   applied = [],
@@ -109,7 +130,8 @@ export function formatSummary({
   isMonorepo = false,
 } = {}) {
   let out = '';
-  const groups = new Map(); // label -> { dependencies: [], devDependencies: [] }
+  /** @type {Map<string, Record<DependencyField, AppliedUpgrade[]>>} */
+  const groups = new Map();
   for (const change of applied) {
     // A workspace may declare no `name` — npm accepts that and infers one from
     // the directory. Falling straight back to 'root' would file its upgrades
@@ -117,13 +139,14 @@ export function formatSummary({
     // WorkspaceHeader already shows the path in that case, so the two displays
     // would disagree within one run.
     const label = change.workspace || (change.relPath && change.relPath !== '.' ? change.relPath : 'root');
-    if (!groups.has(label)) groups.set(label, { dependencies: [], devDependencies: [] });
-    groups.get(label)[change.field].push(change);
+    let group = groups.get(label);
+    if (!group) groups.set(label, (group = { dependencies: [], devDependencies: [] }));
+    group[change.field].push(change);
   }
   const pad = isMonorepo ? '  ' : '';
   for (const [label, byField] of groups) {
     if (isMonorepo) out += `${label}\n`;
-    for (const field of ['dependencies', 'devDependencies']) {
+    for (const field of /** @type {const} */ (['dependencies', 'devDependencies'])) {
       if (byField[field].length === 0) continue;
       out += `${pad}${field}\n`;
       for (const change of byField[field]) {

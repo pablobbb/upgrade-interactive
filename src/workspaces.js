@@ -6,7 +6,12 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
-/** A platform-separated relative path as a POSIX one. */
+/** @import { PackageJson, WorkspaceInfo, WorkspacesField } from './types.js' */
+
+/**
+ * A platform-separated relative path as a POSIX one.
+ * @param {string} relPath
+ */
 function toPosix(relPath) {
   return relPath.split(path.sep).join('/');
 }
@@ -14,6 +19,9 @@ function toPosix(relPath) {
 /**
  * Read a directory's package.json. Returns { name } (name is null when the
  * manifest declares none), or null when there is no readable/valid manifest.
+ *
+ * @param {string} dir
+ * @returns {Promise<{ name: string | null, workspaces: WorkspacesField | undefined } | null>}
  */
 async function readManifest(dir) {
   let raw;
@@ -23,6 +31,7 @@ async function readManifest(dir) {
     return null;
   }
   try {
+    /** @type {PackageJson} */
     const json = JSON.parse(raw);
     return { name: typeof json.name === 'string' ? json.name : null, workspaces: json.workspaces };
   } catch {
@@ -35,6 +44,8 @@ async function readManifest(dir) {
  * into the patterns that select directories and the `!`-prefixed ones that
  * exclude them. Like minimatch, negations apply to the whole positive result
  * regardless of where they appear in the list, so order doesn't matter here.
+ *
+ * @param {WorkspacesField | null | undefined} workspacesField
  */
 function normalizePatterns(workspacesField) {
   const list = Array.isArray(workspacesField)
@@ -42,7 +53,9 @@ function normalizePatterns(workspacesField) {
     : workspacesField && Array.isArray(workspacesField.packages)
       ? workspacesField.packages
       : [];
+  /** @type {string[]} */
   const include = [];
+  /** @type {string[]} */
   const exclude = [];
   for (const p of list) {
     if (typeof p !== 'string' || p.length === 0) continue;
@@ -56,7 +69,10 @@ function normalizePatterns(workspacesField) {
   return { include, exclude };
 }
 
-/** Escape the characters that would otherwise be regex syntax. */
+/**
+ * Escape the characters that would otherwise be regex syntax.
+ * @param {string} s
+ */
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -65,6 +81,9 @@ function escapeRegExp(s) {
  * Compile one pattern segment into a predicate over a directory name. `*` stands
  * for any run of characters *within* the segment, so npm's `packages/*-api` and
  * `apps/web-*` work, not just a bare `*`. A segment with no `*` is an exact match.
+ *
+ * @param {string} segment
+ * @returns {(name: string) => boolean}
  */
 function segmentMatcher(segment) {
   if (segment === '*') return () => true;
@@ -73,8 +92,13 @@ function segmentMatcher(segment) {
   return (name) => re.test(name);
 }
 
-/** Absolute directories under `root` matched by any of `patterns`. */
+/**
+ * Absolute directories under `root` matched by any of `patterns`.
+ * @param {string} root
+ * @param {string[]} patterns
+ */
 async function matchPatterns(root, patterns) {
+  /** @type {string[]} */
   const dirs = [];
   for (const pattern of patterns) {
     const segments = pattern.split('/').map((s) => s.trim()).filter(Boolean);
@@ -83,7 +107,10 @@ async function matchPatterns(root, patterns) {
   return dirs;
 }
 
-/** Immediate subdirectories of `dir`, excluding node_modules. Never throws. */
+/**
+ * Immediate subdirectories of `dir`, excluding node_modules. Never throws.
+ * @param {string} dir
+ */
 async function listSubdirs(dir) {
   let entries;
   try {
@@ -107,6 +134,10 @@ async function listSubdirs(dir) {
  *   - a trailing "**"       ("packages/**" — that dir and all descendants)
  * A "**" is only meaningful as the final segment; anything after it is ignored.
  * Negation is handled a level up, in normalizePatterns/expandWorkspaces.
+ *
+ * @param {string} base
+ * @param {string[]} segments
+ * @returns {Promise<string[]>}
  */
 async function matchSegments(base, segments) {
   if (segments.length === 0) return [base];
@@ -145,12 +176,17 @@ async function matchSegments(base, segments) {
  * back to the filesystem (that is what `dir` is for). Normalizing once here is
  * what makes `-w packages/api` work on Windows, where `path.relative` would
  * otherwise yield `packages\api` and match nothing a user could reasonably type.
+ *
+ * @param {string} rootDir
+ * @param {WorkspacesField | null | undefined} workspacesField
+ * @returns {Promise<WorkspaceInfo[]>}
  */
 export async function expandWorkspaces(rootDir, workspacesField) {
   const root = path.resolve(rootDir);
   const { include, exclude } = normalizePatterns(workspacesField);
   const excluded = new Set(await matchPatterns(root, exclude));
   const seen = new Set();
+  /** @type {WorkspaceInfo[]} */
   const result = [];
   for (const dir of await matchPatterns(root, include)) {
     if (dir === root || seen.has(dir) || excluded.has(dir)) continue;
@@ -163,7 +199,11 @@ export async function expandWorkspaces(rootDir, workspacesField) {
   return result;
 }
 
-/** True when `child` is `parent` or nested beneath it. */
+/**
+ * True when `child` is `parent` or nested beneath it.
+ * @param {string} parent
+ * @param {string} child
+ */
 function isWithin(parent, child) {
   const p = path.resolve(parent);
   const c = path.resolve(child);
@@ -176,6 +216,9 @@ function isWithin(parent, child) {
  * { rootDir, workspacesField, workspaces } — `workspaces` excludes the root.
  * Returns null when `cwd` is a standalone package (no owning workspace root),
  * so callers degrade to single-manifest behavior.
+ *
+ * @param {string} cwd
+ * @returns {Promise<{ rootDir: string, workspacesField: WorkspacesField, workspaces: WorkspaceInfo[] } | null>}
  */
 export async function findProjectRoot(cwd) {
   const start = path.resolve(cwd);
@@ -200,6 +243,9 @@ export async function findProjectRoot(cwd) {
  * High-level entry point for Phase 2. Returns the project's package directories
  * as `[{ dir, name, relPath }]` with the root first (relPath "."), followed by
  * each workspace, or null when `cwd` is standalone (no workspaces).
+ *
+ * @param {string} cwd
+ * @returns {Promise<WorkspaceInfo[] | null>}
  */
 export async function discoverWorkspaces(cwd) {
   const found = await findProjectRoot(cwd);

@@ -16,6 +16,9 @@ import { computeVulnerabilities } from '../../src/vulnerabilities.js';
 import { manifestPathsOf } from '../../src/summary.js';
 import { defaultOverrideSelection } from '../../src/override-select.js';
 
+/** @import { PackageJson } from '../../src/types.js' */
+
+/** @type {string[]} */
 const tmpDirs = [];
 afterEach(async () => {
   for (const dir of tmpDirs.splice(0)) await rm(dir, { recursive: true, force: true });
@@ -24,6 +27,10 @@ afterEach(async () => {
 async function scaffoldMonorepo() {
   const root = await mkdtemp(path.join(tmpdir(), 'nui-ws-int-'));
   tmpDirs.push(root);
+  /**
+   * @param {string} rel
+   * @param {PackageJson} obj
+   */
   const write = async (rel, obj) => {
     await mkdir(path.join(root, rel), { recursive: true });
     await writeFile(path.join(root, rel, 'package.json'), JSON.stringify(obj, null, 2) + '\n', 'utf8');
@@ -35,6 +42,10 @@ async function scaffoldMonorepo() {
   return root;
 }
 
+/**
+ * @param {string} dir
+ * @param {string} rel
+ */
 const readManifest = (dir, rel) => readFile(path.join(dir, rel, 'package.json'), 'utf8');
 
 describe('workspaces — end-to-end round-trip', () => {
@@ -114,6 +125,10 @@ describe('workspaces — end-to-end round-trip', () => {
   it('still refuses an unpinnable override under --no-workspaces', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'nui-ws-int-'));
     tmpDirs.push(root);
+    /**
+     * @param {string} rel
+     * @param {PackageJson} obj
+     */
     const write = async (rel, obj) => {
       await mkdir(path.join(root, rel), { recursive: true });
       await writeFile(path.join(root, rel, 'package.json'), JSON.stringify(obj, null, 2) + '\n', 'utf8');

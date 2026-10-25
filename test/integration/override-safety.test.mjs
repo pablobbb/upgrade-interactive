@@ -13,19 +13,41 @@ import { loadInstalledVersions } from '../../src/lockfile.js';
 import { computeVulnerabilities } from '../../src/vulnerabilities.js';
 import { defaultOverrideSelection } from '../../src/override-select.js';
 import { FIXTURES_DIR, stageFixture, stubFromSnapshot, auditFixture } from '../fixture-helpers.mjs';
+import { present } from '../narrow.mjs';
+
+/**
+ * @import { LockPackages } from '../../src/types.js'
+ * @import { RegistrySnapshot } from '../fixture-helpers.mjs'
+ */
+
+/**
+ * An installed copy of a package, with what one of its dependencies resolves to.
+ * @typedef {{ version: string } & Record<string, string | null | undefined>} Copy
+ */
 
 const exec = promisify(execFile);
+/** @type {string[]} */
 const dirs = [];
 afterEach(async () => {
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
+/** @param {string} file */
 const readJson = async (file) => JSON.parse(await readFile(file, 'utf8'));
+/**
+ * @param {string} file
+ * @param {unknown} value
+ */
 const writeJson = (file, value) => writeFile(file, JSON.stringify(value, null, 2) + '\n');
+/**
+ * @param {string} cwd
+ * @param {string[]} args
+ */
 async function npm(cwd, args) {
   await exec('npm', args, {
     cwd, env: { ...process.env, ASDF_NODEJS_VERSION: process.versions.node }, timeout: 120000,
   });
 }
+/** @param {string} cwd */
 const install = (cwd) => npm(cwd, ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund']);
 
 // The npm these tests drive (CI runs npm 10 and 11). How npm treats several
@@ -35,9 +57,15 @@ const install = (cwd) => npm(cwd, ['install', '--package-lock-only', '--ignore-s
 const { stdout: npmVersion } = await exec('npm', ['--version'], {
   env: { ...process.env, ASDF_NODEJS_VERSION: process.versions.node },
 });
+/** @param {string} version */
 const npmAtLeast = (version) => semver.gte(npmVersion.trim(), version);
 
 // The version of `name` the lockfile entry at `from` resolves to, by node's lookup.
+/**
+ * @param {LockPackages} packages
+ * @param {string} from
+ * @param {string} name
+ */
 function resolvedFrom(packages, from, name) {
   for (let prefix = from; ; ) {
     const hit = packages[`${prefix ? `${prefix}/` : ''}node_modules/${name}`];
@@ -49,11 +77,17 @@ function resolvedFrom(packages, from, name) {
 }
 
 // Every installed copy of `name`, with what `child` resolves to from it.
+/**
+ * @param {string} dir
+ * @param {string} name
+ * @param {string} child
+ */
 async function copiesOf(dir, name, child) {
-  const { packages } = await loadInstalledVersions(dir);
+  const { packages } = present(await loadInstalledVersions(dir), 'lockfile');
   return Object.entries(packages)
     .filter(([p]) => p === `node_modules/${name}` || p.endsWith(`/node_modules/${name}`))
-    .map(([p, info]) => ({ version: info.version, [child]: resolvedFrom(packages, p, child) }));
+    // Every installed copy carries a version.
+    .map(([p, info]) => /** @type {Copy} */ ({ version: info.version, [child]: resolvedFrom(packages, p, child) }));
 }
 
 describe('override safety — real npm resolution', () => {
@@ -80,7 +114,7 @@ describe('override safety — real npm resolution', () => {
       advisories: { 'brace-expansion': [{ vulnerable_versions: '<1.1.12', severity: 'low' }] },
     }));
     await applyUpgrades(await loadManifest(dir), new Map(), {
-      'brace-expansion': defaultOverrideSelection(vulns.get('brace-expansion')),
+      'brace-expansion': defaultOverrideSelection(present(vulns.get('brace-expansion'))),
     });
     assert.deepEqual((await readJson(file)).overrides, {
       'minimatch@3.1.5': { 'brace-expansion': '1.1.12' },
@@ -95,11 +129,14 @@ describe('override safety — real npm resolution', () => {
   // Measured on npm 10.9.9 and 11.13.0.
   it('reaches the in-range fix once the pins the note names are gone', async () => {
     const fixture = path.join(FIXTURES_DIR, 'held-by-scoped-pins');
+    /** @type {RegistrySnapshot} */
     const snapshot = await readJson(path.join(fixture, 'registry.snapshot.json'));
+    /** @param {string} cwd */
     const update = (cwd) => npm(cwd, ['update', 'brace-expansion', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund']);
+    /** @param {string} dir */
     const vulnerableCopies = async (dir) =>
       (await copiesOf(dir, 'minimatch', 'brace-expansion'))
-        .filter((c) => snapshot.advisories['brace-expansion'].some((a) => semver.satisfies(c['brace-expansion'], a.vulnerable_versions)))
+        .filter((c) => snapshot.advisories['brace-expansion'].some((a) => semver.satisfies(/** @type {string} */ (c['brace-expansion']), a.vulnerable_versions)))
         .map((c) => `minimatch@${c.version} > brace-expansion@${c['brace-expansion']}`)
         .sort();
     const held = ['minimatch@5.1.9 > brace-expansion@2.1.4', 'minimatch@9.0.9 > brace-expansion@2.1.4'];
@@ -112,8 +149,10 @@ describe('override safety — real npm resolution', () => {
     const dir = await stageFixture(fixture);
     dirs.push(dir);
     const { manifest, vulns } = await auditFixture(dir, snapshot);
-    for (const { key } of vulns.get('brace-expansion').heldBy) delete manifest.json.overrides[key]['brace-expansion'];
-    for (const [key, bucket] of Object.entries(manifest.json.overrides)) if (Object.keys(bucket).length === 0) delete manifest.json.overrides[key];
+    // This fixture's overrides are all pins nested under a parent key.
+    const overrides = /** @type {Record<string, Record<string, string>>} */ (manifest.json.overrides);
+    for (const { key } of present(vulns.get('brace-expansion')?.heldBy)) delete overrides[key]['brace-expansion'];
+    for (const [key, bucket] of Object.entries(overrides)) if (Object.keys(bucket).length === 0) delete overrides[key];
     await writeJson(path.join(dir, 'package.json'), manifest.json);
     await update(dir);
     assert.deepEqual(await vulnerableCopies(dir), []);
@@ -131,7 +170,7 @@ describe('override safety — real npm resolution', () => {
     await install(dir);
     const bare = { glob: { inflight: '1.0.6' } };
     await writeJson(file, { ...base, overrides: bare });
-    const glob7Minimatch = async () => (await copiesOf(dir, 'glob', 'minimatch')).find((c) => c.version === '7.2.3').minimatch;
+    const glob7Minimatch = async () => (await copiesOf(dir, 'glob', 'minimatch')).find((c) => c.version === '7.2.3')?.minimatch;
     assert.equal(await glob7Minimatch(), '3.1.1');
 
     const { vulns } = await computeVulnerabilities({ installed: await loadInstalledVersions(dir), overrides: bare }, stubFromSnapshot({
@@ -139,7 +178,8 @@ describe('override safety — real npm resolution', () => {
       advisories: { minimatch: [{ vulnerable_versions: '<3.1.2', severity: 'high' }] },
     }));
     const vuln = vulns.get('minimatch');
-    assert.deepEqual(vuln.instances.find((i) => i.vulnerable).pinRefusal, { kind: 'shadowed', by: 'glob' });
+    assert.ok(vuln);
+    assert.deepEqual(vuln.instances.find((i) => i.vulnerable)?.pinRefusal, { kind: 'shadowed', by: 'glob' });
     assert.equal(defaultOverrideSelection(vuln), null);
 
     // Why it is refused: npm ignores the pin the tool used to write, which lands
@@ -163,6 +203,10 @@ describe('override safety — real npm resolution', () => {
     await writeJson(file, base);
     await install(dir);
     const v = Object.fromEntries((await copiesOf(dir, 'minimatch', 'brace-expansion')).map((c) => [c.version.split('.')[0], c.version]));
+    /**
+     * @param {string} a
+     * @param {string} b
+     */
     const pins = (a, b) => ({ [`minimatch@${v[5]}`]: { 'brace-expansion': a }, [`minimatch@${v[9]}`]: { 'brace-expansion': b } });
     // Lock vulnerable 2.0.x under both (different versions, so npm applies both), then drop the pins.
     await writeJson(file, { ...base, overrides: pins('2.0.1', '2.0.2') });
@@ -174,6 +218,7 @@ describe('override safety — real npm resolution', () => {
       advisories: { 'brace-expansion': [{ vulnerable_versions: '>=2.0.0 <2.0.3', severity: 'high' }] },
     }));
     const vuln = vulns.get('brace-expansion');
+    assert.ok(vuln);
     assert.deepEqual(vuln.instances.filter((i) => i.vulnerable).map((i) => i.pinRefusal?.kind), ['shadowed', 'shadowed']);
     assert.equal(defaultOverrideSelection(vuln), null);
 
@@ -211,6 +256,7 @@ describe('override safety — real npm resolution', () => {
     const braceExpansion = async () =>
       Object.fromEntries((await copiesOf(dir, 'minimatch', 'brace-expansion')).map((c) => [c.version, c['brace-expansion']]));
     assert.deepEqual(await braceExpansion(), { '3.0.4': '1.1.11', '3.1.2': '1.1.21' });
+    /** @param {string[]} versions */
     const audit = async (versions) =>
       (await computeVulnerabilities({ installed: await loadInstalledVersions(dir) }, stubFromSnapshot({
         meta: { 'brace-expansion': { versions, distTags: {} } },
@@ -219,11 +265,12 @@ describe('override safety — real npm resolution', () => {
 
     // Only 1.1.12 is on offer: it would downgrade glob's copy, so the pin is refused.
     const refused = await audit(['1.1.11', '1.1.12']);
-    assert.deepEqual(refused.instances.find((i) => i.vulnerable).pinRefusal, { kind: 'reaches', copy: 'minimatch@3.1.2' });
+    assert.ok(refused);
+    assert.deepEqual(refused.instances.find((i) => i.vulnerable)?.pinRefusal, { kind: 'reaches', copy: 'minimatch@3.1.2' });
     assert.equal(defaultOverrideSelection(refused), null);
 
     // With 1.1.21 on offer, that's the only harmless fix, and it's what gets pinned.
-    const spec = defaultOverrideSelection(await audit(['1.1.11', '1.1.12', '1.1.21']));
+    const spec = defaultOverrideSelection(present(await audit(['1.1.11', '1.1.12', '1.1.21'])));
     await applyUpgrades(await loadManifest(dir), new Map(), { 'brace-expansion': spec });
     assert.deepEqual((await readJson(file)).overrides, { 'minimatch@3.0.4': { 'brace-expansion': '1.1.21' } });
     await install(dir);
@@ -244,10 +291,10 @@ describe('override safety — real npm resolution', () => {
     await writeJson(file, { ...base, overrides: { 'glob@7.2.3': { minimatch: '3.1.1' } } });
     await install(dir);
     // The user's own pin under the other copy of glob, for a package glob@7 doesn't share.
-    const glob10 = (await copiesOf(dir, 'glob', 'minipass')).find((c) => c.version.startsWith('10.'));
-    const theirs = { [`glob@${glob10.version}`]: { minipass: glob10.minipass } };
+    const glob10 = present((await copiesOf(dir, 'glob', 'minipass')).find((c) => c.version.startsWith('10.')), 'glob@10 copy');
+    const theirs = { [`glob@${glob10.version}`]: { minipass: present(glob10.minipass, 'minipass under glob@10') } };
     await writeJson(file, { ...base, overrides: theirs });
-    const glob7Minimatch = async () => (await copiesOf(dir, 'glob', 'minimatch')).find((c) => c.version === '7.2.3').minimatch;
+    const glob7Minimatch = async () => (await copiesOf(dir, 'glob', 'minimatch')).find((c) => c.version === '7.2.3')?.minimatch;
     assert.equal(await glob7Minimatch(), '3.1.1');
 
     const { vulns } = await computeVulnerabilities({ installed: await loadInstalledVersions(dir), overrides: theirs }, stubFromSnapshot({
@@ -255,7 +302,8 @@ describe('override safety — real npm resolution', () => {
       advisories: { minimatch: [{ vulnerable_versions: '<3.1.2', severity: 'high' }] },
     }));
     const vuln = vulns.get('minimatch');
-    assert.deepEqual(vuln.instances.find((i) => i.vulnerable).pinRefusal, { kind: 'shadowed', by: Object.keys(theirs)[0] });
+    assert.ok(vuln);
+    assert.deepEqual(vuln.instances.find((i) => i.vulnerable)?.pinRefusal, { kind: 'shadowed', by: Object.keys(theirs)[0] });
     assert.equal(defaultOverrideSelection(vuln), null);
 
     // Why: npm 11.12+ drops the hoisted copy's pin when the two keys share no
@@ -282,7 +330,8 @@ describe('override safety — real npm resolution', () => {
       advisories: { minimatch: [{ vulnerable_versions: '<3.1.2', severity: 'high' }] },
     }));
     const vuln = vulns.get('minimatch');
-    assert.deepEqual(vuln.instances.find((i) => i.vulnerable).pinRefusal, {
+    assert.ok(vuln);
+    assert.deepEqual(vuln.instances.find((i) => i.vulnerable)?.pinRefusal, {
       kind: 'eoverride', key: 'glob@7.2.3', name: 'glob', rootSpec: '^7.2.0',
     });
     assert.equal(defaultOverrideSelection(vuln), null);
@@ -305,8 +354,8 @@ describe('override safety — real npm resolution', () => {
     });
     await install(dir);
     const manifest = await loadManifest(dir);
-    const installed = await loadInstalledVersions(dir);
-    assert.deepEqual([...installed.versions.get('concat-map')], ['0.0.2']);
+    const installed = present(await loadInstalledVersions(dir), 'lockfile');
+    assert.deepEqual([...(installed.versions.get('concat-map') ?? [])], ['0.0.2']);
     const { removableOverrides } = await computeVulnerabilities({ installed, overrides: manifest.json.overrides }, {
       fetchPackageMeta: async () => null,
       fetchBulkAdvisories: async () => ({ ok: true, advisories: new Map() }),
@@ -314,6 +363,6 @@ describe('override safety — real npm resolution', () => {
     assert.equal(removableOverrides.has('concat-map@0.0.1'), false);
     await applyUpgrades(manifest, new Map(), {}, [...removableOverrides.keys()]);
     await install(dir);
-    assert.deepEqual([...(await loadInstalledVersions(dir)).versions.get('concat-map')], ['0.0.2']);
+    assert.deepEqual([...(present(await loadInstalledVersions(dir), 'lockfile').versions.get('concat-map') ?? [])], ['0.0.2']);
   });
 });

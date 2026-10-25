@@ -29,6 +29,7 @@ const entries = Object.entries(icons);
 // followed by a sentinel, and count the padding Ink emitted to reach the box's
 // far edge. No icon contains a space, so every space in the frame is padding.
 const CELL = 6;
+/** @param {string} glyph */
 function inkColumns(glyph) {
   const { lastFrame } = render(
     e(
@@ -38,7 +39,8 @@ function inkColumns(glyph) {
       e(Text, null, '|')
     )
   );
-  return CELL - (lastFrame().match(/ /g) || []).length;
+  // render() draws synchronously, so there is always a frame.
+  return CELL - (/** @type {string} */ (lastFrame()).match(/ /g) || []).length;
 }
 
 describe('icons', () => {

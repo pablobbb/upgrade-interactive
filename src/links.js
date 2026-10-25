@@ -7,6 +7,9 @@ const BEL = '';
  * Render `text` as a clickable link to `url` using the OSC 8 escape sequence
  * when writing to a TTY that can render it. When it can't (piped output, dumb
  * terminal), fall back to `text (url)` so the URL stays visible and copyable.
+ *
+ * @param {string} text
+ * @param {string | null | undefined} url
  */
 export function hyperlink(text, url) {
   if (!url) return text;

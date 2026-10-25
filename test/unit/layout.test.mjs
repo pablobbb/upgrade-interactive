@@ -13,9 +13,11 @@ import { render } from 'ink-testing-library';
 import { Box } from 'ink';
 import { Header } from '../../src/components/Header.js';
 import { Row } from '../../src/components/Row.js';
+import { suggestionFixture } from '../typed-fixtures.mjs';
 
 const e = React.createElement;
-const suggestion = (text) => ({ spans: [{ text }] });
+/** @param {string} text */
+const suggestion = (text) => suggestionFixture({ spans: [{ text }] });
 
 // Ink colorizes when the suite is launched from a color-capable terminal and not
 // when it is piped, so raw frames carry SGR escapes that inflate .length and
@@ -41,7 +43,8 @@ function frameLines() {
       })
     )
   );
-  const lines = lastFrame().replace(SGR, '').split('\n');
+  // render() draws synchronously, so there is always a frame.
+  const lines = /** @type {string} */ (lastFrame()).replace(SGR, '').split('\n');
   return {
     header: lines.find((l) => l.includes('Current')),
     row: lines.find((l) => l.includes('lodash')),
@@ -67,6 +70,7 @@ describe('table alignment', () => {
 
   it('leaves the marker hanging to the left of the label', () => {
     const { header, row } = frameLines();
+    assert.ok(header && row, 'no header or row line rendered');
     // The ●/○ belongs to the column but sits outside the label's span, so a
     // column starts two columns before its heading does.
     assert.equal(row.indexOf('○'), header.indexOf('Current') - 2);
@@ -77,6 +81,7 @@ describe('table alignment', () => {
     // 100-column terminal — the width this harness reports — anything wider makes
     // Yoga shrink the header alone, which is its own source of drift.
     const { header } = frameLines();
+    assert.ok(header, 'no header line rendered');
     assert.ok(header.length <= 100, `header rendered ${header.length} columns wide`);
   });
 });

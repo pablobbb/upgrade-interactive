@@ -9,14 +9,25 @@ import assert from 'node:assert/strict';
 import { computeVulnerabilities } from '../../src/vulnerabilities.js';
 import { defaultOverrideSelection, isPinBlocked } from '../../src/override-select.js';
 
+/** @import { Advisory, BulkAdvisories, Descriptor, InstalledTree, Overrides, PackageMeta } from '../../src/types.js' */
+
 // --- Test data builders ------------------------------------------------------
 
 // A registry double: `meta` maps name -> { versions, distTags }; `advisories`
 // maps name -> advisory[]. `ok:false` simulates a failed advisory lookup.
+/**
+ * @param {{ meta?: Record<string, PackageMeta>, advisories?: Record<string, Advisory[]>, ok?: boolean }} [registry]
+ */
 function stubRegistry({ meta = {}, advisories = {}, ok = true } = {}) {
   return {
+    /** @param {string} name */
     fetchPackageMeta: async (name) => (name in meta ? meta[name] : null),
+    /**
+     * @param {Record<string, Iterable<string>>} versionsByName
+     * @returns {Promise<BulkAdvisories>}
+     */
     fetchBulkAdvisories: async (versionsByName) => {
+      /** @type {Map<string, Advisory[]>} */
       const found = new Map();
       for (const name of Object.keys(versionsByName)) {
         if (advisories[name]) found.set(name, advisories[name]);
@@ -26,6 +37,10 @@ function stubRegistry({ meta = {}, advisories = {}, ok = true } = {}) {
   };
 }
 
+/**
+ * @param {Partial<Advisory>} [overrides]
+ * @returns {Advisory}
+ */
 function advisory(overrides = {}) {
   return {
     vulnerable_versions: '<1.0.0',
@@ -38,6 +53,7 @@ function advisory(overrides = {}) {
 
 // An `installed` tree with one benign package, so tests exercise a realistic
 // non-empty tree without every test having to spell one out.
+/** @param {Partial<InstalledTree> & { direct?: Set<string> }} [extra] */
 function treeWith(extra = {}) {
   return {
     versions: new Map([['keep-alive', new Set(['1.0.0'])]]),
@@ -107,6 +123,7 @@ describe('computeVulnerabilities — detection', () => {
     const { vulns } = await computeVulnerabilities({ installed }, registry);
 
     const v = vulns.get('pkg');
+    assert.ok(v);
     assert.equal(v.severity, 'critical');
     assert.equal(v.cve, 'GHSA-crit', 'the critical advisory should drive the primary link');
   });
@@ -164,6 +181,7 @@ describe('computeVulnerabilities — pin instances', () => {
 
     const { vulns } = await computeVulnerabilities({ installed }, registry);
     const v = vulns.get('dependency-a');
+    assert.ok(v);
 
     assert.equal(v.pinStrategy, 'scoped');
     const byParent = Object.fromEntries(v.instances.map((i) => [i.parentName, i]));
@@ -192,7 +210,7 @@ describe('computeVulnerabilities — pin instances', () => {
 
     const { vulns } = await computeVulnerabilities({ installed }, registry);
 
-    assert.equal(vulns.get('dependency-a').pinStrategy, 'global');
+    assert.equal(vulns.get('dependency-a')?.pinStrategy, 'global');
   });
 
   it('goes scoped when vulnerable instances need different safe versions per major', async () => {
@@ -215,6 +233,7 @@ describe('computeVulnerabilities — pin instances', () => {
 
     const { vulns } = await computeVulnerabilities({ installed }, registry);
     const v = vulns.get('dependency-a');
+    assert.ok(v);
     const byParent = Object.fromEntries(v.instances.map((i) => [i.parentName, i]));
 
     assert.equal(v.pinStrategy, 'scoped');
@@ -240,7 +259,7 @@ describe('computeVulnerabilities — pin instances', () => {
 
     const { vulns } = await computeVulnerabilities({ installed }, registry);
 
-    assert.equal(vulns.get('lodash').pinStrategy, 'global');
+    assert.equal(vulns.get('lodash')?.pinStrategy, 'global');
   });
 
   it('collapses copies of the same parent@version into a single scoped decision', async () => {
@@ -268,6 +287,7 @@ describe('computeVulnerabilities — pin instances', () => {
 
     const { vulns } = await computeVulnerabilities({ installed }, registry);
     const v = vulns.get('dependency-a');
+    assert.ok(v);
 
     assert.equal(v.pinStrategy, 'scoped');
     const pkgA = v.instances.filter((i) => i.parentName === 'pkg-a');
@@ -291,8 +311,8 @@ describe('computeVulnerabilities — pin instances', () => {
 
     const { vulns } = await computeVulnerabilities({ installed }, registry);
 
-    assert.equal(vulns.get('lodash').pinStrategy, 'global');
-    assert.deepEqual(vulns.get('lodash').instances, []);
+    assert.equal(vulns.get('lodash')?.pinStrategy, 'global');
+    assert.deepEqual(vulns.get('lodash')?.instances, []);
   });
 });
 
@@ -300,6 +320,10 @@ describe('computeVulnerabilities — pin instances', () => {
 
 describe('computeVulnerabilities — advisory fallbacks', () => {
   // One vulnerable installed package; only the advisory shape varies per test.
+  /**
+   * @param {Partial<Advisory>} advisoryFields
+   * @param {string[]} [metaVersions]
+   */
   function vulnerableWith(advisoryFields, metaVersions = ['1.0.0', '2.0.0']) {
     const installed = {
       versions: new Map([['pkg', new Set(['1.0.0'])]]),
@@ -316,13 +340,14 @@ describe('computeVulnerabilities — advisory fallbacks', () => {
   it('prefers the CVE number over the GHSA id as the label', async () => {
     const { vulns } = await vulnerableWith({ cves: ['CVE-2020-1234'], github_advisory_id: 'GHSA-zzzz' });
 
-    assert.equal(vulns.get('pkg').cve, 'CVE-2020-1234');
+    assert.equal(vulns.get('pkg')?.cve, 'CVE-2020-1234');
   });
 
   it('falls back to the GHSA id and derives the advisory url from it', async () => {
     const { vulns } = await vulnerableWith({ url: null, github_advisory_id: 'GHSA-abcd' });
 
     const v = vulns.get('pkg');
+    assert.ok(v);
     assert.equal(v.cve, 'GHSA-abcd');
     assert.equal(v.url, 'https://github.com/advisories/GHSA-abcd');
   });
@@ -330,13 +355,14 @@ describe('computeVulnerabilities — advisory fallbacks', () => {
   it('labels by numeric advisory id when no CVE, GHSA id, or GHSA url exists', async () => {
     const { vulns } = await vulnerableWith({ url: 'https://example.com/adv/9', id: 9 });
 
-    assert.equal(vulns.get('pkg').cve, 'advisory 9');
+    assert.equal(vulns.get('pkg')?.cve, 'advisory 9');
   });
 
   it('derives firstPatched from patched_versions when no safe version is published yet', async () => {
     const { vulns } = await vulnerableWith({ patched_versions: '>=2.0.0' }, ['1.0.0']);
 
     const v = vulns.get('pkg');
+    assert.ok(v);
     assert.deepEqual(v.safeVersions, [], 'nothing published is safe');
     assert.equal(v.firstPatched, '2.0.0', 'the advisory itself names the fix');
   });
@@ -424,7 +450,7 @@ describe('computeVulnerabilities — removable overrides', () => {
       registry
     );
 
-    assert.equal(removableOverrides.get('leftpad').reason, 'dead');
+    assert.equal(removableOverrides.get('leftpad')?.reason, 'dead');
   });
 
   it("does not flag when a dependent's range is not a semver range at all", async () => {
@@ -574,6 +600,7 @@ describe('computeVulnerabilities — an existing override is not re-flagged', ()
     });
     const registry = stubRegistry({ meta: { lodash: { versions: ['4.17.11', '4.17.15'], distTags: {} } } });
     const inner = registry.fetchBulkAdvisories;
+    /** @type {Record<string, Iterable<string>> | null} */
     let queried = null;
     registry.fetchBulkAdvisories = async (versionsByName) => {
       queried = versionsByName;
@@ -582,8 +609,10 @@ describe('computeVulnerabilities — an existing override is not re-flagged', ()
 
     await computeVulnerabilities({ overrides: { lodash: '4.17.21' }, installed }, registry);
 
+    // `queried` is assigned inside the stub, where TypeScript can't follow it.
+    const seen = /** @type {Record<string, Iterable<string>> | null} */ (queried);
     assert.deepEqual(
-      [...(queried.lodash ?? [])],
+      [...(seen?.lodash ?? [])],
       ['4.17.15'],
       'lodash is installed nowhere, but the version its dependent would fall back to still needs checking'
     );
@@ -620,6 +649,7 @@ describe('computeVulnerabilities — workspaces', () => {
       meta: { lodash: { versions: ['4.17.11', '4.17.21'], distTags: {} } },
       advisories: { lodash: [advisory({ vulnerable_versions: '<4.17.19', severity: 'high' })] },
     });
+  /** @type {Pick<Descriptor, 'name' | 'range' | 'field'>[]} */
   const lodashDescriptor = [{ name: 'lodash', range: '^4.17.0', field: 'dependencies' }];
 
   it('classifies a workspace direct dependency as direct and resolves its hoisted install', async () => {
@@ -668,6 +698,7 @@ describe('computeVulnerabilities — workspaces', () => {
     const { vulns } = await computeVulnerabilities({ descriptors: lodashDescriptor, installed }, lodashRegistry());
 
     const v = vulns.get('lodash');
+    assert.ok(v);
     assert.equal(v.pinConflict, false, 'agreeing manifests are not a conflict');
     assert.equal(v.instances.length, 1, 'the root and the workspace collapse into one pin');
     assert.deepEqual(v.instances[0].safeCandidates, ['4.17.21']);
@@ -711,7 +742,7 @@ describe('computeVulnerabilities — workspaces', () => {
     assert.ok(merged, 'the collapsed root/workspace instance carries the flag');
     assert.deepEqual(merged.safeCandidates, [], 'no candidate is offered for the conflicted instance');
     assert.equal(merged.bestSafeInRange, null);
-    assert.deepEqual(merged.conflictRanges.sort(), ['^3.0.0', '^4.17.0']);
+    assert.deepEqual(merged.conflictRanges?.sort(), ['^3.0.0', '^4.17.0']);
     assert.equal(
       defaultOverrideSelection(v),
       null,
@@ -769,6 +800,7 @@ describe('computeVulnerabilities — workspaces', () => {
 
 describe('computeVulnerabilities — unapplied overrides', () => {
   // jsdom's undici edge: declared ^7.25.0, resolved 7.28.0, mandated 7.29.0.
+  /** @param {string} undiciVersion */
   const scopedTree = (undiciVersion) =>
     treeWith({
       packages: {
@@ -784,7 +816,7 @@ describe('computeVulnerabilities — unapplied overrides', () => {
       stubRegistry()
     );
 
-    assert.deepEqual(unappliedOverrides.get('jsdom').mandates, [
+    assert.deepEqual(unappliedOverrides.get('jsdom')?.mandates, [
       {
         name: 'undici',
         mandated: '7.29.0',
@@ -819,8 +851,8 @@ describe('computeVulnerabilities — unapplied overrides', () => {
       stubRegistry()
     );
 
-    assert.equal(unappliedOverrides.get('undici').mandates[0].mandated, '7.29.0');
-    assert.equal(unappliedOverrides.get('undici').mandates[0].found[0].installedVersion, '7.28.0');
+    assert.equal(unappliedOverrides.get('undici')?.mandates[0].mandated, '7.29.0');
+    assert.equal(unappliedOverrides.get('undici')?.mandates[0].found[0].installedVersion, '7.28.0');
   });
 
   it("leaves an override for a package no longer in the tree as 'dead', not unapplied", async () => {
@@ -922,12 +954,18 @@ describe('computeVulnerabilities — fixable in range', () => {
       advisories: { 'dependency-a': [advisory({ vulnerable_versions: '<1.3.0', severity: 'high' })] },
       ...extra,
     });
+  /**
+   * @param {InstalledTree} installed
+   * @param {Overrides} [overrides]
+   * @param {ReturnType<typeof registry>} [reg]
+   */
   const audit = async (installed, overrides, reg = registry()) =>
     (await computeVulnerabilities({ installed, overrides }, reg)).vulns.get('dependency-a');
 
   // The F2 shape: the next run would call a pin here "not needed".
   it('reports a fix every dependent\'s range already allows', async () => {
     const v = await audit(twoDependents());
+    assert.ok(v);
 
     assert.equal(v.inRangeFix, true);
     assert.deepEqual(v.heldBy, []);
@@ -936,12 +974,14 @@ describe('computeVulnerabilities — fixable in range', () => {
 
   it('is false when one dependent\'s newest in-range version is still vulnerable', async () => {
     const v = await audit(twoDependents('~1.2.0'));
+    assert.ok(v);
 
     assert.equal(v.inRangeFix, false, 'pkg-b can only reach 1.2.x');
   });
 
   it('is false, and judges no override, when candidates could not be verified', async () => {
     const v = await audit(twoDependents(), { 'dependency-a': '1.2.0' }, registry({ ok: false }));
+    assert.ok(v);
 
     assert.equal(v.inRangeFix, false);
     assert.equal(v.heldBy, null);
@@ -949,6 +989,7 @@ describe('computeVulnerabilities — fixable in range', () => {
 
   it('names a top-level or scoped pin that holds a vulnerable version', async () => {
     const v = await audit(twoDependents(), { 'dependency-a': '1.2.0', 'pkg-b': { 'dependency-a': '~1.2.0' } });
+    assert.ok(v);
 
     assert.deepEqual(v.heldBy, [
       { key: 'dependency-a', pin: '1.2.0' },
@@ -958,12 +999,14 @@ describe('computeVulnerabilities — fixable in range', () => {
 
   it('leaves out a pin that lands on a safe version', async () => {
     const v = await audit(twoDependents(), { 'pkg-a': { 'dependency-a': '^1.3.0' }, 'pkg-b': { '.': '1.0.0' } });
+    assert.ok(v);
 
     assert.deepEqual(v.heldBy, []);
   });
 
   it('cannot judge a pin nested deeper than the writer puts one', async () => {
     const v = await audit(twoDependents(), { 'pkg-a': { other: { 'dependency-a': '1.2.0' } } });
+    assert.ok(v);
 
     assert.equal(v.heldBy, null);
   });

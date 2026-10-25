@@ -1,6 +1,8 @@
 import semver from 'semver';
 import { fetchPackageMeta } from './registry.js';
 
+/** @import { Descriptor, PackageMeta, Span, Suggestion } from './types.js' */
+
 // Same regex yarn uses to split a "simple" semver range into
 // [modifier, major, .minor, .patch, -prerelease] groups.
 const SIMPLE_SEMVER = /^((?:[\^~]|>=?)?)([0-9]+)(\.[0-9]+)(\.[0-9]+)((?:-\S+)?)$/;
@@ -8,6 +10,7 @@ const SIMPLE_SEMVER = /^((?:[\^~]|>=?)?)([0-9]+)(\.[0-9]+)(\.[0-9]+)((?:-\S+)?)$
 // Protocol ranges we can't resolve against the registry version list at all
 // (git/file/link/workspace, npm aliases, etc). Yarn handles these through
 // pluggable resolvers; we just skip them.
+/** @param {string} range */
 function isProtocolRange(range) {
   return !range || /^(git|github|gitlab|bitbucket|file|link|workspace|http|https|npm):/.test(range);
 }
@@ -16,10 +19,12 @@ function isProtocolRange(range) {
 // "1.0.0 - 2.0.0") — always whitespace-separated in npm syntax. It has no single
 // modifier to re-apply and already permits every in-range upgrade, so we collapse
 // it to a caret rather than trying to preserve its shape.
+/** @param {string} range */
 function isCompoundRange(range) {
   return /\s/.test(range);
 }
 
+/** @param {string} range */
 function getModifier(range) {
   const match = range.match(SIMPLE_SEMVER);
   if (match) return match[1];
@@ -28,7 +33,11 @@ function getModifier(range) {
   return '';
 }
 
-/** Re-apply the original range's modifier (^, ~, or exact) to a resolved version. */
+/**
+ * Re-apply the original range's modifier (^, ~, or exact) to a resolved version.
+ * @param {string} modifier
+ * @param {string} version
+ */
 function applyModifier(modifier, version) {
   return `${modifier}${version}`;
 }
@@ -37,6 +46,10 @@ function applyModifier(modifier, version) {
  * Resolve the highest published version matching `targetRange` (a semver
  * range OR a dist-tag name like "latest"), then re-format it using the
  * original descriptor's modifier style. Mirrors yarn's fetchUpdatedDescriptor.
+ *
+ * @param {PackageMeta} meta
+ * @param {string} originalRange
+ * @param {string} targetRange
  */
 function resolveAgainstMeta(meta, originalRange, targetRange) {
   const modifier = getModifier(originalRange);
@@ -57,6 +70,10 @@ function resolveAgainstMeta(meta, originalRange, targetRange) {
  * (modifier / major / minor / patch / prerelease), exactly like yarn's
  * colorizeVersionDiff. Returns an array of { text, color } spans ready to
  * be rendered as a sequence of <Text color=...> chunks.
+ *
+ * @param {string} from
+ * @param {string} to
+ * @returns {Span[]}
  */
 export function colorizeVersionDiff(from, to) {
   if (from === to) return [{ text: to, color: null }];
@@ -66,7 +83,9 @@ export function colorizeVersionDiff(from, to) {
   if (!matchedFrom || !matchedTo) return [{ text: to, color: null }];
 
   const SEMVER_COLORS = ['gray', 'red', 'yellow', 'green', 'magenta'];
+  /** @type {string | null} */
   let color = null;
+  /** @type {Span[]} */
   const spans = [];
 
   for (let t = 1; t < matchedTo.length; ++t) {
@@ -87,6 +106,10 @@ export function colorizeVersionDiff(from, to) {
  * set for a single descriptor, or null if there's nothing to upgrade to
  * (mirrors yarn: a package with no viable Range/Latest suggestion is
  * dropped from the list entirely).
+ *
+ * @param {Pick<Descriptor, 'name' | 'range'>} descriptor
+ * @param {{ fetchPackageMeta?: (name: string) => Promise<PackageMeta | null> }} [deps]
+ * @returns {Promise<Suggestion[] | null>}
  */
 export async function fetchSuggestions(descriptor, deps = {}) {
   const getMeta = deps.fetchPackageMeta || fetchPackageMeta;
@@ -132,6 +155,7 @@ export async function fetchSuggestions(descriptor, deps = {}) {
   // README's Notes.
   if (resolved && latest && semver.valid(latest) && semver.lt(latest, resolved)) latestResolution = null;
 
+  /** @type {Suggestion[]} */
   const suggestions = [
     { key: 'current', value: null, spans: [{ text: range, color: null }] },
     { key: 'range', value: null, spans: [] },

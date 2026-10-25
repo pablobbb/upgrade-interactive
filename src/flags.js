@@ -5,6 +5,17 @@
 //   3. NUI_<X> environment variable (0/false/no/off = false, anything else = true)
 //   4. package.json "upgrade-interactive" config boolean
 //   5. default -> true
+
+/**
+ * @typedef {{ onFlag: string, offFlag: string, envVar: string, configKey: string }} ToggleSpec
+ * @typedef {{ args: string[], env: Record<string, string | undefined>, config?: Record<string, unknown> | null }} ToggleSources
+ * @typedef {keyof typeof TOGGLES} ToggleName
+ */
+
+/**
+ * @param {ToggleSources & ToggleSpec} options
+ * @returns {boolean}
+ */
 export function resolveToggle({ args, env, config, onFlag, offFlag, envVar, configKey }) {
   if (args.includes(offFlag)) return false;
   if (args.includes(onFlag)) return true;
@@ -12,7 +23,8 @@ export function resolveToggle({ args, env, config, onFlag, offFlag, envVar, conf
   if (envVal != null && envVal !== '') {
     return !/^(0|false|no|off)$/i.test(envVal.trim());
   }
-  if (config && typeof config[configKey] === 'boolean') return config[configKey];
+  const configVal = config ? config[configKey] : undefined;
+  if (typeof configVal === 'boolean') return configVal;
   return true;
 }
 
@@ -26,20 +38,30 @@ export const TOGGLES = {
   section: { onFlag: '--section', offFlag: '--no-section', envVar: 'NUI_SECTION', configKey: 'section' },
 };
 
-// Resolve all CLI toggles at once, e.g. { install, audit, section }.
+/**
+ * Resolve all CLI toggles at once, e.g. { install, audit, section }.
+ * @param {ToggleSources} sources
+ * @returns {Record<ToggleName, boolean>}
+ */
 export function resolveToggles({ args, env, config }) {
+  /** @type {Record<string, boolean>} */
   const out = {};
   for (const [name, spec] of Object.entries(TOGGLES)) {
     out[name] = resolveToggle({ args, env, config, ...spec });
   }
-  return out;
+  // Every key of TOGGLES was just filled in.
+  return /** @type {Record<ToggleName, boolean>} */ (out);
 }
 
 // Parse the workspace-scoping flags: `--no-workspaces` (root manifest only) and
 // a repeatable `-w`/`--workspace <name>` filter (`-w=x` / `--workspace=x` too).
-// Returns { workspaces: boolean, filter: string[] }.
+/**
+ * @param {string[]} args
+ * @returns {{ workspaces: boolean, filter: string[] }}
+ */
 export function parseWorkspaceOptions(args) {
   const workspaces = !args.includes('--no-workspaces');
+  /** @type {string[]} */
   const filter = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];

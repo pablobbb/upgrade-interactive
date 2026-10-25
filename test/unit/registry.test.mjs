@@ -15,21 +15,32 @@ afterEach(() => {
 
 // Replace global fetch with `handler(url, options, callNumber)`; returns the
 // recorded calls for assertions.
+/** @param {(url: string, options: RequestInit, callNumber: number) => unknown} handler */
 function stubFetch(handler) {
+  // The client always posts a JSON string, so tests read `options.body` as one.
+  /** @type {{ url: string, options: RequestInit }[]} */
   const calls = [];
-  globalThis.fetch = async (url, options = {}) => {
-    calls.push({ url: String(url), options });
-    return handler(String(url), options, calls.length);
-  };
+  // The stand-in answers with the few Response members the client reads.
+  globalThis.fetch = /** @type {typeof fetch} */ (
+    async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      return handler(String(url), options, calls.length);
+    }
+  );
   return calls;
 }
 
+/**
+ * @param {unknown} body
+ * @param {boolean} [ok]
+ */
 const jsonResponse = (body, ok = true) => ({ ok, json: async () => body });
 
 // --- mapWithConcurrency --------------------------------------------------------
 
 describe('mapWithConcurrency', () => {
   it('processes every item and reports each result with its item and index', async () => {
+    /** @type {{ result: number, item: number }[]} */
     const seen = [];
 
     await mapWithConcurrency([10, 20, 30], 2, async (n) => n * 2, (result, item, index) => {
@@ -147,7 +158,7 @@ describe('fetchBulkAdvisories', () => {
     });
 
     assert.equal(calls[0].options.method, 'POST');
-    assert.deepEqual(JSON.parse(calls[0].options.body), {
+    assert.deepEqual(JSON.parse(/** @type {string} */ (calls[0].options.body)), {
       'bulk-vulnerable': ['1.0.0'],
       'bulk-clean': ['2.0.0'],
     });
@@ -157,14 +168,15 @@ describe('fetchBulkAdvisories', () => {
 
   it('splits more than 200 packages across multiple requests', async () => {
     const calls = stubFetch(() => jsonResponse({}));
+    /** @type {Record<string, string[]>} */
     const versionsByName = {};
     for (let i = 0; i < 201; i++) versionsByName[`chunk-${i}`] = ['1.0.0'];
 
     await fetchBulkAdvisories(versionsByName);
 
     assert.equal(calls.length, 2);
-    assert.equal(Object.keys(JSON.parse(calls[0].options.body)).length, 200);
-    assert.equal(Object.keys(JSON.parse(calls[1].options.body)).length, 1);
+    assert.equal(Object.keys(JSON.parse(/** @type {string} */ (calls[0].options.body))).length, 200);
+    assert.equal(Object.keys(JSON.parse(/** @type {string} */ (calls[1].options.body))).length, 1);
   });
 
   it('reports not-ok when a chunk fails but still returns advisories from the others', async () => {
@@ -173,6 +185,7 @@ describe('fetchBulkAdvisories', () => {
         ? jsonResponse({}, false)
         : jsonResponse({ 'chunk-200': [{ severity: 'low' }] })
     );
+    /** @type {Record<string, string[]>} */
     const versionsByName = {};
     for (let i = 0; i < 201; i++) versionsByName[`chunk-${i}`] = ['1.0.0'];
 
