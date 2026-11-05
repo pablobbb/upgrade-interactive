@@ -122,6 +122,12 @@ one project's dependency graph. The method in brief:
 6. Then argue against yourself: for each finding, is it a defect, or an artifact
    of that project's dependency topology? One run is one sample.
 
+Two scripts help with steps 1 and 5. `scripts/rebuild-capture.mjs` rebuilds the
+project from one side of a capture: the lockfile records every workspace's
+manifest, so npm can resolve it again, and `pre` with `--manifests post` replays
+the run's own install. `scripts/probe-audit.mjs` prints the tool's verdicts for a
+project without the TUI, for this checkout or another one given with `--tool`.
+
 Record findings as a dated report under `docs/`. Don't treat a previous report's
 findings as a checklist — that biases the next run toward confirming them
 instead of finding what's actually there.
