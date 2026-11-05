@@ -1,0 +1,9 @@
+{
+  "name": "global-pin-moves-safe-copies-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "glob": "7.2.3",
+    "rimraf": "6.0.1"
+  }
+}

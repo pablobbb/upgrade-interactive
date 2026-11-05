@@ -5,7 +5,7 @@ import {
   WARN, CHECK, INFO, CURSOR, MARKER_ON, MARKER_OFF, WORKSPACE_BAR, CHILD, BECOMES, SEPARATOR,
 } from '../icons.js';
 import { SEVERITY } from '../vulnerabilities.js';
-import { isPinBlocked, pinRefusalText } from '../override-select.js';
+import { isPinBlocked, pinRefusalText, crossedDependents } from '../override-select.js';
 
 /** @import { HeldPin, OverrideSpec, PinInstance, RemovableOverride, Span, Suggestion, Vuln } from '../types.js' */
 
@@ -41,13 +41,20 @@ function Column({ suggestion, selected }) {
 // partial fix reads as a whole one. Only the picker used to say so, which is how
 // "2 scoped pins" passed for a fix while two copies stayed vulnerable (the
 // 2026-10-17 field report, F1).
+//
+// A global pin that takes dependents past the major they declare says how many,
+// so the cost the picker warned about stays on the row once staged.
 /**
  * @param {OverrideSpec | null | undefined} spec
  * @param {Vuln | null | undefined} vuln
  */
 export function overrideLabel(spec, vuln) {
   if (!spec) return null;
-  if (typeof spec === 'string') return `${BECOMES} override ${spec}`;
+  if (typeof spec === 'string') {
+    const n = vuln ? crossedDependents(vuln, spec).crossed.length : 0;
+    const past = n === 0 ? '' : n === 1 ? ", past 1 dependent's declared major" : `, past ${n} dependents' declared majors`;
+    return `${BECOMES} override ${spec}${past}`;
+  }
   if (Array.isArray(spec.scoped) && spec.scoped.length > 0) {
     const vulnerable = vuln ? (vuln.instances || []).filter((i) => i.vulnerable).length : 0;
     const left = vulnerable - spec.scoped.length;

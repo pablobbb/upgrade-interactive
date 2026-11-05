@@ -429,3 +429,23 @@ describe('overrideLabel — partial fixes', () => {
     assert.equal(overrideLabel('2.0.0', vuln(3)), '→ override 2.0.0');
   });
 });
+
+describe('overrideLabel — a pin past declared majors', () => {
+  it('counts the dependents a global pin takes to another major', () => {
+    const vuln = vulnFixture({
+      instances: [
+        { declaredRange: '^3.1.2', installedVersion: '3.1.5', vulnerable: false },
+        { declaredRange: '^10.2.2', installedVersion: '10.2.6', vulnerable: true },
+        { declaredRange: '^11.0.0', installedVersion: '11.0.0', vulnerable: true },
+      ],
+    });
+
+    assert.equal(overrideLabel('11.0.4', vuln), "→ override 11.0.4, past 2 dependents' declared majors");
+  });
+
+  it('says one dependent in the singular', () => {
+    const vuln = vulnFixture({ instances: [{ declaredRange: '^3.0.1', installedVersion: '3.1.8', vulnerable: true }] });
+
+    assert.equal(overrideLabel('4.2.3', vuln), "→ override 4.2.3, past 1 dependent's declared major");
+  });
+});

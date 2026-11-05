@@ -23,7 +23,7 @@ import { INFO, UP, DOWN } from '../icons.js';
  * @typedef {{ cwd: string, descriptors: Descriptor[], overrides: Overrides, manifestPaths: readonly string[] }} AuditArgs
  * @typedef {AuditResult | null | undefined} AuditOutcome
  * @typedef {{ name: string, originKey: string, originLabel: string | null }
- *   & ({ mode: 'scoped', instances: PinInstance[] } | { mode: 'global', versions: string[] })} PickerState
+ *   & ({ mode: 'scoped', instances: PinInstance[] } | { mode: 'global', versions: string[], vuln: Vuln })} PickerState
  *   The override picker that's open, and the row it stages for.
  */
 
@@ -344,7 +344,8 @@ export function App({
       return;
     }
     if (!vuln.safeVersions || vuln.safeVersions.length === 0) return;
-    setOverride({ name, mode: 'global', versions: vuln.safeVersions, originKey, originLabel });
+    // The picker warns when a version takes dependents past their declared major.
+    setOverride({ name, mode: 'global', versions: vuln.safeVersions, vuln, originKey, originLabel });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audit, focusedRow, stagedOverrides, navKeyStr]);
 
@@ -509,6 +510,7 @@ export function App({
         ? e(OverridePicker, {
             name: override.name,
             versions: override.versions,
+            vuln: override.vuln,
             onSelect: (version) => {
               setStagedOverrides((prev) => ({
                 ...prev,

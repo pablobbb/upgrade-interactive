@@ -36,6 +36,19 @@
 
 ### Fixed
 
+- **A global pin that leaves dependents' majors now says so.** When no
+  dependent could be pinned in its own range, `o` fell through to a global pin
+  and offered it as a plain list of versions. In one real run, a pin to
+  `minimatch` 11 moved `eslint`'s `minimatch@3`, which the advisory doesn't
+  affect, and five `eslint-plugin-react` rules then threw when configured
+  (`docs/2026-11-04-field-report.md`, F3). The global picker now warns for the
+  version under the cursor:
+  - how many dependents it takes past the major they declare;
+  - which of them are already safe and would move too;
+  - for those, a narrower key to write by hand, such as `"minimatch@>=7"`.
+
+  The staged row keeps the count. What `o` writes doesn't change: on that run the
+  pin also fixed ten vulnerable copies, so it's still offered.
 - **A blocked row names the overrides that hold the vulnerable version, and the
   way out.** When the tool refused to write new per-dependent pins (npm keeps
   only one of two identical `parent@version` pins), the row said no fix could be
