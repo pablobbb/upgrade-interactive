@@ -8,15 +8,24 @@ import path from 'node:path';
 
 import { App } from './components/App.js';
 import { loadProject, applyProject } from './package-file.js';
+import { loadInstalledVersions } from './lockfile.js';
+import { checkInstall } from './vulnerabilities.js';
 import { resolveToggles, parseWorkspaceOptions } from './flags.js';
-import { formatSummary, formatIgnoredConfigNote, isMonorepoProject, manifestPathsOf } from './summary.js';
+import {
+  formatSummary, formatIgnoredConfigNote, formatInstallCheck, isMonorepoProject, manifestPathsOf,
+} from './summary.js';
 
-/** @import { OverrideSpec } from './types.js' */
+/** @import { OverrideSpec, Overrides, Vuln, WrittenOverride } from './types.js' */
 
 /**
- * @typedef {{ type: 'submit', selections: Map<string, string>, overrides: Record<string, OverrideSpec>, removals: string[] }
- *   | { type: 'abort' }} TuiResult
- *   How the interactive session ended.
+ * @typedef {{
+ *   type: 'submit',
+ *   selections: Map<string, string>,
+ *   overrides: Record<string, OverrideSpec>,
+ *   removals: string[],
+ *   vulns: Map<string, Vuln> | null,
+ * } | { type: 'abort' }} TuiResult
+ *   How the interactive session ended. `vulns` is the audit the session showed.
  */
 
 const e = React.createElement;
@@ -126,7 +135,8 @@ async function main() {
         cwd: rootDir,
         overrides: project.root.json.overrides || {},
         manifestPaths,
-        onSubmit: (selections, overrides, removals) => resolve({ type: 'submit', selections, overrides, removals }),
+        onSubmit: (selections, overrides, removals, vulns) =>
+          resolve({ type: 'submit', selections, overrides, removals, vulns }),
         onAbort: () => resolve({ type: 'abort' }),
       }),
       { exitOnCtrlC: false }
@@ -170,25 +180,20 @@ async function main() {
     formatSummary({ applied, overrides, removed, alreadyPresent, isMonorepo: isMonorepoProject(project) })
   );
 
+  const rootOverrides = project.root.json.overrides;
   if (applied.length === 0 && overrides.length === 0 && removed.length === 0) {
     // "No effective changes" is true of package.json and misleading about the
     // project: an accepted pin that was already there means the installed tree
-    // never picked it up. npm only re-resolves a changed override on the next
-    // install in a *standalone* project — in a workspace it reports "up to date"
-    // and leaves the old version (docs/2026-08-26-spike-reresolve.md), so those
-    // users need to be told what actually clears it.
+    // never picked it up. A standalone project applies it on its next install.
+    // A workspace project may not, depending on how the root reaches the package
+    // and on the npm release (docs/2026-11-04-field-report.md, F1), so say what
+    // the lockfile holds and how to land it.
     if (alreadyPresent && alreadyPresent.length > 0) {
-      process.stdout.write(
-        '\nThese overrides were already in package.json, so nothing was written —\n' +
-          'but the installed tree still resolves to a different version.\n'
-      );
+      process.stdout.write('\nThese overrides were already in package.json, so nothing was written.\n');
       if (isMonorepoProject(project)) {
-        process.stdout.write(
-          'npm will not re-resolve them in a workspace project. To apply them:\n' +
-            '  rm -rf node_modules package-lock.json && npm install\n'
-        );
+        await reportInstall(rootDir, rootOverrides, alreadyPresent, result.vulns);
       } else {
-        process.stdout.write('Run npm install to apply them.\n');
+        process.stdout.write('The installed tree still resolves to a different version. Run npm install to apply them.\n');
       }
       return;
     }
@@ -205,25 +210,44 @@ async function main() {
   // lockfile, so a per-workspace install would be wrong. For a standalone
   // project the root dir is just cwd.
   process.stdout.write('\nRunning npm install...\n');
-  await runNpmInstall(rootDir);
+  const code = await runNpmInstall(rootDir);
+  // npm saying it finished isn't the same as the pins landing.
+  if (code === 0) await reportInstall(rootDir, rootOverrides, [...overrides, ...alreadyPresent], result.vulns);
+}
+
+/**
+ * Print what the install left behind (see `checkInstall`): pins npm didn't apply,
+ * the routes that land them, and what's still vulnerable. Silent when there's
+ * nothing to say or no lockfile to read.
+ *
+ * @param {string} rootDir
+ * @param {Overrides | undefined} overrides
+ * @param {WrittenOverride[]} pins
+ * @param {Map<string, Vuln> | null} vulns
+ */
+async function reportInstall(rootDir, overrides, pins, vulns) {
+  const installed = await loadInstalledVersions(rootDir);
+  if (!installed) return;
+  const text = formatInstallCheck(checkInstall(installed.packages, overrides, pins, vulns));
+  if (text) process.stdout.write(`\n${text}`);
 }
 
 /**
  * @param {string} cwd
- * @returns {Promise<void>}
+ * @returns {Promise<number | null>} npm's exit code, or null when it couldn't be started
  */
 function runNpmInstall(cwd) {
-  return new Promise(/** @param {() => void} resolve */ (resolve) => {
+  return new Promise(/** @param {(code: number | null) => void} resolve */ (resolve) => {
     const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
     const child = spawn(npmCmd, ['install'], { cwd, stdio: 'inherit' });
     child.on('exit', (code) => {
       process.exitCode = code ?? 0;
-      resolve();
+      resolve(code ?? 0);
     });
     child.on('error', () => {
       process.stderr.write('Failed to run npm install. Run it manually to finish updating your lockfile.\n');
       process.exitCode = 1;
-      resolve();
+      resolve(null);
     });
   });
 }

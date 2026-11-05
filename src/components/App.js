@@ -15,7 +15,7 @@ import { INFO, UP, DOWN } from '../icons.js';
 /**
  * @import {
  *   AuditResult, Descriptor, DisplayRow, Entry, InputDescriptor, OverrideSpec, Overrides,
- *   PinInstance, StagedOverride, Suggestion,
+ *   PinInstance, StagedOverride, Suggestion, Vuln,
  * } from '../types.js'
  */
 
@@ -83,7 +83,12 @@ async function defaultRunAudit({ cwd, descriptors, overrides, manifestPaths }) {
 /**
  * @param {{
  *   descriptors: InputDescriptor[],
- *   onSubmit: (selections: Map<string, string>, overrides: Record<string, OverrideSpec>, removals: string[]) => void,
+ *   onSubmit: (
+ *     selections: Map<string, string>,
+ *     overrides: Record<string, OverrideSpec>,
+ *     removals: string[],
+ *     vulns: Map<string, Vuln> | null,
+ *   ) => void,
  *   onAbort: () => void,
  *   audit?: boolean,
  *   section?: boolean,
@@ -217,10 +222,11 @@ export function App({
   // Overrides the tree never applied, flattened one row per pinned package.
   //
   // Shown only for workspace projects. npm re-resolves a changed override on the
-  // next `npm install` in a standalone project but not in a workspace — measured,
-  // not assumed (docs/2026-08-26-spike-reresolve.md) — so warning a standalone
-  // user would be telling them to act on something the tool's own `--install`
-  // step is about to fix.
+  // next `npm install` in a standalone project, but often not in a workspace —
+  // measured, not assumed (docs/2026-08-26-spike-reresolve.md,
+  // docs/2026-11-04-field-report.md) — so warning a standalone user would be
+  // telling them to act on something the tool's own `--install` step is about
+  // to fix.
   const isWorkspaceProject = (manifestPaths?.length ?? 1) > 1;
   const unapplied = auditState && auditState.unappliedOverrides ? auditState.unappliedOverrides : null;
   const unappliedList =
@@ -396,7 +402,9 @@ export function App({
         /** @type {Record<string, OverrideSpec>} */
         const overrideSpecs = {};
         for (const [name, record] of Object.entries(stagedOverrides)) overrideSpecs[name] = record.spec;
-        onSubmit(selections, overrideSpecs, removals);
+        // The audit goes along too, so the CLI can re-test it against the lockfile
+        // npm writes (checkInstall in vulnerabilities.js).
+        onSubmit(selections, overrideSpecs, removals, auditState ? auditState.vulns : null);
         exit();
       }
     },

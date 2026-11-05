@@ -124,10 +124,11 @@ export function buildDisplayRows({
         rows.push({ kind: 'override', key: `ovr:${name}`, name, pin: info.pin, reason: info.reason });
       }
     }
-    // Purely informational, and deliberately not navigable: there is no action
-    // the tool can offer. npm has no way to re-resolve a single edge — verified
-    // in docs/2026-08-26-spike-reresolve.md — so the only fix is a full clean
-    // reinstall, which is the user's call to make, not a keypress.
+    // Purely informational, and deliberately not navigable: no keypress fixes
+    // these. Which command lands a pin depends on whether it fits its dependents'
+    // ranges and on the npm release (docs/2026-11-04-field-report.md, F2), and
+    // both candidates can move other packages, so it's the user's call. The CLI
+    // names the command after its install (checkInstall in vulnerabilities.js).
     if (unappliedList.length > 0) {
       rows.push({ kind: 'header', key: 'h:unapplied', title: 'Overrides not in effect' });
       for (const u of unappliedList) {

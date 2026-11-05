@@ -12,11 +12,12 @@ import path from 'node:path';
 import {
   formatSummary,
   formatIgnoredConfigNote,
+  formatInstallCheck,
   isMonorepoProject,
   manifestPathsOf,
 } from '../../src/summary.js';
 
-/** @import { DependencyField } from '../../src/types.js' */
+/** @import { DependencyField, InstalledCopy } from '../../src/types.js' */
 
 /**
  * @param {string} name
@@ -274,5 +275,122 @@ describe('manifestPathsOf', () => {
     const project = { workspaces: null, discovered: tree };
 
     assert.deepEqual(manifestPathsOf(project, path.join(ROOT, 'packages', 'a')), ['']);
+  });
+});
+
+describe('formatInstallCheck', () => {
+  /**
+   * @param {string} version
+   * @param {[string, string][]} dependents
+   * @returns {InstalledCopy}
+   */
+  const copy = (version, dependents) => ({
+    path: 'node_modules/x',
+    version,
+    dependents: dependents.map(([name, range]) => ({ name, range })),
+  });
+
+  it('says nothing when everything landed and nothing is left', () => {
+    assert.equal(formatInstallCheck({ notLanded: [], stale: [], stillVulnerable: [] }), '');
+  });
+
+  // The 2026-11-04 field report's run, as the CLI would now end it.
+  it('names what did not land, the older pins a fix would apply, both routes, and what is left', () => {
+    const out = formatInstallCheck({
+      notLanded: [
+        { name: 'qs', parent: null, pin: '6.17.1', copies: [copy('6.16.0', [['co-body', '^6.5.2']])], inRange: true },
+        { name: 'undici', parent: 'jsdom', pin: '7.30.1', copies: [copy('7.30.0', [['jsdom', '^7.25.0']])], inRange: true },
+        {
+          name: 'glob',
+          parent: null,
+          pin: '14.0.3',
+          copies: [copy('13.0.6', [['@vercel/nft', '^13.0.0'], ['js-beautify', '^13.0.6']])],
+          inRange: false,
+        },
+        {
+          name: 'minimatch',
+          parent: null,
+          pin: '11.0.4',
+          copies: [copy('10.2.5', [['editorconfig', '~10.2.4']]), copy('10.2.6', [['readdir-glob', '^10.2.2']])],
+          inRange: false,
+        },
+      ],
+      stale: [
+        { name: 'vue', parent: null, pin: '3.5.43', installed: ['3.5.44'] },
+        { name: 'devalue', parent: null, pin: '5.9.4', installed: ['6.0.3'] },
+      ],
+      stillVulnerable: [
+        {
+          name: 'zod',
+          versions: ['3.25.76'],
+          copies: [copy('3.25.76', [['chromium-bidi', '^3.24.1']])],
+          reason: 'outside',
+          firstPatched: '4.6.6',
+        },
+        { name: 'deepmerge', versions: ['4.3.1'], copies: [copy('4.3.1', [['@web/dev-server', '^4.2.2']])], reason: 'unpatched', firstPatched: null },
+      ],
+    });
+
+    assert.equal(
+      out,
+      'Not applied: these pins are in package.json, but the lockfile has older versions.\n' +
+        '  qs  pins 6.17.1, lockfile has 6.16.0 (co-body declares ^6.5.2)\n' +
+        '  jsdom › undici  pins 7.30.1, lockfile has 7.30.0 (jsdom declares ^7.25.0)\n' +
+        '  glob  pins 14.0.3, lockfile has 13.0.6 (@vercel/nft declares ^13.0.0, js-beautify ^13.0.6)\n' +
+        '  minimatch  pins 11.0.4, lockfile has 10.2.5 (editorconfig declares ~10.2.4), 10.2.6 (readdir-glob declares ^10.2.2)\n' +
+        '\n' +
+        'Older overrides also not in effect, which the steps below can apply:\n' +
+        '  vue  3.5.44 → 3.5.43\n' +
+        '  devalue  6.0.3 → 5.9.4 (another major)\n' +
+        'Bump or delete those first.\n' +
+        '\n' +
+        'Inside their declared ranges: delete those pins from package.json, then run\n' +
+        '  npm update qs undici\n' +
+        'This also moves other copies within their ranges.\n' +
+        '\n' +
+        'Outside their declared ranges: try\n' +
+        '  npm update glob minimatch\n' +
+        'Some npm releases apply the pins this way. If the lockfile still has the older versions,\n' +
+        'only a full reinstall applies them:\n' +
+        '  rm -rf node_modules package-lock.json && npm install\n' +
+        'That re-resolves every dependency and can add new advisories.\n' +
+        '\n' +
+        'Also still vulnerable:\n' +
+        '  zod 3.25.76 (chromium-bidi declares ^3.24.1; the first safe version is 4.6.6)\n' +
+        '  deepmerge 4.3.1 (no patched version)\n'
+    );
+  });
+
+  it('gives the in-range route alone, and the update for what is still vulnerable', () => {
+    const out = formatInstallCheck({
+      notLanded: [{ name: 'qs', parent: null, pin: '6.17.1', copies: [copy('6.16.0', [['co-body', '^6.5.2']])], inRange: true }],
+      stale: [],
+      stillVulnerable: [
+        { name: 'fast-uri', versions: ['3.1.8'], copies: [copy('3.1.8', [['ajv', '^3.0.1']])], reason: 'in-range', firstPatched: '3.1.9' },
+      ],
+    });
+
+    assert.equal(
+      out,
+      'Not applied: these pins are in package.json, but the lockfile has older versions.\n' +
+        '  qs  pins 6.17.1, lockfile has 6.16.0 (co-body declares ^6.5.2)\n' +
+        '\n' +
+        'Inside their declared ranges: delete that pin from package.json, then run\n' +
+        '  npm update qs\n' +
+        'This also moves other copies within their ranges.\n' +
+        '\n' +
+        'Also still vulnerable:\n' +
+        '  fast-uri 3.1.8 (a fix is in range: npm update fast-uri)\n'
+    );
+  });
+
+  it('heads the list "Still vulnerable" when every pin landed', () => {
+    const out = formatInstallCheck({
+      notLanded: [],
+      stale: [],
+      stillVulnerable: [{ name: 'deepmerge', versions: ['4.3.1'], copies: [], reason: 'unpatched', firstPatched: null }],
+    });
+
+    assert.equal(out, 'Still vulnerable:\n  deepmerge 4.3.1 (no patched version)\n');
   });
 });

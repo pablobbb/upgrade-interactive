@@ -61,6 +61,23 @@ async function waitForFrame(lastFrame, predicate, { timeout = 15000, label = '' 
   }
 }
 
+// Poll until `check()` holds, for a condition that isn't in the frame (what the
+// app hands back on submit, say). Same contract as waitForFrame.
+/**
+ * @param {() => boolean} check
+ * @param {{ timeout?: number, label?: string }} [options]
+ */
+async function waitFor(check, { timeout = 15000, label = '' } = {}) {
+  const deadline = Date.now() + timeout;
+  while (!check()) {
+    if (Date.now() > deadline) {
+      console.error(`TIMEOUT after ${timeout}ms waiting for ${label || 'condition'}`);
+      return;
+    }
+    await wait(50);
+  }
+}
+
 // The rows are loaded once no Loading… placeholder remains. Used wherever a test
 // previously slept ~3s hoping the registry had answered.
 /**
@@ -330,15 +347,18 @@ async function testOverrideFlow() {
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
   let submitted = /** @type {Map<string, string> | null} */ (null);
   let overrides = /** @type {Record<string, OverrideSpec> | null} */ (null);
+  let vulnsSubmitted = /** @type {Map<string, Vuln> | null | undefined} */ (undefined);
+  const audit = fakeAudit();
   const { stdin, lastFrame, unmount } = render(
     e(App, {
       descriptors,
       audit: true,
       section: true,
-      runAudit: async () => fakeAudit(),
-      onSubmit: (sel, ovr) => {
+      runAudit: async () => audit,
+      onSubmit: (sel, ovr, _removals, vulns) => {
         submitted = sel;
         overrides = ovr;
+        vulnsSubmitted = vulns;
       },
       onAbort: () => {},
     })
@@ -355,9 +375,12 @@ async function testOverrideFlow() {
   await wait(50);
   stdin.write('\r'); // submit
   await wait(100);
+  await waitFor(() => vulnsSubmitted !== undefined, { label: 'onSubmit' });
   unmount();
 
   assert(overrides && overrides.chalk === '5.0.0', 'selecting a version stages an overrides entry that is passed to onSubmit');
+  // The CLI re-tests this audit against the lockfile npm writes.
+  assert(vulnsSubmitted === audit.vulns, 'onSubmit also hands back the audit the session showed');
 }
 
 // A package whose audit result arrives before its own suggestions has no dep row

@@ -8,9 +8,10 @@ import { overrideKeyName, overrideKeySpec, overrideBucketsConflict, risksEoverri
 
 /**
  * @import {
- *   Advisory, AuditResult, BulkAdvisories, Descriptor, HeldPin, InstalledTree, LockPackage,
- *   LockPackages, OverrideObject, OverrideValue, Overrides, PackageMeta, PinInstance,
- *   RemovableOverride, Severity, UnappliedEdge, UnappliedOverride, Vuln,
+ *   Advisory, AuditResult, BulkAdvisories, DependentRange, Descriptor, HeldPin, InstallCheck,
+ *   InstalledCopy, InstalledTree, LockPackage, LockPackages, OverrideObject, OverrideValue,
+ *   Overrides, PackageMeta, PinInstance, RemovableOverride, Severity, UnappliedEdge,
+ *   UnappliedOverride, Vuln, WrittenOverride,
  * } from './types.js'
  */
 
@@ -215,6 +216,18 @@ function splitParentKey(key) {
   return { name: key.slice(0, at), version: key.slice(at + 1) };
 }
 
+// What a dependent is called in a message: its package name, a workspace's own
+// name (or its path when it has none), or the root.
+/**
+ * @param {LockPackages} packages
+ * @param {string} from
+ */
+function dependentName(packages, from) {
+  if (from === '') return 'the root';
+  const name = nameFromLockPath(from) ?? packages[from].name;
+  return typeof name === 'string' && name ? name : from;
+}
+
 // Every installed copy of `name`, with the ranges its dependents (the root
 // manifest included) declare for it.
 /**
@@ -222,7 +235,7 @@ function splitParentKey(key) {
  * @param {string} name
  */
 function installedCopies(packages, name) {
-  /** @type {Map<string, { path: string, version: string, ranges: string[] }>} */
+  /** @type {Map<string, InstalledCopy & { ranges: string[] }>} */
   const copies = new Map();
   for (const [from, info] of Object.entries(packages)) {
     if (!info || typeof info !== 'object') continue;
@@ -231,8 +244,11 @@ function installedCopies(packages, name) {
     const at = resolveInstalledPath(packages, from, name);
     if (!at) continue;
     let copy = copies.get(at);
-    if (!copy) copies.set(at, (copy = { path: at, version: versionAt(packages, at), ranges: [] }));
+    if (!copy) copies.set(at, (copy = { path: at, version: versionAt(packages, at), ranges: [], dependents: [] }));
     copy.ranges.push(range);
+    /** @type {DependentRange} */
+    const dependent = { name: dependentName(packages, from), range };
+    if (!copy.dependents.some((d) => d.name === dependent.name && d.range === dependent.range)) copy.dependents.push(dependent);
   }
   return [...copies.values()];
 }
@@ -370,17 +386,20 @@ function markPinRefusals(name, instances, overrides, packages) {
 /**
  * Overrides the manifest mandates that the installed tree does not reflect.
  *
- * npm applies `overrides` during resolution, so an override added *after* its
- * lockfile entry was resolved can sit in package.json with no effect: the entry
- * still satisfies its parent's declared range, and npm does not revisit it. The
- * audit then reads the un-overridden version out of the lockfile and flags it,
- * while the pin the user would write is already present — so accepting the fix
- * writes nothing and the tool reports "no changes". Detecting the contradiction
- * is what lets us say so instead.
+ * npm applies `overrides` during resolution, so an override can sit in
+ * package.json with no effect: the locked entry still satisfies its parent's
+ * declared range, and npm does not revisit it. The audit then reads the
+ * un-overridden version out of the lockfile and flags it, while the pin the user
+ * would write is already present — so accepting the fix writes nothing and the
+ * tool reports "no changes". Detecting the contradiction is what lets us say so
+ * instead.
  *
- * Verified against npm 11.13.0 (docs/2026-08-26-spike-reresolve.md): this state
- * only persists in *workspace* projects. A standalone project applies the new
- * mandate on its next `npm install`, so callers scope the warning accordingly.
+ * Only *workspace* projects keep this state: a standalone project applies the
+ * new mandate on its next `npm install` (docs/2026-08-26-spike-reresolve.md), so
+ * callers scope the warning accordingly. In a workspace, measured on npm 10.9.9
+ * through 12.2.0, a locked copy that only workspaces reach keeps its version, and
+ * on npm 11 so does one the same install adds (docs/2026-11-04-field-report.md,
+ * F1). A copy the root also reaches does move.
  *
  * Returns Map<topLevelOverrideKey, { mandates: [{ name, mandated, found }] }>,
  * keyed so `collectRemovableOverrides` can gate on it directly. `found` lists
@@ -497,6 +516,122 @@ function unappliedOverrides(packages, overrides) {
   }
 
   return out;
+}
+
+/**
+ * What an install left behind, read back from the lockfile it wrote. Offline.
+ *
+ * The CLI used to run `npm install` and stop. In a workspace project npm can
+ * leave a pin it was just given unapplied, and the run ended as if it had worked;
+ * the user found out from a separate `npm audit` (the 2026-11-04 field report,
+ * F1). Which pins land depends on the npm release, so this reads what happened
+ * rather than predicting it.
+ *
+ * - `notLanded`: each of this run's pins with copies still *below* it. A copy
+ *   above its pin isn't held back by anything: npm 11's `npm update` lands on the
+ *   newest version in range, past the pin (F2). Bundled copies are left out, since
+ *   npm never applies an override inside a bundle.
+ * - `stale`: older overrides the lockfile doesn't reflect either. Listed only when
+ *   there is a gap, because the ways to close one (a reinstall, or `npm update` on
+ *   some releases) also apply these, and in the field report would have lowered
+ *   `devalue` a major.
+ * - `stillVulnerable`: the advisories the run's audit found, re-tested against the
+ *   new lockfile. A package only an upgrade in this run made vulnerable isn't
+ *   among them, since the audit never saw it.
+ *
+ * @param {LockPackages | null | undefined} packages
+ * @param {Overrides | null | undefined} overrides  the root's overrides as written
+ * @param {WrittenOverride[]} pins  written this run, or found already present
+ * @param {Map<string, Vuln> | null | undefined} vulns  the audit the run started from
+ * @returns {InstallCheck}
+ */
+export function checkInstall(packages, overrides, pins, vulns) {
+  /** @type {InstallCheck} */
+  const check = { notLanded: [], stale: [], stillVulnerable: [] };
+  if (!packages) return check;
+
+  /** @type {Map<string, ReturnType<typeof installedCopies>>} */
+  const copiesByName = new Map();
+  /** @param {string} name */
+  const copiesOf = (name) => {
+    let copies = copiesByName.get(name);
+    if (!copies) copiesByName.set(name, (copies = installedCopies(packages, name)));
+    return copies;
+  };
+  /**
+   * @param {InstalledCopy} copy
+   * @returns {InstalledCopy}
+   */
+  const publicCopy = ({ path, version, dependents }) => ({ path, version, dependents });
+  /**
+   * @param {string} version
+   * @param {InstalledCopy} copy
+   */
+  const fitsEvery = (version, copy) =>
+    copy.dependents.every((d) => !!semver.validRange(d.range) && semver.satisfies(version, d.range));
+
+  const unapplied = unappliedOverrides(packages, overrides);
+  /** @type {Set<string>} */
+  const reported = new Set();
+  for (const pin of pins) {
+    if (!semver.valid(pin.to)) continue;
+    const mandate = unapplied
+      .get(pin.parent ?? pin.name)
+      ?.mandates.find((m) => m.name === pin.name && m.mandated === pin.to);
+    if (!mandate) continue;
+    const below = new Set(
+      mandate.found
+        .filter((f) => !packages[f.path].inBundle && semver.valid(f.installedVersion) && semver.lt(f.installedVersion, pin.to))
+        .map((f) => f.path)
+    );
+    const copies = copiesOf(pin.name).filter((c) => below.has(c.path)).map(publicCopy);
+    if (copies.length === 0) continue;
+    for (const c of copies) reported.add(c.path);
+    check.notLanded.push({
+      name: pin.name,
+      parent: pin.parent ?? null,
+      pin: pin.to,
+      copies,
+      inRange: copies.every((c) => fitsEvery(pin.to, c)),
+    });
+  }
+
+  if (check.notLanded.length > 0) {
+    for (const [key, info] of unapplied) {
+      for (const m of info.mandates) {
+        if (pins.some((p) => (p.parent ?? p.name) === key && p.name === m.name)) continue;
+        check.stale.push({
+          name: m.name,
+          parent: key === m.name ? null : key,
+          pin: m.mandated,
+          installed: [...new Set(m.found.map((f) => f.installedVersion))],
+        });
+      }
+    }
+  }
+
+  for (const [name, vuln] of vulns || []) {
+    const copies = copiesOf(name)
+      .filter((c) => !reported.has(c.path) && matchesAny(c.version, vuln.advisories || []))
+      .map(publicCopy);
+    if (copies.length === 0) continue;
+    // The audit verified these as safe: the global picker's list, and each
+    // dependent's in-range candidates.
+    const safe = [...new Set([...(vuln.safeVersions || []), ...(vuln.instances || []).flatMap((i) => i.safeCandidates || [])])];
+    check.stillVulnerable.push({
+      name,
+      versions: [...new Set(copies.map((c) => c.version))],
+      copies,
+      reason:
+        safe.length === 0 && !vuln.firstPatched
+          ? 'unpatched'
+          : copies.every((c) => safe.some((v) => fitsEvery(v, c)))
+            ? 'in-range'
+            : 'outside',
+      firstPatched: vuln.firstPatched,
+    });
+  }
+  return check;
 }
 
 // Build the per-parent picture of where a vulnerable package is installed:

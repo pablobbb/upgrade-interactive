@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+- **After `npm install`, the run says what didn't land.** The tool used to run
+  `npm install` and stop. In a workspace project npm can leave a pin it was just
+  given unapplied, and the run ended as if it had worked: in one real run, 5 of 12
+  new pins never reached the lockfile, and the user found out from a separate
+  `npm audit` (`docs/2026-11-04-field-report.md`, F1). The tool now reads the
+  lockfile npm wrote and names:
+  - each pin with copies still below it, and what their dependents declare;
+  - the way to land it: for a pin inside those ranges, delete it and run
+    `npm update <pkg>`; outside them, try `npm update`, which applies it on some
+    npm releases, and otherwise a full reinstall;
+  - older overrides not in effect, which both of those can also apply. On that
+    run, a reinstall would have moved `devalue` back a major;
+  - what the run's audit flagged that the lockfile still has, and why it's left.
+
+  Measured on npm 10.9.9, 11.9.0, 11.13.0 and 12.2.0. Which pins land depends on
+  the release, so the tool reads what happened rather than predicting it. A copy
+  that lands *above* its pin, as `npm update` does on npm 11, isn't reported.
+  Nothing new is run. The same report replaces the fixed
+  `rm -rf node_modules package-lock.json && npm install` hint that a workspace
+  project got when every accepted pin was already in `package.json`.
+
 ### Changed
 
 - **Latest no longer offers a downgrade.** npm's `latest` dist-tag can be older

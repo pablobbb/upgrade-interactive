@@ -6,10 +6,12 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeVulnerabilities } from '../../src/vulnerabilities.js';
+import { readFile } from 'node:fs/promises';
+import { computeVulnerabilities, checkInstall } from '../../src/vulnerabilities.js';
 import { defaultOverrideSelection, isPinBlocked } from '../../src/override-select.js';
+import { vulnFixture } from '../typed-fixtures.mjs';
 
-/** @import { Advisory, BulkAdvisories, Descriptor, InstalledTree, Overrides, PackageMeta } from '../../src/types.js' */
+/** @import { Advisory, BulkAdvisories, Descriptor, InstalledTree, LockPackages, Overrides, PackageMeta, Vuln } from '../../src/types.js' */
 
 // --- Test data builders ------------------------------------------------------
 
@@ -1009,5 +1011,157 @@ describe('computeVulnerabilities — fixable in range', () => {
     assert.ok(v);
 
     assert.equal(v.heldBy, null);
+  });
+});
+
+// --- After the install ---------------------------------------------------------
+
+describe('checkInstall', () => {
+  // The 2026-11-04 field report's shape, cut down: a workspace reaches co-body
+  // (qs ^6.5.2) and editorconfig (minimatch ~10.2.4), and npm kept the locked
+  // versions after the run wrote pins for both.
+  /** @param {Record<string, string>} [versions] */
+  const tree = (versions = {}) => /** @type {LockPackages} */ ({
+    '': {},
+    'packages/a': { name: '@acme/a', version: '1.0.0', dependencies: { 'co-body': '6.2.0', editorconfig: '3.0.2' } },
+    'node_modules/@acme/a': { link: true },
+    'node_modules/co-body': { version: '6.2.0', dependencies: { qs: '^6.5.2' } },
+    'node_modules/qs': { version: versions.qs ?? '6.16.0' },
+    'node_modules/editorconfig': { version: '3.0.2', dependencies: { minimatch: '~10.2.4' } },
+    'node_modules/minimatch': { version: versions.minimatch ?? '10.2.6' },
+  });
+  const pins = [{ name: 'qs', to: '6.17.1' }, { name: 'minimatch', to: '11.0.4' }];
+  const overrides = { qs: '6.17.1', minimatch: '11.0.4' };
+
+  it('reports each pin the lockfile is still below, with what its dependents declare', () => {
+    const { notLanded } = checkInstall(tree(), overrides, pins, null);
+
+    assert.deepEqual(notLanded, [
+      {
+        name: 'qs',
+        parent: null,
+        pin: '6.17.1',
+        copies: [{ path: 'node_modules/qs', version: '6.16.0', dependents: [{ name: 'co-body', range: '^6.5.2' }] }],
+        inRange: true,
+      },
+      {
+        name: 'minimatch',
+        parent: null,
+        pin: '11.0.4',
+        copies: [
+          { path: 'node_modules/minimatch', version: '10.2.6', dependents: [{ name: 'editorconfig', range: '~10.2.4' }] },
+        ],
+        inRange: false,
+      },
+    ]);
+  });
+
+  // npm 11's `npm update` lands on the newest version in range, which can be past
+  // the pin (field report, F2). That copy isn't held back by anything.
+  it('stays quiet about a copy that landed above its pin', () => {
+    const { notLanded } = checkInstall(tree({ qs: '6.17.2', minimatch: '11.0.4' }), overrides, pins, null);
+
+    assert.deepEqual(notLanded, []);
+  });
+
+  it('only judges pins from this run', () => {
+    const { notLanded } = checkInstall(tree(), overrides, [], null);
+
+    assert.deepEqual(notLanded, []);
+  });
+
+  it('reports a scoped pin under the parent it was written for', () => {
+    const packages = {
+      ...tree(),
+      'node_modules/jsdom': { version: '29.1.1', dependencies: { undici: '^7.25.0' } },
+      'node_modules/jsdom/node_modules/undici': { version: '7.30.0' },
+    };
+    const { notLanded } = checkInstall(
+      packages,
+      { jsdom: { undici: '7.30.1' } },
+      [{ name: 'undici', to: '7.30.1', parent: 'jsdom' }],
+      null
+    );
+
+    assert.deepEqual(notLanded.map((g) => [g.parent, g.name, g.copies[0].version, g.inRange]), [['jsdom', 'undici', '7.30.0', true]]);
+  });
+
+  // npm never applies an override inside a bundled dependency.
+  it('leaves out a bundled copy', () => {
+    const packages = {
+      ...tree(),
+      'node_modules/bundler': { version: '1.0.0', dependencies: { minimatch: '^9.0.0' } },
+      'node_modules/bundler/node_modules/minimatch': { version: '9.0.0', inBundle: true },
+    };
+
+    const { notLanded } = checkInstall(packages, overrides, pins, null);
+
+    assert.deepEqual(notLanded.find((g) => g.name === 'minimatch')?.copies.map((c) => c.version), ['10.2.6']);
+  });
+
+  // A reinstall, and `npm update` on some npm releases, applies every override in
+  // the file. The run in the field report would have lowered devalue a major.
+  it('lists older overrides not in effect, once there is a route to print', () => {
+    const packages = { ...tree(), 'node_modules/devalue': { version: '6.0.3' }, 'node_modules/nuxt': { version: '4.6.4', dependencies: { devalue: '^6.0.3' } } };
+    const all = { ...overrides, devalue: '5.9.4' };
+
+    assert.deepEqual(checkInstall(packages, all, pins, null).stale, [
+      { name: 'devalue', parent: null, pin: '5.9.4', installed: ['6.0.3'] },
+    ]);
+    assert.deepEqual(checkInstall(packages, all, [], null).stale, [], 'no gap, so no route that could apply it');
+  });
+
+  describe('what is still vulnerable', () => {
+    /**
+     * @param {string} range
+     * @param {Partial<Vuln>} [extra]
+     */
+    const flagged = (range, extra = {}) =>
+      vulnFixture({ advisories: [advisory({ vulnerable_versions: range })], safeVersions: [], instances: [], firstPatched: null, ...extra });
+
+    it('re-tests the audit the run started from against the new lockfile', () => {
+      const vulns = new Map([
+        ['qs', flagged('<=6.16.0', { safeVersions: ['6.16.1'], firstPatched: '6.16.1' })],
+        ['co-body', flagged('<6.0.0')],
+        ['editorconfig', flagged('<=3.0.2')],
+      ]);
+
+      const { stillVulnerable } = checkInstall(tree({ qs: '6.17.1' }), overrides, pins, vulns);
+
+      assert.deepEqual(stillVulnerable.map((v) => [v.name, v.versions, v.reason]), [['editorconfig', ['3.0.2'], 'unpatched']]);
+    });
+
+    it("doesn't repeat a copy already reported as not applied", () => {
+      const vulns = new Map([['qs', flagged('<=6.16.0', { safeVersions: ['6.16.1'], firstPatched: '6.16.1' })]]);
+
+      assert.deepEqual(checkInstall(tree(), overrides, pins, vulns).stillVulnerable, []);
+    });
+
+    it('says whether a safe version fits what the dependents declare', () => {
+      const vulns = new Map([
+        ['qs', flagged('<=6.16.0', { safeVersions: ['6.16.1'], firstPatched: '6.16.1' })],
+        ['minimatch', flagged('>=7.0.0 <11.0.1', { safeVersions: ['11.0.1'], firstPatched: '11.0.1' })],
+      ]);
+
+      const { stillVulnerable } = checkInstall(tree(), {}, [], vulns);
+
+      assert.deepEqual(stillVulnerable.map((v) => [v.name, v.reason, v.firstPatched]), [
+        ['qs', 'in-range', '6.16.1'],
+        ['minimatch', 'outside', '11.0.1'],
+      ]);
+    });
+  });
+
+  it('reads an npm-generated lockfile', async () => {
+    const lock = JSON.parse(await readFile(new URL('../fixtures/unapplied-override-toplevel/lock.json', import.meta.url), 'utf8'));
+    const manifest = JSON.parse(await readFile(new URL('../fixtures/unapplied-override-toplevel/manifest.json', import.meta.url), 'utf8'));
+
+    const { notLanded } = checkInstall(lock.packages, manifest.overrides, [{ name: 'brace-expansion', to: '1.1.16' }], null);
+
+    assert.deepEqual(notLanded.map((g) => [g.name, g.copies.map((c) => c.version), g.inRange]), [['brace-expansion', ['1.1.11'], true]]);
+  });
+
+  it('returns empty lists without a lockfile', () => {
+    assert.deepEqual(checkInstall(null, overrides, pins, null), { notLanded: [], stale: [], stillVulnerable: [] });
   });
 });

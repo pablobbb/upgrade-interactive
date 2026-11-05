@@ -2,23 +2,35 @@
 // probe-audit.mjs — print the tool's audit verdicts for a project, without the TUI.
 //
 //   node scripts/probe-audit.mjs <project-dir> [pkg…] [--tool <checkout>]
+//   node scripts/probe-audit.mjs <pre-project> --after <post-project>
 //
 // Makes the same calls cli.js and App.js make — loadProject, manifestPathsOf,
 // computeVulnerabilities — so a capture can be re-read by any version of the
 // tool: point `--tool` at another checkout (or a `git archive` of a tag) to see
 // what that version decided. Names after the project limit the output to those
 // packages. Needs network access for the registry and advisory endpoints.
+//
+// `--after` prints instead what the CLI says once the run's `npm install` is done:
+// the pre project's audit, re-tested against the post project's lockfile, with
+// the run's pins taken to be the overrides that differ between the two root
+// manifests. Needs a checkout that has checkInstall.
 
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const args = process.argv.slice(2);
-const at = args.indexOf('--tool');
-const tool = at === -1 ? path.join(path.dirname(fileURLToPath(import.meta.url)), '..') : args[at + 1];
-if (at !== -1) args.splice(at, 2);
+/** @param {string} flag */
+const option = (flag) => {
+  const at = args.indexOf(flag);
+  if (at === -1) return null;
+  const [, value] = args.splice(at, 2);
+  return value ?? '';
+};
+const tool = option('--tool') ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const after = option('--after');
 const [project, ...only] = args;
-if (!project || !tool) {
-  process.stderr.write('usage: probe-audit.mjs <project-dir> [pkg…] [--tool <checkout>]\n');
+if (!project || !tool || after === '') {
+  process.stderr.write('usage: probe-audit.mjs <project-dir> [pkg…] [--tool <checkout>] [--after <post-project>]\n');
   process.exit(1);
 }
 
@@ -36,6 +48,33 @@ const manifestPaths = manifestPathsOf(proj, rootDir);
 const installed = await loadInstalledVersions(rootDir);
 const overrides = proj.root.json.overrides || {};
 const result = await computeVulnerabilities({ descriptors: proj.descriptors, installed, overrides, manifestPaths });
+
+if (after) {
+  const { checkInstall } = await imp('vulnerabilities.js');
+  const { formatInstallCheck } = await imp('summary.js');
+  const post = await loadProject(path.resolve(after), { workspaces: true, filter: null });
+  const postInstalled = await loadInstalledVersions(path.dirname(post.root.filePath));
+  const before = overrides;
+  const now = post.root.json.overrides || {};
+  // The writer's shape: a string or "." is a top-level pin, a child a scoped one.
+  const pins = [];
+  for (const [key, value] of Object.entries(now)) {
+    const was = before[key];
+    if (typeof value === 'string') {
+      if (value !== was) pins.push({ name: key, to: value });
+      continue;
+    }
+    for (const [child, pin] of Object.entries(value || {})) {
+      if (typeof pin !== 'string') continue;
+      const prior = was && typeof was === 'object' ? was[child] : child === '.' ? was : undefined;
+      if (pin === prior) continue;
+      pins.push(child === '.' ? { name: key, to: pin } : { name: child, to: pin, parent: key });
+    }
+  }
+  const check = checkInstall(postInstalled && postInstalled.packages, now, pins, result.vulns);
+  process.stdout.write(`pins this run: ${pins.length}\n\n${formatInstallCheck(check) || '(nothing to report)\n'}`);
+  process.exit(0);
+}
 
 const out = [];
 const short = (p) => p.replace(/node_modules\//g, '') || '<root>';

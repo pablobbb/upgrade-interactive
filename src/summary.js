@@ -3,11 +3,16 @@
 // importable from tests without launching the tool.
 
 import path from 'node:path';
+import semver from 'semver';
 
 import { TOGGLES } from './flags.js';
 import { INFO, CHILD, BECOMES } from './icons.js';
 
-/** @import { AppliedUpgrade, DependencyField, Project, ProjectManifest, WrittenOverride } from './types.js' */
+/**
+ * @import {
+ *   AppliedUpgrade, DependencyField, InstallCheck, InstalledCopy, Project, ProjectManifest, WrittenOverride,
+ * } from './types.js'
+ */
 
 /** @typedef {Pick<ProjectManifest, 'json'> & Partial<Pick<ProjectManifest, 'relPath'>>} ManifestConfig */
 
@@ -178,4 +183,93 @@ export function formatSummary({
     }
   }
   return out;
+}
+
+/**
+ * What `checkInstall` found, worded as the last thing the CLI prints after
+ * `npm install`, or '' when there is nothing to say.
+ *
+ * The routes are the ones measured on the 2026-11-04 field report's tree. A pin
+ * inside every dependent's range needs no override: delete it and `npm update`
+ * lands the fix, on every npm release measured. One outside a range lands with
+ * `npm update` on npm 10.9 and 12.2 but not on npm 11, where only a full
+ * reinstall applies it. Both of those can also apply older pins that aren't in
+ * effect, so those are named first.
+ *
+ * @param {InstallCheck} check
+ */
+export function formatInstallCheck({ notLanded, stale, stillVulnerable }) {
+  /** @param {{ name: string, parent: string | null }} p */
+  const target = (p) => (p.parent ? `${p.parent} ${CHILD} ${p.name}` : p.name);
+  /** @param {InstalledCopy[]} copies */
+  const declared = (copies) => {
+    const all = copies.flatMap((c) => c.dependents);
+    return all.map((d, i) => `${d.name}${i === 0 ? ' declares' : ''} ${d.range}`).join(', ');
+  };
+  /**
+   * @param {string[]} installed
+   * @param {string} pin
+   */
+  const crossesMajor = (installed, pin) =>
+    installed.some(
+      (v) => semver.valid(v) && semver.valid(pin) && !semver.satisfies(pin, `^${v}`) && !semver.satisfies(v, `^${pin}`)
+    );
+
+  /** @type {string[]} */
+  const sections = [];
+  if (notLanded.length > 0) {
+    let s = 'Not applied: these pins are in package.json, but the lockfile has older versions.\n';
+    for (const gap of notLanded) {
+      const copies = gap.copies.map((c) => `${c.version} (${declared([c])})`).join(', ');
+      s += `  ${target(gap)}  pins ${gap.pin}, lockfile has ${copies}\n`;
+    }
+    sections.push(s);
+
+    if (stale.length > 0) {
+      let older = 'Older overrides also not in effect, which the steps below can apply:\n';
+      for (const o of stale) {
+        const major = crossesMajor(o.installed, o.pin) ? ' (another major)' : '';
+        older += `  ${target(o)}  ${o.installed.join(', ')} ${BECOMES} ${o.pin}${major}\n`;
+      }
+      sections.push(`${older}Bump or delete those first.\n`);
+    }
+
+    /** @param {typeof notLanded} gaps */
+    const names = (gaps) => [...new Set(gaps.map((g) => g.name))].join(' ');
+    const inRange = notLanded.filter((g) => g.inRange);
+    const outside = notLanded.filter((g) => !g.inRange);
+    if (inRange.length > 0) {
+      sections.push(
+        `Inside their declared ranges: delete ${inRange.length === 1 ? 'that pin' : 'those pins'} from package.json, then run\n` +
+          `  npm update ${names(inRange)}\n` +
+          'This also moves other copies within their ranges.\n'
+      );
+    }
+    if (outside.length > 0) {
+      const one = outside.length === 1;
+      sections.push(
+        'Outside their declared ranges: try\n' +
+          `  npm update ${names(outside)}\n` +
+          `Some npm releases apply ${one ? 'the pin' : 'the pins'} this way. If the lockfile still has the older versions,\n` +
+          `only a full reinstall applies ${one ? 'it' : 'them'}:\n` +
+          '  rm -rf node_modules package-lock.json && npm install\n' +
+          'That re-resolves every dependency and can add new advisories.\n'
+      );
+    }
+  }
+
+  if (stillVulnerable.length > 0) {
+    let s = notLanded.length > 0 ? 'Also still vulnerable:\n' : 'Still vulnerable:\n';
+    for (const v of stillVulnerable) {
+      const why =
+        v.reason === 'unpatched'
+          ? 'no patched version'
+          : v.reason === 'in-range'
+            ? `a fix is in range: npm update ${v.name}`
+            : `${declared(v.copies)}${v.firstPatched ? `; the first safe version is ${v.firstPatched}` : ''}`;
+      s += `  ${v.name} ${v.versions.join(', ')} (${why})\n`;
+    }
+    sections.push(s);
+  }
+  return sections.join('\n');
 }

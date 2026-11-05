@@ -276,10 +276,9 @@ export function OverrideRow({ name, active, pin, reason, staged }) {
   );
 }
 
-// An `overrides` entry the installed tree does not reflect: the pin is correct
-// and already in package.json, but resolution happened before it was added, so
-// npm never applied it. Read-only — see the `unapplied` branch in rows.js for
-// why no action is offered.
+// An `overrides` entry the installed tree does not reflect: the pin is in
+// package.json, but npm never applied it to the locked copy. Read-only — see the
+// `unapplied` branch in rows.js for why no action is offered.
 /**
  * @param {{ name: string, mandated: string, installed: string | null, parentName: string | null }} props
  */
