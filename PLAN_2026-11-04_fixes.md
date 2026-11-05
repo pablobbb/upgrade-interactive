@@ -1,6 +1,6 @@
 # Plan: fixes from the 2026-11-04 field report
 
-Status: **Phase A in progress** (A7, A1, A2, A3 done). Phase 0 is done.
+Status: **Phase A in progress** (A7, A1, A2, A3, A4 done). Phase 0 is done.
 Source: `docs/2026-11-04-field-report.md` (2.2.0 on npm 11.13.0). F1–F7 are that report's findings.
 Line references are to `main` @ `360a0e6`.
 Scope: what the run showed the tool getting wrong. Fixes are designed from how the CLI works and

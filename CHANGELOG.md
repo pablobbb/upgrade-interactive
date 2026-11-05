@@ -24,6 +24,11 @@
   Nothing new is run. The same report replaces the fixed
   `rm -rf node_modules package-lock.json && npm install` hint that a workspace
   project got when every accepted pin was already in `package.json`.
+- **A row that needs no pin says so.** When every dependent's newest in-range
+  version is already safe, the row's hint adds `or run npm update <pkg>`. In that
+  run, 7 of the 12 pins written needed no override, and the next run called 4 of
+  them unneeded (F4). The hint is left out while one of your own overrides holds
+  the package. `o` still writes a pin; staging the update instead is planned for v3.
 
 ### Changed
 

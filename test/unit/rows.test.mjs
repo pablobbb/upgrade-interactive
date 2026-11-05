@@ -4,10 +4,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDisplayRows, overrideView, nextColumn, bulkColumn, windowSlice } from '../../src/components/rows.js';
-import { overrideLabel } from '../../src/components/Row.js';
+import { overrideLabel, vulnRowHint } from '../../src/components/Row.js';
 import { descriptorFixture, entryFixture, suggestionFixture, vulnFixture } from '../typed-fixtures.mjs';
+import { present } from '../narrow.mjs';
 
-/** @import { DependencyField } from '../../src/types.js' */
+/** @import { DeepPartial, DependencyField, Vuln } from '../../src/types.js' */
 
 // A normalized descriptor, as App produces before building rows.
 /**
@@ -447,5 +448,33 @@ describe('overrideLabel — a pin past declared majors', () => {
     const vuln = vulnFixture({ instances: [{ declaredRange: '^3.0.1', installedVersion: '3.1.8', vulnerable: true }] });
 
     assert.equal(overrideLabel('4.2.3', vuln), "→ override 4.2.3, past 1 dependent's declared major");
+  });
+});
+
+// Four of the 2026-11-04 field report's pins were in-range fixes the next run
+// called unneeded (F4). The row says so before `o` writes one.
+describe('vulnRowHint', () => {
+  /** @param {DeepPartial<Vuln>} extra */
+  const vuln = (extra) => vulnFixture({ pinStrategy: 'global', pinConflict: false, instances: [], ...extra });
+
+  it('adds the npm update route when every dependent can reach a fix in range', () => {
+    assert.equal(vulnRowHint(vuln({ inRangeFix: true, heldBy: [] }), 'qs'), 'press o to override, or run npm update qs (no pin needed)');
+  });
+
+  it('leaves it out when a fix is out of range', () => {
+    assert.equal(vulnRowHint(vuln({ inRangeFix: false, heldBy: [] }), 'qs'), 'press o to override');
+  });
+
+  // serialize-javascript in the field report: the user's own 7.1.2 pin would
+  // hold `npm update` back.
+  it('leaves it out while your own override holds the package, or can not be judged', () => {
+    assert.equal(vulnRowHint(vuln({ inRangeFix: true, heldBy: [{ key: 'qs', pin: '6.16.0' }] }), 'qs'), 'press o to override');
+    assert.equal(vulnRowHint(vuln({ inRangeFix: true, heldBy: null }), 'qs'), 'press o to override');
+  });
+
+  it('gives the blocked note instead when `o` can do nothing', () => {
+    const blocked = vuln({ pinConflict: true, inRangeFix: true, heldBy: [], instances: [{ conflict: true, conflictRanges: ['^1.0.0', '^2.0.0'] }] });
+
+    assert.match(present(vulnRowHint(blocked, 'qs')), /workspaces declare different ranges/);
   });
 });
