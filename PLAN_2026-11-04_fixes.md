@@ -1,6 +1,6 @@
 # Plan: fixes from the 2026-11-04 field report
 
-Status: **proposed. No code written.** Phase 0 is done.
+Status: **Phase A in progress** (A7, A1, A2, A3 done). Phase 0 is done.
 Source: `docs/2026-11-04-field-report.md` (2.2.0 on npm 11.13.0). F1–F7 are that report's findings.
 Line references are to `main` @ `360a0e6`.
 Scope: what the run showed the tool getting wrong. Fixes are designed from how the CLI works and
@@ -33,7 +33,7 @@ These ran before this plan was written, and they changed it.
 | 0b. Delete in-range pins, then `npm update`? | npm 11: exactly 3 packages move, direct 5, stable. 10.9.9 and 12.2.0: also pull in stale `vue` and `devalue` pins | A1's stale-pin warning covers both routes |
 | 0c. Reinstall without the stale pins? | Clean of the downgrades, but `esbuild` returns. Bumped instead of deleted: 4 direct, no downgrades | Decision 4 |
 | 0d. Selector key on the existing lockfile? | Same vulnerable copies as the run's bare pin on npm 11 (2), fewer on 12.2.0 (1), and `eslint` keeps 3.1.5 | B1 moves up. A2's README line gets an exact form |
-| F5 check. Does a global `zod` pin lower 4.6.7 copies? | No, scoped pins protect them | F5 corrected. A3's tree-wide floor rests on the code's stated intent, not this run |
+| F5 check. Does a global `zod` pin lower 4.6.7 copies? | No, scoped pins protect them | F5 corrected. A3's tree-wide floor lost its evidence, and was later dropped |
 
 ## Phase A: this branch, ships with the Unreleased 2.3.0
 
@@ -107,16 +107,17 @@ What `o` writes doesn't change.
   run has no rows for. A new npm-built fixture for this shape (`eslint-plugin-react@7.37.5` + `glob@13.0.6`), per
   CONTRIBUTING's rule that a fixture's lockfile is npm's own output.
 
-### A3. Don't offer versions below what the tree or the pin already has (F5)
+### A3. Don't offer versions below the user's own pin (F5)
 
-In `computeVulnerabilities` (`:973`), once instances are known, floor `safeVersions` at an existing verified-safe
-pin and at the highest installed copy. `firstPatched` stays as computed, so row columns don't change.
+In `computeVulnerabilities` (`:973`), floor `safeVersions` at an existing top-level pin that is verified safe.
+`firstPatched` stays as computed, so row columns don't change.
 
 - **The pin floor has the run behind it.** Second run, `qs`: the picker offers 6.17.1 only, accepting it reaches
   "already present", and A1 gives the route.
-- **The tree floor rests on the comment above it,** which already says "anywhere in the tree" while the code uses
-  flagged copies only. The run shows no harm from that gap, because scoped pins protected the `zod` copies. It's a
-  one-line change. Drop it if you'd rather fix the comment.
+- **The tree floor was dropped during implementation.** For a direct dependency, `o` bumps the root's own range
+  rather than writing a global pin, so flooring at a safe nested copy on a higher major would take the in-major fix
+  off the list. The run shows no harm from leaving it out, because scoped pins protected the `zod` copies. The comment
+  that claimed "anywhere in the tree" now says what the code does.
 - This changes what `o` writes on a second run, on purpose.
 
 ### A4. Say when no pin is needed (F4)
@@ -216,7 +217,7 @@ that counts:
 | After install, all names listed | Silent | Exactly the 8 direct packages in `post/audit.json` |
 | Route text | `rm -rf` only, and only if nothing was written | Both routes; names `devalue` (major), `vue`, `esbuild` |
 | Second run, `o` on `qs` | Rewrites to 6.16.1 | Offers 6.17.1 only; already present; gives the route |
-| Second run, `o` on `zod` | Global 4.6.6 | Offers 4.6.7; warns on `chromium-bidi` |
+| Second run, `o` on `zod` | Global 4.6.6, no warning | Still offers 4.6.6 (scoped pins keep the root's 4.6.7, per F5); warns on `chromium-bidi` |
 | Second run, 24-row terminal | 4 of 12 rows visible | All 12 reachable |
 
 The next real run is wrapped as `capture-run.sh pre` / `nui | tee` / `capture-run.sh post`, so a session exists at last. Both of the last

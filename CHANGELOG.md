@@ -27,6 +27,14 @@
 
 ### Changed
 
+- **The override picker never starts below your own pin.** On a row still
+  flagged after a run, `o` offered the oldest safe version first, so accepting it
+  rewrote a safe pin downward: in one real run's next step, `qs` 6.17.1 would have
+  become 6.16.1, and npm still left 6.16.0 in place
+  (`docs/2026-11-04-field-report.md`, F5). The global picker now offers nothing
+  below an existing top-level pin that is verified safe. Accepting the default on
+  such a row finds the pin already present, and the run says what lands it. This
+  changes what `o` writes on that row. The row's "fixed in" column is unchanged.
 - **Latest no longer offers a downgrade.** npm's `latest` dist-tag can be older
   than what a declared range already allows, for example when a newer release
   line is published under another tag, as `electron-builder`'s `v26` was. The

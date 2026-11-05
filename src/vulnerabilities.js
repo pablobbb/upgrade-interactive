@@ -846,6 +846,18 @@ function collectRemovableOverrides(overrideInfo, ok, advisories, unapplied) {
   return removable;
 }
 
+// The version a top-level `overrides` entry pins `name` to (a string, or the "."
+// of an object), when it is an exact version.
+/**
+ * @param {Overrides | null | undefined} overrides
+ * @param {string} name
+ */
+function topLevelPin(overrides, name) {
+  const value = overrides && typeof overrides === 'object' ? overrides[name] : undefined;
+  const pin = typeof value === 'string' ? value : value && typeof value === 'object' ? value['.'] : undefined;
+  return typeof pin === 'string' && semver.valid(pin) ? pin : null;
+}
+
 // Existing `overrides` entries that pin `name` somewhere a fix can't land, as
 // [{ key, pin }]: a top-level pin (a string, or the "." of an object), or a pin
 // one level down under a parent key, the only depths the writer uses. Each
@@ -1103,11 +1115,18 @@ export async function computeVulnerabilities(
     const publishedSafe = candidatesOk
       ? (candidatesByName[name] || []).filter((v) => !matchesAny(v, candidateAdvisories.get(name) || []))
       : [];
-    // The global picker still only offers versions at or above the newest one we
-    // currently have anywhere in the tree.
-    const safeVersions = reference ? publishedSafe.filter((v) => semver.gte(v, reference)) : publishedSafe;
+    // At or above the newest vulnerable version we have. Not the newest of all
+    // copies: for a direct dependency `o` bumps the root's own range, and a safe
+    // nested copy on a higher major mustn't take the in-major fix off the list.
+    const fixedFrom = reference ? publishedSafe.filter((v) => semver.gte(v, reference)) : publishedSafe;
+    // And at or above the user's own top-level pin when that is verified safe.
+    // The picker used to start below it, so accepting `o` on a still-flagged row
+    // rewrote the pin downward: qs 6.17.1 became 6.16.1, and npm still left
+    // 6.16.0 in place (the 2026-11-04 field report, F5).
+    const pinned = topLevelPin(overrides, name);
+    const safeVersions = pinned && publishedSafe.includes(pinned) ? fixedFrom.filter((v) => semver.gte(v, pinned)) : fixedFrom;
 
-    let firstPatched = safeVersions.length > 0 ? safeVersions[0] : null;
+    let firstPatched = fixedFrom.length > 0 ? fixedFrom[0] : null;
     // Only fall back to an advisory's promised fix when no candidates were
     // available to verify. Do not advertise one we just rejected via another
     // advisory (or failed to verify).

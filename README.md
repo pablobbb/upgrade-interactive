@@ -36,7 +36,8 @@ Requires Node 18+ and an interactive terminal.
   one of your direct dependencies. When no pin can be written, the row says why.
   If your own overrides hold the vulnerable version, it names them and the
   `npm update <pkg>` that fixes it once they're removed. When a version would
-  take dependents past the major they declare, the picker names them first.
+  take dependents past the major they declare, the picker names them first, and
+  it never offers one below a safe pin you already have.
 - **Clean up with `x`**: removes an override that's no longer needed.
 - In a workspace repo, **see overrides npm never applied** (see [Notes](#notes)).
 

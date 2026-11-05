@@ -10,6 +10,7 @@ import { readFile } from 'node:fs/promises';
 import { computeVulnerabilities, checkInstall } from '../../src/vulnerabilities.js';
 import { defaultOverrideSelection, isPinBlocked } from '../../src/override-select.js';
 import { vulnFixture } from '../typed-fixtures.mjs';
+import { present } from '../narrow.mjs';
 
 /** @import { Advisory, BulkAdvisories, Descriptor, InstalledTree, LockPackages, Overrides, PackageMeta, Vuln } from '../../src/types.js' */
 
@@ -1163,5 +1164,46 @@ describe('checkInstall', () => {
 
   it('returns empty lists without a lockfile', () => {
     assert.deepEqual(checkInstall(null, overrides, pins, null), { notLanded: [], stale: [], stillVulnerable: [] });
+  });
+});
+
+// The 2026-11-04 field report's second run (F5): `o` on qs offered 6.16.1 first,
+// and accepting it rewrote the user's 6.17.1 pin downward.
+describe('computeVulnerabilities — the global picker never starts below your pin', () => {
+  const installed = treeWith({
+    versions: new Map([['qs', new Set(['6.16.0'])]]),
+    packages: {
+      '': {},
+      'node_modules/co-body': { version: '6.2.0', dependencies: { qs: '^6.5.2' } },
+      'node_modules/qs': { version: '6.16.0' },
+    },
+  });
+  const registry = stubRegistry({
+    meta: { qs: { versions: ['6.16.0', '6.16.1', '6.16.2', '6.17.1'], distTags: {} } },
+    advisories: { qs: [advisory({ vulnerable_versions: '<=6.16.0', severity: 'moderate' })] },
+  });
+  /** @param {Overrides} overrides */
+  const qs = async (overrides) =>
+    present((await computeVulnerabilities({ installed, overrides }, registry)).vulns.get('qs'), 'qs row');
+
+  it('starts at an existing safe top-level pin', async () => {
+    const v = await qs({ qs: '6.17.1' });
+
+    assert.deepEqual(v.safeVersions, ['6.17.1']);
+    assert.equal(defaultOverrideSelection(v), '6.17.1', 'so accepting it finds the pin already present');
+    assert.equal(v.firstPatched, '6.16.1', "the row's fixed-in column is unchanged");
+  });
+
+  it('reads a self-pin under "."', async () => {
+    assert.deepEqual((await qs({ qs: { '.': '6.16.2' } })).safeVersions, ['6.16.2', '6.17.1']);
+  });
+
+  it('ignores a pin that is itself vulnerable, or not a version', async () => {
+    assert.deepEqual((await qs({ qs: '6.16.0' })).safeVersions, ['6.16.1', '6.16.2', '6.17.1']);
+    assert.deepEqual((await qs({ qs: '^6.16.0' })).safeVersions, ['6.16.1', '6.16.2', '6.17.1']);
+  });
+
+  it('leaves the list alone without a pin', async () => {
+    assert.deepEqual((await qs({})).safeVersions, ['6.16.1', '6.16.2', '6.17.1']);
   });
 });
