@@ -533,6 +533,53 @@ async function testUnappliedOverrideShownInWorkspace() {
   assert(frame.includes("7.29.0") && frame.includes("7.28.0"), "it shows both the mandated and installed versions");
 }
 
+// The "Overrides not in effect" rows can't take focus, and the list window
+// followed focus, so at 24 rows only the first few ever rendered: the 2026-11-04
+// field report's next run would have shown 4 of 12, and never its own pins (F6).
+// Past the last row focus can reach, ↓ now scrolls the rest into view.
+async function testUnappliedRowsReachable() {
+  /** @type {InputDescriptor[]} */
+  const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
+  const audit = unappliedAudit();
+  const many = Array.from({ length: 15 }, (_, i) => ({
+    mandates: [{ name: `pkg${i}`, mandated: '2.0.0', found: [{ parentName: 'host', parentVersion: '1.0.0', path: `node_modules/pkg${i}`, installedVersion: '1.0.0' }] }],
+  }));
+  audit.unappliedOverrides = new Map(many.map((info, i) => [`host${i}`, info]));
+  const { stdin, lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      audit: true,
+      section: true,
+      manifestPaths: ['', 'packages/app'], // a workspace project
+      runAudit: async () => audit,
+      onSubmit: () => {},
+      onAbort: () => {},
+    })
+  );
+
+  await rowsLoaded(lastFrame, 'chalk to load');
+  await waitForFrame(lastFrame, (f) => f.includes('not in effect'), { label: 'the unapplied-override section' });
+  const hiddenAtFirst = !lastFrame().includes('pkg14');
+  // Keep pressing ↓ until the last row shows: each press scrolls one row once
+  // focus is on chalk, the only row it can reach.
+  const deadline = Date.now() + 15000;
+  while (!lastFrame().includes('pkg14') && Date.now() < deadline) {
+    stdin.write('\u001B[B');
+    await wait(30);
+  }
+  const atEnd = lastFrame();
+  while (!lastFrame().includes('❯ chalk') && Date.now() < deadline) {
+    stdin.write('\u001B[A');
+    await wait(30);
+  }
+  const back = lastFrame();
+  unmount();
+
+  assert(hiddenAtFirst, 'a long read-only tail starts below the window');
+  assert(atEnd.includes('pkg14'), '↓ scrolls the read-only tail all the way to its last row');
+  assert(back.includes('❯ chalk'), '↑ scrolls back to the focused row');
+}
+
 async function testUnappliedOverrideHiddenWhenStandalone() {
   /** @type {InputDescriptor[]} */
   const descriptors = [{ name: "chalk", range: "^4.0.0", field: "dependencies" }];
@@ -916,6 +963,7 @@ async function main() {
   await testOverrideOriginRehomed();
   await testRemovableOverride();
   await testUnappliedOverrideShownInWorkspace();
+  await testUnappliedRowsReachable();
   await testUnappliedOverrideHiddenWhenStandalone();
 
   if (failures > 0) {

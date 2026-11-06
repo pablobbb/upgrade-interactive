@@ -51,7 +51,7 @@ command that lands it, and anything still vulnerable.
 
 | Key               | Action                                                                     |
 | ----------------- | -------------------------------------------------------------------------- |
-| `↑` / `↓`         | Move between packages                                                      |
+| `↑` / `↓`         | Move between packages; past the last, scroll the read-only rows below it   |
 | `←` / `→`         | Move between Current / Range / Latest, skipping columns a package lacks    |
 | `c` / `r` / `l`   | Select that column for every package; one that lacks it falls back lower   |
 | `o`               | Pin the focused vulnerable package to a safe version                       |

@@ -75,7 +75,8 @@ A -w value that matches no workspace is an error listing what didn't match, as i
 combining -w with --no-workspaces.
 
 Controls (inside the interactive UI)
-  <up>/<down>     select a package
+  <up>/<down>     select a package; past the last one, scroll the read-only
+                  rows below it
   <left>/<right>  select which version to apply (Current / Range / Latest);
                   columns a package doesn't offer are skipped
   c / r / l       select all packages' Current / Range / Latest column at once;

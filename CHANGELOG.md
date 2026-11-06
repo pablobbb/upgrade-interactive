@@ -49,6 +49,12 @@
 
 ### Fixed
 
+- **Every "Overrides not in effect" row can be scrolled to.** Those rows can't
+  take focus, and the list only scrolled with focus, so on a short terminal the
+  ones below the window never rendered. At 24 rows, one real run's next session
+  would have shown 4 of 12, and none of the pins that run wrote
+  (`docs/2026-11-04-field-report.md`, F6). From the last row focus can reach, `↓`
+  now scrolls the rest into view and `↑` scrolls back.
 - **A global pin that leaves dependents' majors now says so.** When no
   dependent could be pinned in its own range, `o` fell through to a global pin
   and offered it as a plain list of versions. In one real run, a pin to

@@ -3,7 +3,7 @@ import { Box, Text, useInput, useApp, useStdout } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
 import { Row, VulnRow, OverrideRow, UnappliedRow, LoadingRow, SectionHeader, WorkspaceHeader } from './Row.js';
-import { buildDisplayRows, overrideView, nextColumn, bulkColumn, windowSlice } from './rows.js';
+import { buildDisplayRows, overrideView, nextColumn, bulkColumn, listWindow, isNavigable } from './rows.js';
 import { OverridePicker, ScopedOverridePicker, PICKER_MAX_HEIGHT } from './OverridePicker.js';
 import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
@@ -45,11 +45,6 @@ const ROOT_ONLY_MANIFESTS = Object.freeze(['']);
  */
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
-}
-
-/** @param {DisplayRow} row */
-function isNavigable(row) {
-  return row.kind === 'dep' || row.kind === 'vuln' || row.kind === 'override';
 }
 
 /**
@@ -145,6 +140,9 @@ export function App({
   const [stagedRemovals, setStagedRemovals] = useState(/** @type {Record<string, boolean>} */ ({}));
   const [auditState, setAuditState] = useState(/** @type {AuditResult | null} */ (null));
   const [override, setOverride] = useState(/** @type {PickerState | null} */ (null));
+  // ↓ presses past the last row focus can reach, scrolling the read-only tail
+  // into view (listWindow in rows.js). Any focus move starts it over.
+  const [tailScroll, setTailScroll] = useState(0);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -260,6 +258,21 @@ export function App({
   const navKeys = rows.filter(isNavigable).map((r) => r.key);
   const navKeyStr = navKeys.join('|');
   const focusedRow = rows.find((r) => r.key === focusedKey) || null;
+
+  const termRows = (stdout && stdout.rows) || 24;
+  // An open picker renders *below* the list, so a full-height list would push it
+  // off the bottom of the terminal. Give the overlay its budget back while it's
+  // up; the list keeps a few rows of context either way.
+  const maxRows = override
+    ? Math.max(3, termRows - 12 - PICKER_MAX_HEIGHT)
+    : Math.max(5, termRows - 12);
+  const focusedIndex = Math.max(0, rows.findIndex((r) => r.key === focusedKey));
+  // Ahead of the key handler, which needs to know whether ↑/↓ scroll the tail.
+  const listView = listWindow(rows, focusedIndex, maxRows, tailScroll);
+
+  useEffect(() => {
+    setTailScroll(0);
+  }, [focusedKey]);
 
   // Keep focus on a navigable row as things load in / vulns arrive.
   useEffect(() => {
@@ -381,8 +394,10 @@ export function App({
         exit();
         return;
       }
-      if (key.upArrow) return moveFocus(-1);
-      if (key.downArrow) return moveFocus(1);
+      // From the last row focus can reach, ↓ scrolls the read-only rows below it
+      // and ↑ scrolls back before it moves focus.
+      if (key.upArrow) return listView.offset > 0 ? setTailScroll(listView.offset - 1) : moveFocus(-1);
+      if (key.downArrow) return listView.offset < listView.room ? setTailScroll(listView.offset + 1) : moveFocus(1);
       if (key.leftArrow) return cycleColumn(-1);
       if (key.rightArrow) return cycleColumn(1);
       if (input === 'o') return openOverride();
@@ -424,15 +439,7 @@ export function App({
     );
   }
 
-  const termRows = (stdout && stdout.rows) || 24;
-  // An open picker renders *below* the list, so a full-height list would push it
-  // off the bottom of the terminal. Give the overlay its budget back while it's
-  // up; the list keeps a few rows of context either way.
-  const maxRows = override
-    ? Math.max(3, termRows - 12 - PICKER_MAX_HEIGHT)
-    : Math.max(5, termRows - 12);
-  const focusedIndex = Math.max(0, rows.findIndex((r) => r.key === focusedKey));
-  const { visible, above, below } = windowSlice(rows, focusedIndex, maxRows);
+  const { visible, above, below } = listView;
 
   return e(
     Box,

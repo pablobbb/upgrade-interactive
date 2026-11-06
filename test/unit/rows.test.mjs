@@ -3,7 +3,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDisplayRows, overrideView, nextColumn, bulkColumn, windowSlice } from '../../src/components/rows.js';
+import { buildDisplayRows, overrideView, nextColumn, bulkColumn, windowSlice, listWindow } from '../../src/components/rows.js';
 import { overrideLabel, vulnRowHint } from '../../src/components/Row.js';
 import { descriptorFixture, entryFixture, suggestionFixture, vulnFixture } from '../typed-fixtures.mjs';
 import { present } from '../narrow.mjs';
@@ -476,5 +476,53 @@ describe('vulnRowHint', () => {
     const blocked = vuln({ pinConflict: true, inRangeFix: true, heldBy: [], instances: [{ conflict: true, conflictRanges: ['^1.0.0', '^2.0.0'] }] });
 
     assert.match(present(vulnRowHint(blocked, 'qs')), /workspaces declare different ranges/);
+  });
+});
+
+// The "Overrides not in effect" rows can't take focus, and the window followed
+// focus, so at 24 rows the 2026-11-04 field report's next run showed 4 of its 12
+// and never this run's own pins (F6).
+describe('listWindow', () => {
+  // Two rows focus can reach, then a read-only tail of six.
+  const rows = [
+    { kind: 'override', key: 'a' },
+    { kind: 'override', key: 'b' },
+    { kind: 'header', key: 'h' },
+    ...Array.from({ length: 6 }, (_, i) => ({ kind: 'unapplied', key: `u${i}` })),
+  ];
+  /** @param {{ visible: { key: string }[] }} w */
+  const keys = (w) => w.visible.map((r) => r.key);
+
+  it('follows focus while a navigable row remains below it', () => {
+    const w = listWindow(rows, 0, 4, 3);
+
+    assert.deepEqual(keys(w), ['a', 'b', 'h', 'u0']);
+    assert.equal(w.offset, 0, 'the tail only scrolls from the last navigable row');
+    assert.equal(w.room, 0);
+  });
+
+  it('scrolls the read-only tail one row per step from the last navigable row', () => {
+    assert.equal(listWindow(rows, 1, 4, 0).room, 5);
+    assert.deepEqual(keys(listWindow(rows, 1, 4, 2)), ['h', 'u0', 'u1', 'u2']);
+  });
+
+  it('stops at the end of the list', () => {
+    const w = listWindow(rows, 1, 4, 99);
+
+    assert.deepEqual(keys(w), ['u2', 'u3', 'u4', 'u5']);
+    assert.equal(w.offset, 5);
+    assert.equal(w.below, 0);
+  });
+
+  it('reaches every row', () => {
+    const seen = new Set();
+    const { room } = listWindow(rows, 1, 4, 0);
+    for (let step = 0; step <= room; step++) for (const k of keys(listWindow(rows, 1, 4, step))) seen.add(k);
+
+    assert.deepEqual([...seen].sort(), rows.map((r) => r.key).sort());
+  });
+
+  it('has nothing to scroll when the list fits', () => {
+    assert.equal(listWindow(rows, 1, 20, 3).room, 0);
   });
 });
