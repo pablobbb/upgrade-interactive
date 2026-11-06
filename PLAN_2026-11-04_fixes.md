@@ -1,6 +1,6 @@
 # Plan: fixes from the 2026-11-04 field report
 
-Status: **Phase A in progress** (A7, A1, A2, A3, A4, A5 done). Phase 0 is done.
+Status: **Phase A done** and replayed against the capture (see "Phase A results"). Phase B not started.
 Source: `docs/2026-11-04-field-report.md` (2.2.0 on npm 11.13.0). F1–F7 are that report's findings.
 Line references are to `main` @ `360a0e6`.
 Scope: what the run showed the tool getting wrong. Fixes are designed from how the CLI works and
@@ -222,6 +222,23 @@ that counts:
 
 The next real run is wrapped as `capture-run.sh pre` / `nui | tee` / `capture-run.sh post`, so a session exists at last. Both of the last
 two captures lacked one.
+
+## Phase A results
+
+Every row of the replay table above was run against the capture on 2026-11-06. Each used
+`scripts/rebuild-capture.mjs`, then `scripts/probe-audit.mjs` or the real components on the result, with today's
+registry. All rows hold, with these differences from the plan:
+
+- **A3 lost its tree floor during implementation** (see A3). The second-run `zod` picker still offers 4.6.6. Phase 0
+  showed that lowers nothing, and the picker now warns on `chromium-bidi`.
+- **On the `post` tree, `minimatch` crosses 17 dependents, not 18,** because its root-reached copies already moved to
+  11.0.4. The picker offers 11.0.4 and up, and `minimatch` 11.0.5, published since, now appears too.
+- **The 24-row check ran on the real tree**: v2.2.0 reaches 4 of the 12 "not in effect" rows, and this branch all 12.
+- **The CLI was driven end to end in a pseudo-terminal** on a small workspace (`co-body`, `qs`), through both the
+  install path and the "already present" path.
+
+Suite: `npm test` and `npm run typecheck` pass. `test/integration/install-check.test.mjs` also passes on npm 10.9.9,
+11.9.0 and 12.2.0.
 
 ## Sequencing
 
