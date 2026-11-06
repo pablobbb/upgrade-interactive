@@ -44,3 +44,32 @@ jobs:
 
       - name: Type-check
         run: npm run typecheck
+
+  # Secrets and personal data must never reach this public repo
+  # (scripts/check-sensitive.mjs). The pre-push hook stops them before a push;
+  # this catches a clone that doesn't have it enabled. Findings are masked, since
+  # this log is public too. Other projects' names come from the
+  # NUI_SENSITIVE_TERMS secret, which fork PRs don't get.
+  sensitive-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Tracked files
+        run: npm run check:sensitive
+        env:
+          NUI_SENSITIVE_TERMS: ${{ secrets.NUI_SENSITIVE_TERMS }}
+
+      # The PR's own commits, not the merge commit Actions checks out.
+      - name: The pull request's commits
+        if: github.event_name == 'pull_request'
+        run: node scripts/check-sensitive.mjs --commits origin/${{ github.base_ref }}..${{ github.event.pull_request.head.sha }}
+        env:
+          NUI_SENSITIVE_TERMS: ${{ secrets.NUI_SENSITIVE_TERMS }}
