@@ -3,7 +3,7 @@ import { Box, Text, useInput, useApp, useStdout } from 'ink';
 import { Prompt } from './Prompt.js';
 import { Header } from './Header.js';
 import { Row, VulnRow, OverrideRow, UnappliedRow, LoadingRow, SectionHeader, WorkspaceHeader } from './Row.js';
-import { buildDisplayRows, overrideView, nextColumn, bulkColumn, windowSlice } from './rows.js';
+import { buildDisplayRows, overrideView, nextColumn, bulkColumn, listWindow, isNavigable } from './rows.js';
 import { OverridePicker, ScopedOverridePicker, PICKER_MAX_HEIGHT } from './OverridePicker.js';
 import { fetchSuggestions } from '../semver-suggest.js';
 import { mapWithConcurrency } from '../registry.js';
@@ -15,7 +15,7 @@ import { INFO, UP, DOWN } from '../icons.js';
 /**
  * @import {
  *   AuditResult, Descriptor, DisplayRow, Entry, InputDescriptor, OverrideSpec, Overrides,
- *   PinInstance, StagedOverride, Suggestion,
+ *   PinInstance, StagedOverride, Suggestion, Vuln,
  * } from '../types.js'
  */
 
@@ -23,7 +23,7 @@ import { INFO, UP, DOWN } from '../icons.js';
  * @typedef {{ cwd: string, descriptors: Descriptor[], overrides: Overrides, manifestPaths: readonly string[] }} AuditArgs
  * @typedef {AuditResult | null | undefined} AuditOutcome
  * @typedef {{ name: string, originKey: string, originLabel: string | null }
- *   & ({ mode: 'scoped', instances: PinInstance[] } | { mode: 'global', versions: string[] })} PickerState
+ *   & ({ mode: 'scoped', instances: PinInstance[] } | { mode: 'global', versions: string[], vuln: Vuln })} PickerState
  *   The override picker that's open, and the row it stages for.
  */
 
@@ -45,11 +45,6 @@ const ROOT_ONLY_MANIFESTS = Object.freeze(['']);
  */
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
-}
-
-/** @param {DisplayRow} row */
-function isNavigable(row) {
-  return row.kind === 'dep' || row.kind === 'vuln' || row.kind === 'override';
 }
 
 /**
@@ -83,7 +78,12 @@ async function defaultRunAudit({ cwd, descriptors, overrides, manifestPaths }) {
 /**
  * @param {{
  *   descriptors: InputDescriptor[],
- *   onSubmit: (selections: Map<string, string>, overrides: Record<string, OverrideSpec>, removals: string[]) => void,
+ *   onSubmit: (
+ *     selections: Map<string, string>,
+ *     overrides: Record<string, OverrideSpec>,
+ *     removals: string[],
+ *     vulns: Map<string, Vuln> | null,
+ *   ) => void,
  *   onAbort: () => void,
  *   audit?: boolean,
  *   section?: boolean,
@@ -140,6 +140,9 @@ export function App({
   const [stagedRemovals, setStagedRemovals] = useState(/** @type {Record<string, boolean>} */ ({}));
   const [auditState, setAuditState] = useState(/** @type {AuditResult | null} */ (null));
   const [override, setOverride] = useState(/** @type {PickerState | null} */ (null));
+  // ↓ presses past the last row focus can reach, scrolling the read-only tail
+  // into view (listWindow in rows.js). Any focus move starts it over.
+  const [tailScroll, setTailScroll] = useState(0);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -217,10 +220,11 @@ export function App({
   // Overrides the tree never applied, flattened one row per pinned package.
   //
   // Shown only for workspace projects. npm re-resolves a changed override on the
-  // next `npm install` in a standalone project but not in a workspace — measured,
-  // not assumed (docs/2026-08-26-spike-reresolve.md) — so warning a standalone
-  // user would be telling them to act on something the tool's own `--install`
-  // step is about to fix.
+  // next `npm install` in a standalone project, but often not in a workspace —
+  // measured, not assumed (docs/2026-08-26-spike-reresolve.md,
+  // docs/2026-11-04-field-report.md) — so warning a standalone user would be
+  // telling them to act on something the tool's own `--install` step is about
+  // to fix.
   const isWorkspaceProject = (manifestPaths?.length ?? 1) > 1;
   const unapplied = auditState && auditState.unappliedOverrides ? auditState.unappliedOverrides : null;
   const unappliedList =
@@ -254,6 +258,21 @@ export function App({
   const navKeys = rows.filter(isNavigable).map((r) => r.key);
   const navKeyStr = navKeys.join('|');
   const focusedRow = rows.find((r) => r.key === focusedKey) || null;
+
+  const termRows = (stdout && stdout.rows) || 24;
+  // An open picker renders *below* the list, so a full-height list would push it
+  // off the bottom of the terminal. Give the overlay its budget back while it's
+  // up; the list keeps a few rows of context either way.
+  const maxRows = override
+    ? Math.max(3, termRows - 12 - PICKER_MAX_HEIGHT)
+    : Math.max(5, termRows - 12);
+  const focusedIndex = Math.max(0, rows.findIndex((r) => r.key === focusedKey));
+  // Ahead of the key handler, which needs to know whether ↑/↓ scroll the tail.
+  const listView = listWindow(rows, focusedIndex, maxRows, tailScroll);
+
+  useEffect(() => {
+    setTailScroll(0);
+  }, [focusedKey]);
 
   // Keep focus on a navigable row as things load in / vulns arrive.
   useEffect(() => {
@@ -338,7 +357,8 @@ export function App({
       return;
     }
     if (!vuln.safeVersions || vuln.safeVersions.length === 0) return;
-    setOverride({ name, mode: 'global', versions: vuln.safeVersions, originKey, originLabel });
+    // The picker warns when a version takes dependents past their declared major.
+    setOverride({ name, mode: 'global', versions: vuln.safeVersions, vuln, originKey, originLabel });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audit, focusedRow, stagedOverrides, navKeyStr]);
 
@@ -374,8 +394,10 @@ export function App({
         exit();
         return;
       }
-      if (key.upArrow) return moveFocus(-1);
-      if (key.downArrow) return moveFocus(1);
+      // From the last row focus can reach, ↓ scrolls the read-only rows below it
+      // and ↑ scrolls back before it moves focus.
+      if (key.upArrow) return listView.offset > 0 ? setTailScroll(listView.offset - 1) : moveFocus(-1);
+      if (key.downArrow) return listView.offset < listView.room ? setTailScroll(listView.offset + 1) : moveFocus(1);
       if (key.leftArrow) return cycleColumn(-1);
       if (key.rightArrow) return cycleColumn(1);
       if (input === 'o') return openOverride();
@@ -396,7 +418,9 @@ export function App({
         /** @type {Record<string, OverrideSpec>} */
         const overrideSpecs = {};
         for (const [name, record] of Object.entries(stagedOverrides)) overrideSpecs[name] = record.spec;
-        onSubmit(selections, overrideSpecs, removals);
+        // The audit goes along too, so the CLI can re-test it against the lockfile
+        // npm writes (checkInstall in vulnerabilities.js).
+        onSubmit(selections, overrideSpecs, removals, auditState ? auditState.vulns : null);
         exit();
       }
     },
@@ -415,15 +439,7 @@ export function App({
     );
   }
 
-  const termRows = (stdout && stdout.rows) || 24;
-  // An open picker renders *below* the list, so a full-height list would push it
-  // off the bottom of the terminal. Give the overlay its budget back while it's
-  // up; the list keeps a few rows of context either way.
-  const maxRows = override
-    ? Math.max(3, termRows - 12 - PICKER_MAX_HEIGHT)
-    : Math.max(5, termRows - 12);
-  const focusedIndex = Math.max(0, rows.findIndex((r) => r.key === focusedKey));
-  const { visible, above, below } = windowSlice(rows, focusedIndex, maxRows);
+  const { visible, above, below } = listView;
 
   return e(
     Box,
@@ -501,6 +517,7 @@ export function App({
         ? e(OverridePicker, {
             name: override.name,
             versions: override.versions,
+            vuln: override.vuln,
             onSelect: (version) => {
               setStagedOverrides((prev) => ({
                 ...prev,

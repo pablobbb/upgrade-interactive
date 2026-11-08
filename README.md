@@ -35,17 +35,23 @@ Requires Node 18+ and an interactive terminal.
   when the package is installed at several versions, or a range bump when it's
   one of your direct dependencies. When no pin can be written, the row says why.
   If your own overrides hold the vulnerable version, it names them and the
-  `npm update <pkg>` that fixes it once they're removed.
+  `npm update <pkg>` that fixes it once they're removed. When a version would
+  take dependents past the major they declare, the picker names them first, and
+  it never offers one below a safe pin you already have. A row whose fix every
+  dependent's range already allows says so: `npm update <pkg>` lands it with no
+  pin.
 - **Clean up with `x`**: removes an override that's no longer needed.
 - In a workspace repo, **see overrides npm never applied** (see [Notes](#notes)).
 
-On `Enter` it writes your choices to `package.json` and runs `npm install`.
+On `Enter` it writes your choices to `package.json` and runs `npm install`. It
+then reads the lockfile npm wrote, and names any pin npm didn't apply, with the
+command that lands it, and anything still vulnerable.
 
 ## Controls
 
 | Key               | Action                                                                     |
 | ----------------- | -------------------------------------------------------------------------- |
-| `↑` / `↓`         | Move between packages                                                      |
+| `↑` / `↓`         | Move between packages; past the last, scroll the read-only rows below it   |
 | `←` / `→`         | Move between Current / Range / Latest, skipping columns a package lacks    |
 | `c` / `r` / `l`   | Select that column for every package; one that lacks it falls back lower   |
 | `o`               | Pin the focused vulnerable package to a safe version                       |
@@ -114,11 +120,21 @@ trailing `**` and `!` exclusions — not `?`, `[a-z]`, `{a,b}` or a non-trailing
   two `parent@version` pins when the root also depends on that parent, and on a
   fresh install a `parent@version` key also pins the parent itself to that
   version, which can downgrade it.
-- **In a workspace repo, npm doesn't apply an override added after the
-  lockfile** — `npm install` reports `up to date`. The fix,
-  `rm -rf node_modules package-lock.json && npm install`, re-resolves every
-  dependency, so the tool flags these overrides rather than running it. A
-  standalone project applies them on its next `npm install`.
+- **A global pin can move copies an advisory doesn't affect**, when a package is
+  installed at several majors and only the newer ones are vulnerable. The picker
+  names the copies that are already safe. To leave them alone, write a key that
+  starts where the advisory does, such as `"minimatch@>=7": "11.0.4"`, by hand;
+  the tool doesn't write one yet. npm applies it like any other override.
+- **In a workspace repo, npm often doesn't apply a new override.** A package
+  already in the lockfile that only a workspace depends on keeps its version, and
+  on npm 11 so does one the same install adds. A standalone project applies
+  overrides on its next `npm install`. After installing, the tool says which pins
+  didn't land. One inside what its dependents declare needs no pin: delete it and
+  run `npm update <pkg>`. One outside lands with `npm update` on some npm releases
+  and otherwise only with `rm -rf node_modules package-lock.json && npm install`,
+  which re-resolves every dependency. Both can also apply your older overrides
+  that weren't in effect, so the tool names those first. It reports all of this
+  rather than running it.
 
 ## Contributing
 

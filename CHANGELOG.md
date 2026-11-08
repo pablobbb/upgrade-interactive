@@ -2,8 +2,44 @@
 
 ## Unreleased
 
+### Added
+
+- **After `npm install`, the run says what didn't land.** The tool used to run
+  `npm install` and stop. In a workspace project npm can leave a pin it was just
+  given unapplied, and the run ended as if it had worked: in one real run, 5 of 12
+  new pins never reached the lockfile, and the user found out from a separate
+  `npm audit` (`docs/2026-11-04-field-report.md`, F1). The tool now reads the
+  lockfile npm wrote and names:
+  - each pin with copies still below it, and what their dependents declare;
+  - the way to land it: for a pin inside those ranges, delete it and run
+    `npm update <pkg>`; outside them, try `npm update`, which applies it on some
+    npm releases, and otherwise a full reinstall;
+  - older overrides not in effect, which both of those can also apply. On that
+    run, a reinstall would have moved `devalue` back a major;
+  - what the run's audit flagged that the lockfile still has, and why it's left.
+
+  Measured on npm 10.9.9, 11.9.0, 11.13.0 and 12.2.0. Which pins land depends on
+  the release, so the tool reads what happened rather than predicting it. A copy
+  that lands *above* its pin, as `npm update` does on npm 11, isn't reported.
+  Nothing new is run. The same report replaces the fixed
+  `rm -rf node_modules package-lock.json && npm install` hint that a workspace
+  project got when every accepted pin was already in `package.json`.
+- **A row that needs no pin says so.** When every dependent's newest in-range
+  version is already safe, the row's hint adds `or run npm update <pkg>`. In that
+  run, 7 of the 12 pins written needed no override, and the next run called 4 of
+  them unneeded (F4). The hint is left out while one of your own overrides holds
+  the package. `o` still writes a pin; staging the update instead is planned for v3.
+
 ### Changed
 
+- **The override picker never starts below your own pin.** On a row still
+  flagged after a run, `o` offered the oldest safe version first, so accepting it
+  rewrote a safe pin downward: in one real run's next step, `qs` 6.17.1 would have
+  become 6.16.1, and npm still left 6.16.0 in place
+  (`docs/2026-11-04-field-report.md`, F5). The global picker now offers nothing
+  below an existing top-level pin that is verified safe. Accepting the default on
+  such a row finds the pin already present, and the run says what lands it. This
+  changes what `o` writes on that row. The row's "fixed in" column is unchanged.
 - **Latest no longer offers a downgrade.** npm's `latest` dist-tag can be older
   than what a declared range already allows, for example when a newer release
   line is published under another tag, as `electron-builder`'s `v26` was. The
@@ -13,6 +49,25 @@
 
 ### Fixed
 
+- **Every "Overrides not in effect" row can be scrolled to.** Those rows can't
+  take focus, and the list only scrolled with focus, so on a short terminal the
+  ones below the window never rendered. At 24 rows, one real run's next session
+  would have shown 4 of 12, and none of the pins that run wrote
+  (`docs/2026-11-04-field-report.md`, F6). From the last row focus can reach, `↓`
+  now scrolls the rest into view and `↑` scrolls back.
+- **A global pin that leaves dependents' majors now says so.** When no
+  dependent could be pinned in its own range, `o` fell through to a global pin
+  and offered it as a plain list of versions. In one real run, a pin to
+  `minimatch` 11 moved `eslint`'s `minimatch@3`, which the advisory doesn't
+  affect, and five `eslint-plugin-react` rules then threw when configured
+  (`docs/2026-11-04-field-report.md`, F3). The global picker now warns for the
+  version under the cursor:
+  - how many dependents it takes past the major they declare;
+  - which of them are already safe and would move too;
+  - for those, a narrower key to write by hand, such as `"minimatch@>=7"`.
+
+  The staged row keeps the count. What `o` writes doesn't change: on that run the
+  pin also fixed ten vulnerable copies, so it's still offered.
 - **A blocked row names the overrides that hold the vulnerable version, and the
   way out.** When the tool refused to write new per-dependent pins (npm keeps
   only one of two identical `parent@version` pins), the row said no fix could be

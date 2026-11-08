@@ -4,6 +4,8 @@
 // fixture test harness import these, so the test can't quietly assert against a
 // stale copy of the picker's default while the real app diverges.
 
+import semver from 'semver';
+
 /** @import { OverrideSpec, PinInstance, PinRefusal, ScopedSpec, Vuln } from './types.js' */
 
 // A vulnerable instance is "pinnable" when it's actually vulnerable, its
@@ -107,6 +109,80 @@ export function isPinBlocked(vuln) {
     pinnableInstances(vuln).length === 0 &&
     (vuln.instances || []).some((i) => i.pinRefusal)
   );
+}
+
+// Whether a pin to `version` takes a dependent declaring `range` to another
+// major line: outside the range, and outside `^` its lowest version. So an exact
+// "1.16.0" taking 1.16.2 isn't, and "^0.8.8" taking 0.9.0 is. A range that isn't
+// semver (a git URL, a tag) is skipped.
+/**
+ * @param {string} range
+ * @param {string} version
+ */
+function leavesMajor(range, version) {
+  if (!semver.validRange(range) || !semver.valid(version)) return false;
+  if (semver.satisfies(version, range, { includePrerelease: true })) return false;
+  const floor = semver.minVersion(range);
+  return !floor || !semver.satisfies(version, `^${floor.version}`, { includePrerelease: true });
+}
+
+// The dependents a global pin to `version` takes past the major they declare, and
+// which of them are already safe and would move anyway. The picker used to offer
+// such a pin as a plain version: in the 2026-11-04 field report, a pin to
+// minimatch 11 moved eslint's minimatch@3, which the advisory doesn't affect, and
+// broke five eslint-plugin-react rules that call it as a function (F3). It's
+// still offered, since it also fixed ten vulnerable copies; the picker says what
+// it costs. The root's own edge is left out: for a direct dependency `o` bumps the
+// root's range instead. A dependent already on the pin's line isn't moved by it.
+/**
+ * @param {Pick<Vuln, 'instances'>} vuln
+ * @param {string} version
+ */
+export function crossedDependents(vuln, version) {
+  const crossed = (vuln.instances || []).filter((i) => i.parentPath !== '' && leavesMajor(i.declaredRange, version));
+  const alreadySafe = crossed.filter(
+    (i) =>
+      !i.vulnerable &&
+      !!i.installedVersion &&
+      !!semver.valid(i.installedVersion) &&
+      !semver.satisfies(version, `^${i.installedVersion}`, { includePrerelease: true })
+  );
+  return { crossed, alreadySafe };
+}
+
+// A version-qualified key that pins only what the advisories affect, for the user
+// to write by hand instead of a global pin that moves safe copies: "pkg@>=7" when
+// every matching advisory starts at 7.0.0. On the field report's tree it fixed as
+// many copies as the run's bare "minimatch" pin and left eslint on 3.1.5 (F3). The
+// unspaced form is the one npm 10.9.9 also honoured. Null when there's no safe
+// copy below the advisories to spare, when one has no lower bound, or when the key
+// would also catch a newer copy and lower it to `version`.
+/**
+ * @param {string} name
+ * @param {Pick<Vuln, 'advisories' | 'instances'>} vuln
+ * @param {string} version
+ * @returns {string | null}
+ */
+export function narrowerKey(name, vuln, version) {
+  const floors = (vuln.advisories || []).map((a) => {
+    try {
+      return semver.minVersion(a.vulnerable_versions);
+    } catch {
+      return null;
+    }
+  });
+  if (floors.length === 0 || floors.some((f) => !f || f.version === '0.0.0')) return null;
+  const floor = /** @type {import('semver').SemVer[]} */ (floors).reduce((a, b) => (semver.lt(b, a) ? b : a));
+  /** @param {string | null} v */
+  const below = (v) => !!v && !!semver.valid(v) && semver.lt(v, floor);
+  const instances = vuln.instances || [];
+  if (!instances.some((i) => !i.vulnerable && below(i.installedVersion))) return null;
+  const caught = instances.some(
+    (i) => !!i.installedVersion && !!semver.valid(i.installedVersion) && !below(i.installedVersion) && semver.gt(i.installedVersion, version)
+  );
+  if (caught) return null;
+  const whole = floor.minor === 0 && floor.patch === 0 && floor.prerelease.length === 0;
+  return `${name}@>=${whole ? floor.major : floor.version}`;
 }
 
 // The exact `overrides` value the UI would stage if the user pressed `o` on this

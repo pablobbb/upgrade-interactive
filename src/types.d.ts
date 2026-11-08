@@ -229,6 +229,56 @@ export interface UnappliedOverride {
   mandates: { name: string; mandated: string; found: UnappliedEdge[] }[];
 }
 
+/** A package that declares a dependency, and the range it declares. */
+export interface DependentRange {
+  /** Package name, a workspace's name or path, or "the root". */
+  name: string;
+  range: string;
+}
+
+/** One installed copy of a package, and the dependents that resolve to it. */
+export interface InstalledCopy {
+  path: string;
+  version: string;
+  dependents: DependentRange[];
+}
+
+/** A pin this run wrote or found present, and the copies still below it after the install. */
+export interface PinNotLanded {
+  name: string;
+  /** The parent key it sits under; null for a top-level pin. */
+  parent: string | null;
+  pin: string;
+  copies: InstalledCopy[];
+  /** Every dependent of those copies declares a range the pin satisfies. */
+  inRange: boolean;
+}
+
+/** An override from before this run that the lockfile still doesn't reflect. */
+export interface StaleOverride {
+  name: string;
+  parent: string | null;
+  pin: string;
+  installed: string[];
+}
+
+/** A package the run's audit flagged that the new lockfile still has a vulnerable copy of. */
+export interface StillVulnerable {
+  name: string;
+  versions: string[];
+  copies: InstalledCopy[];
+  /** No safe version at all; one inside what the dependents declare; or only outside it. */
+  reason: 'unpatched' | 'in-range' | 'outside';
+  firstPatched: string | null;
+}
+
+/** What an install left behind, read back from the lockfile it wrote. */
+export interface InstallCheck {
+  notLanded: PinNotLanded[];
+  stale: StaleOverride[];
+  stillVulnerable: StillVulnerable[];
+}
+
 export interface AuditResult {
   offline: boolean;
   vulns: Map<string, Vuln>;

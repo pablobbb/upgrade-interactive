@@ -5,7 +5,7 @@ import {
   WARN, CHECK, INFO, CURSOR, MARKER_ON, MARKER_OFF, WORKSPACE_BAR, CHILD, BECOMES, SEPARATOR,
 } from '../icons.js';
 import { SEVERITY } from '../vulnerabilities.js';
-import { isPinBlocked, pinRefusalText } from '../override-select.js';
+import { isPinBlocked, pinRefusalText, crossedDependents } from '../override-select.js';
 
 /** @import { HeldPin, OverrideSpec, PinInstance, RemovableOverride, Span, Suggestion, Vuln } from '../types.js' */
 
@@ -41,13 +41,20 @@ function Column({ suggestion, selected }) {
 // partial fix reads as a whole one. Only the picker used to say so, which is how
 // "2 scoped pins" passed for a fix while two copies stayed vulnerable (the
 // 2026-10-17 field report, F1).
+//
+// A global pin that takes dependents past the major they declare says how many,
+// so the cost the picker warned about stays on the row once staged.
 /**
  * @param {OverrideSpec | null | undefined} spec
  * @param {Vuln | null | undefined} vuln
  */
 export function overrideLabel(spec, vuln) {
   if (!spec) return null;
-  if (typeof spec === 'string') return `${BECOMES} override ${spec}`;
+  if (typeof spec === 'string') {
+    const n = vuln ? crossedDependents(vuln, spec).crossed.length : 0;
+    const past = n === 0 ? '' : n === 1 ? ", past 1 dependent's declared major" : `, past ${n} dependents' declared majors`;
+    return `${BECOMES} override ${spec}${past}`;
+  }
   if (Array.isArray(spec.scoped) && spec.scoped.length > 0) {
     const vulnerable = vuln ? (vuln.instances || []).filter((i) => i.vulnerable).length : 0;
     const left = vulnerable - spec.scoped.length;
@@ -113,6 +120,24 @@ export function pinBlockedNote(vuln, name) {
   const ranges = conflicted && conflicted.conflictRanges ? conflicted.conflictRanges.join(' vs ') : null;
   const detail = ranges ? ` (${ranges})` : '';
   return `${INFO} workspaces declare different ranges${detail} — upgrade each row instead`;
+}
+
+// The hint under a flagged row in the override section, before anything is
+// staged: why `o` can't help, or the key to press. When every dependent's newest
+// in-range version is already safe, it also gives the route that needs no pin.
+// In the 2026-11-04 field report, 7 of the 12 pins a run wrote needed no
+// override, and the next run called 4 of them unneeded (F4). Left out while the
+// user's own override holds the package, since `npm update` honours it there, or
+// when that can't be judged.
+/**
+ * @param {Vuln} vuln
+ * @param {string} name
+ */
+export function vulnRowHint(vuln, name) {
+  const blocked = pinBlockedNote(vuln, name);
+  if (blocked) return blocked;
+  const noPin = vuln.inRangeFix && Array.isArray(vuln.heldBy) && vuln.heldBy.length === 0;
+  return noPin ? `press o to override, or run npm update ${name} (no pin needed)` : 'press o to override';
 }
 
 // The warning icon + severity + CVE link + affected/fixed-in summary shown on a flagged
@@ -235,12 +260,11 @@ export function VulnRow({ name, active, vuln, override, overrideNote }) {
   // Hint precedence: nothing to override yet → "press o", or why we can't;
   // staged here → the green badge alone; staged from another row → the
   // read-only "elsewhere" note.
-  const blocked = pinBlockedNote(vuln, name);
   const hint = override
     ? overrideNote
       ? e(Text, { dimColor: true }, `  ${overrideNote}`)
       : null
-    : e(Text, { dimColor: true }, blocked ? `  ${blocked}` : '  press o to override');
+    : e(Text, { dimColor: true }, `  ${vulnRowHint(vuln, name)}`);
   return e(
     Box,
     { flexDirection: 'column' },
@@ -276,10 +300,9 @@ export function OverrideRow({ name, active, pin, reason, staged }) {
   );
 }
 
-// An `overrides` entry the installed tree does not reflect: the pin is correct
-// and already in package.json, but resolution happened before it was added, so
-// npm never applied it. Read-only — see the `unapplied` branch in rows.js for
-// why no action is offered.
+// An `overrides` entry the installed tree does not reflect: the pin is in
+// package.json, but npm never applied it to the locked copy. Read-only — see the
+// `unapplied` branch in rows.js for why no action is offered.
 /**
  * @param {{ name: string, mandated: string, installed: string | null, parentName: string | null }} props
  */

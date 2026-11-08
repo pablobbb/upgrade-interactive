@@ -124,10 +124,11 @@ export function buildDisplayRows({
         rows.push({ kind: 'override', key: `ovr:${name}`, name, pin: info.pin, reason: info.reason });
       }
     }
-    // Purely informational, and deliberately not navigable: there is no action
-    // the tool can offer. npm has no way to re-resolve a single edge — verified
-    // in docs/2026-08-26-spike-reresolve.md — so the only fix is a full clean
-    // reinstall, which is the user's call to make, not a keypress.
+    // Purely informational, and deliberately not navigable: no keypress fixes
+    // these. Which command lands a pin depends on whether it fits its dependents'
+    // ranges and on the npm release (docs/2026-11-04-field-report.md, F2), and
+    // both candidates can move other packages, so it's the user's call. The CLI
+    // names the command after its install (checkInstall in vulnerabilities.js).
     if (unappliedList.length > 0) {
       rows.push({ kind: 'header', key: 'h:unapplied', title: 'Overrides not in effect' });
       for (const u of unappliedList) {
@@ -209,6 +210,45 @@ export function windowSlice(items, focusedIndex, maxRows) {
   const start = Math.max(0, Math.min(Math.max(0, focusedIndex) - Math.floor(maxRows / 2), lastStart));
   const end = Math.min(items.length, start + maxRows);
   return { visible: items.slice(start, end), above: start, below: items.length - end };
+}
+
+/**
+ * Rows the focus can land on. Headers, loading placeholders and the read-only
+ * "Overrides not in effect" rows are skipped.
+ *
+ * @param {{ kind: string }} row
+ */
+export function isNavigable(row) {
+  return row.kind === 'dep' || row.kind === 'vuln' || row.kind === 'override';
+}
+
+/**
+ * The main list's window: `windowSlice` around the focused row, except past the
+ * last row focus can reach. The rows after it can't take focus, so a window that
+ * only followed focus never reached them: at 24 rows the 2026-11-04 field
+ * report's next run would have shown 4 of 12 "Overrides not in effect", and none
+ * of the pins that run wrote (F6). There, `tailScroll` steps of ↓ scroll the
+ * window into that tail, one row each, up to the end of the list.
+ *
+ * Returns the slice, plus `offset` (the steps in effect) and `room` (the most it
+ * can take), so the caller knows whether ↓ and ↑ scroll or move focus.
+ *
+ * @template {{ kind: string }} T
+ * @param {T[]} rows
+ * @param {number} focusedIndex
+ * @param {number} maxRows
+ * @param {number} tailScroll
+ */
+export function listWindow(rows, focusedIndex, maxRows, tailScroll) {
+  const half = Math.floor(maxRows / 2);
+  const lastStart = Math.max(0, rows.length - maxRows);
+  const start = Math.max(0, Math.min(Math.max(0, focusedIndex) - half, lastStart));
+  const atLastNavigable = !rows.slice(focusedIndex + 1).some(isNavigable);
+  const room = atLastNavigable ? lastStart - start : 0;
+  const offset = Math.max(0, Math.min(tailScroll, room));
+  // windowSlice puts `half` rows above the index it's given, so this starts the
+  // window `offset` rows below where focus alone would put it.
+  return { ...windowSlice(rows, start + offset + half, maxRows), offset, room };
 }
 
 /**

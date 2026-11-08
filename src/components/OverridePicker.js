@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
   isPinnableInstance, defaultScopedChoiceIndex, scopedOverrideSelection, pinRefusalText,
+  crossedDependents, narrowerKey,
 } from '../override-select.js';
 import { windowSlice } from './rows.js';
-import { CURSOR, CHILD, BECOMES, SEPARATOR, UP, DOWN, LEFT, RIGHT } from '../icons.js';
+import { CURSOR, CHILD, BECOMES, SEPARATOR, UP, DOWN, LEFT, RIGHT, WARN } from '../icons.js';
 
-/** @import { PinInstance, ScopedSpec } from '../types.js' */
+/** @import { PinInstance, ScopedSpec, Vuln } from '../types.js' */
 
 const e = React.createElement;
 
@@ -20,8 +21,55 @@ export const PICKER_MAX_ROWS = 8;
 const OTHERS_MAX_ROWS = 3;
 // Worst-case total lines an open overlay occupies: its rows, both scroll hints,
 // the read-only tail, the border, title and key footer. App subtracts this from
-// the main list's budget so the overlay isn't pushed off the bottom.
+// the main list's budget so the overlay isn't pushed off the bottom. The global
+// picker's warning takes at most OTHERS_MAX_ROWS lines in the read-only tail's
+// place; each is truncated, so it can't wrap past that.
 export const PICKER_MAX_HEIGHT = PICKER_MAX_ROWS + OTHERS_MAX_ROWS + 7;
+
+// What a dependent is called in the picker.
+/** @param {PinInstance} i */
+function dependentLabel(i) {
+  return i.parentName ?? (i.parentPath || 'the root');
+}
+
+// "a", "a and b", "a, b and 3 more".
+/**
+ * @param {string[]} names
+ * @param {number} max
+ */
+function someOf(names, max) {
+  if (names.length <= max) return names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `${names.slice(0, max).join(', ')} and ${names.length - max} more`;
+}
+
+/** @param {{ name: string, version: string, vuln: Vuln }} props */
+function MajorWarning({ name, version, vuln }) {
+  const { crossed, alreadySafe } = crossedDependents(vuln, version);
+  if (crossed.length === 0) return null;
+  const first = crossed[0];
+  const which =
+    crossed.length === 1
+      ? `1 dependent: ${dependentLabel(first)} ${first.declaredRange}`
+      : `${crossed.length} dependents, such as ${dependentLabel(first)} ${first.declaredRange}`;
+  const key = alreadySafe.length > 0 ? narrowerKey(name, vuln, version) : null;
+  const safe = alreadySafe.length;
+  return e(
+    Box,
+    { flexDirection: 'column', marginTop: 1 },
+    e(Text, { color: 'yellow', wrap: 'truncate-end' }, `${WARN} ${version} is outside the declared major of ${which}`),
+    safe > 0
+      ? e(
+          Text,
+          { dimColor: true, wrap: 'truncate-end' },
+          `  ${safe} ${safe === 1 ? 'is' : 'are'} already safe and would move too: ` +
+            someOf([...new Set(alreadySafe.map(dependentLabel))], 2)
+        )
+      : null,
+    key
+      ? e(Text, { dimColor: true, wrap: 'truncate-end' }, `  To leave ${safe === 1 ? 'it' : 'those'} alone, pin "${key}" by hand instead (README, Notes)`)
+      : null
+  );
+}
 
 // The "↑ N more above" / "↓ N more below" hints, matching the main list's.
 /** @param {{ count: number, direction: 'up' | 'down' }} props */
@@ -32,11 +80,19 @@ function ScrollHint({ count, direction }) {
 
 /**
  * A small overlay for choosing which safe version to pin a vulnerable package
- * to via npm `overrides`. ↑/↓ move, Enter selects, Esc cancels.
+ * to via npm `overrides`. ↑/↓ move, Enter selects, Esc cancels. Given the
+ * package's audit, it warns when the version under the cursor takes dependents
+ * past the major they declare.
  *
- * @param {{ name: string, versions: string[], onSelect: (version: string) => void, onCancel: () => void }} props
+ * @param {{
+ *   name: string,
+ *   versions: string[],
+ *   vuln?: Vuln,
+ *   onSelect: (version: string) => void,
+ *   onCancel: () => void,
+ * }} props
  */
-export function OverridePicker({ name, versions, onSelect, onCancel }) {
+export function OverridePicker({ name, versions, vuln, onSelect, onCancel }) {
   const [index, setIndex] = useState(0);
 
   useInput((input, key) => {
@@ -73,6 +129,7 @@ export function OverridePicker({ name, versions, onSelect, onCancel }) {
       );
     }),
     e(ScrollHint, { count: below, direction: 'down' }),
+    vuln && versions[index] ? e(MajorWarning, { name, version: versions[index], vuln }) : null,
     e(
       Box,
       { marginTop: 1 },

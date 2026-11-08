@@ -1,7 +1,7 @@
 # Field report: v2.2.0 on an Electron app (2026-10-17)
 
 **Tool:** `upgrade-interactive` 2.2.0, `main` @ `04b53f3`. The npx cache the user ran
-from (`npx /Users/pablo/Git/upgrade-interactive`) has `src/` identical to the clone, and so
+from (`npx <path to the clone>`) has `src/` identical to the clone, and so
 does the registry tarball. · **npm** 11.13.0 · **Node** v24.16.0 · macOS (Darwin 24.6.0 arm64)
 
 **Target project:** a standalone Electron 41 + Vue 3 app (no

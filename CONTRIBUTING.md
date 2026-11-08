@@ -7,10 +7,12 @@ few things that are easy to get wrong.
 
 ```sh
 npm ci
+git config core.hooksPath .githooks   # once per clone: the pre-push check below
 npm test              # unit + integration
 npm run test:unit     # test/unit/*.test.mjs
 npm run test:integration
 npm run typecheck     # JSDoc types, checked by tsc
+npm run check:sensitive   # secrets and personal data in tracked files
 ```
 
 CI runs `npm test` on Node 18, 20, 22, 24 and 26. The package declares
@@ -22,6 +24,32 @@ modules live in `src/types.d.ts`, and a test fixture that sets only some fields
 wraps them in a helper from `test/typed-fixtures.mjs`, which checks the fields it
 sets and fills in nothing. The Node types are pinned to 18, so an API newer than
 that fails the check. CI runs it once, in its own job.
+
+## Keep private data out
+
+This repo is public, and so are its CI logs. `scripts/check-sensitive.mjs` looks
+for what must never reach it:
+- secrets: tokens, private keys, `_authToken`;
+- personal data: email addresses, home-directory and temp paths, and commit
+  authors or committers that aren't a GitHub noreply address;
+- private infrastructure: lockfile URLs off the public registry, private hosts;
+- other projects' names (see CLAUDE.md).
+
+It masks what it finds, so its own output leaks nothing.
+
+- **Before a push**, the `.githooks/pre-push` hook scans the commits being pushed,
+  once `core.hooksPath` is set as above. `git push --no-verify` skips it; only do
+  that knowingly.
+- **In CI**, the `sensitive-data` job scans the tracked files and a pull
+  request's own commits.
+- **Other projects' names** can't be listed in the repo itself. Put them, one
+  per line, in `.git/info/sensitive-terms`, which stays on your machine. CI reads
+  the same list from the `NUI_SENSITIVE_TERMS` secret.
+- **A real example that must stay** can carry `sensitive-check: allow` on its
+  line.
+- **Merging in GitHub's web UI** records your account's email on the merge
+  commit unless "Keep my email addresses private" is on in your GitHub email
+  settings. No hook can see that commit, since GitHub makes it.
 
 ## Keep the README in sync — every change
 
@@ -121,6 +149,12 @@ one project's dependency graph. The method in brief:
    different set of choices have cost?
 6. Then argue against yourself: for each finding, is it a defect, or an artifact
    of that project's dependency topology? One run is one sample.
+
+Two scripts help with steps 1 and 5. `scripts/rebuild-capture.mjs` rebuilds the
+project from one side of a capture: the lockfile records every workspace's
+manifest, so npm can resolve it again, and `pre` with `--manifests post` replays
+the run's own install. `scripts/probe-audit.mjs` prints the tool's verdicts for a
+project without the TUI, for this checkout or another one given with `--tool`.
 
 Record findings as a dated report under `docs/`. Don't treat a previous report's
 findings as a checklist — that biases the next run toward confirming them

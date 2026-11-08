@@ -68,6 +68,10 @@ anywhere in this one. That covers docs, plans, code comments, tests and fixtures
 `CHANGELOG.md`, file names, branch names, commit messages and PR text. This repo
 is public, and `CHANGELOG.md` ships in the npm tarball.
 
+`npm run check:sensitive` and the pre-push hook enforce this, along with secrets
+and personal data (CONTRIBUTING.md, "Keep private data out"). They check the
+names listed in `.git/info/sensitive-terms`, which stays outside the repo.
+
 - Describe the project by its shape instead: "a static Astro 5 site", "a
   standalone Electron 41 + Vue 3 app".
 - Name a run's documents and branch by date: `docs/2026-10-17-field-report.md`,

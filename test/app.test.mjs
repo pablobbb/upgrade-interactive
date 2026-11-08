@@ -61,6 +61,23 @@ async function waitForFrame(lastFrame, predicate, { timeout = 15000, label = '' 
   }
 }
 
+// Poll until `check()` holds, for a condition that isn't in the frame (what the
+// app hands back on submit, say). Same contract as waitForFrame.
+/**
+ * @param {() => boolean} check
+ * @param {{ timeout?: number, label?: string }} [options]
+ */
+async function waitFor(check, { timeout = 15000, label = '' } = {}) {
+  const deadline = Date.now() + timeout;
+  while (!check()) {
+    if (Date.now() > deadline) {
+      console.error(`TIMEOUT after ${timeout}ms waiting for ${label || 'condition'}`);
+      return;
+    }
+    await wait(50);
+  }
+}
+
 // The rows are loaded once no Loading… placeholder remains. Used wherever a test
 // previously slept ~3s hoping the registry had answered.
 /**
@@ -330,15 +347,18 @@ async function testOverrideFlow() {
   const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
   let submitted = /** @type {Map<string, string> | null} */ (null);
   let overrides = /** @type {Record<string, OverrideSpec> | null} */ (null);
+  let vulnsSubmitted = /** @type {Map<string, Vuln> | null | undefined} */ (undefined);
+  const audit = fakeAudit();
   const { stdin, lastFrame, unmount } = render(
     e(App, {
       descriptors,
       audit: true,
       section: true,
-      runAudit: async () => fakeAudit(),
-      onSubmit: (sel, ovr) => {
+      runAudit: async () => audit,
+      onSubmit: (sel, ovr, _removals, vulns) => {
         submitted = sel;
         overrides = ovr;
+        vulnsSubmitted = vulns;
       },
       onAbort: () => {},
     })
@@ -355,9 +375,12 @@ async function testOverrideFlow() {
   await wait(50);
   stdin.write('\r'); // submit
   await wait(100);
+  await waitFor(() => vulnsSubmitted !== undefined, { label: 'onSubmit' });
   unmount();
 
   assert(overrides && overrides.chalk === '5.0.0', 'selecting a version stages an overrides entry that is passed to onSubmit');
+  // The CLI re-tests this audit against the lockfile npm writes.
+  assert(vulnsSubmitted === audit.vulns, 'onSubmit also hands back the audit the session showed');
 }
 
 // A package whose audit result arrives before its own suggestions has no dep row
@@ -508,6 +531,53 @@ async function testUnappliedOverrideShownInWorkspace() {
 
   assert(frame.includes("undici"), "the unapplied override names the pinned package");
   assert(frame.includes("7.29.0") && frame.includes("7.28.0"), "it shows both the mandated and installed versions");
+}
+
+// The "Overrides not in effect" rows can't take focus, and the list window
+// followed focus, so at 24 rows only the first few ever rendered: the 2026-11-04
+// field report's next run would have shown 4 of 12, and never its own pins (F6).
+// Past the last row focus can reach, ↓ now scrolls the rest into view.
+async function testUnappliedRowsReachable() {
+  /** @type {InputDescriptor[]} */
+  const descriptors = [{ name: 'chalk', range: '^4.0.0', field: 'dependencies' }];
+  const audit = unappliedAudit();
+  const many = Array.from({ length: 15 }, (_, i) => ({
+    mandates: [{ name: `pkg${i}`, mandated: '2.0.0', found: [{ parentName: 'host', parentVersion: '1.0.0', path: `node_modules/pkg${i}`, installedVersion: '1.0.0' }] }],
+  }));
+  audit.unappliedOverrides = new Map(many.map((info, i) => [`host${i}`, info]));
+  const { stdin, lastFrame, unmount } = render(
+    e(App, {
+      descriptors,
+      audit: true,
+      section: true,
+      manifestPaths: ['', 'packages/app'], // a workspace project
+      runAudit: async () => audit,
+      onSubmit: () => {},
+      onAbort: () => {},
+    })
+  );
+
+  await rowsLoaded(lastFrame, 'chalk to load');
+  await waitForFrame(lastFrame, (f) => f.includes('not in effect'), { label: 'the unapplied-override section' });
+  const hiddenAtFirst = !lastFrame().includes('pkg14');
+  // Keep pressing ↓ until the last row shows: each press scrolls one row once
+  // focus is on chalk, the only row it can reach.
+  const deadline = Date.now() + 15000;
+  while (!lastFrame().includes('pkg14') && Date.now() < deadline) {
+    stdin.write('\u001B[B');
+    await wait(30);
+  }
+  const atEnd = lastFrame();
+  while (!lastFrame().includes('❯ chalk') && Date.now() < deadline) {
+    stdin.write('\u001B[A');
+    await wait(30);
+  }
+  const back = lastFrame();
+  unmount();
+
+  assert(hiddenAtFirst, 'a long read-only tail starts below the window');
+  assert(atEnd.includes('pkg14'), '↓ scrolls the read-only tail all the way to its last row');
+  assert(back.includes('❯ chalk'), '↑ scrolls back to the focused row');
 }
 
 async function testUnappliedOverrideHiddenWhenStandalone() {
@@ -893,6 +963,7 @@ async function main() {
   await testOverrideOriginRehomed();
   await testRemovableOverride();
   await testUnappliedOverrideShownInWorkspace();
+  await testUnappliedRowsReachable();
   await testUnappliedOverrideHiddenWhenStandalone();
 
   if (failures > 0) {
